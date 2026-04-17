@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # OpsIntelligence uninstaller
 # Removes the binary, system service (launchd/systemd), Plano Docker container,
-# and optionally all user data (config, memory, skills, cron, security logs).
+# and optionally all user data (config, memory, skills, cron, security logs,
+# and the ops-plane datastore with users / RBAC / audit / sessions).
 #
 # Usage:
-#   bash uninstall.sh              # removes binary & service, keeps ~/.opsintelligence data
-#   bash uninstall.sh --purge      # removes everything including config and memory
-#   bash uninstall.sh --keep-data  # same as default (explicit alias)
-#   bash uninstall.sh -y --purge   # non-interactive purge
+#   bash uninstall.sh                   # remove binary & service, keep ~/.opsintelligence data
+#   bash uninstall.sh --purge           # remove everything incl. config, memory, and ops.db
+#   bash uninstall.sh --keep-data       # same as default (explicit alias)
+#   bash uninstall.sh -y --purge        # non-interactive purge
 #   bash uninstall.sh --keep-mempalace  # keep $STATE_DIR/mempalace (managed Python venv + world)
+#   bash uninstall.sh --keep-datastore  # (with --purge) wipe everything except ops.db*
+#                                       # Useful when migrating OpsIntelligence to a new host
+#                                       # and you want to restore users/roles/audit as-is.
 
 set -eo pipefail
 
@@ -17,6 +21,7 @@ STATE_DIR="${STATE_DIR:-$HOME/.opsintelligence}"
 PURGE=false
 AUTO_CONFIRM=false
 KEEP_MEMPALACE=false
+KEEP_DATASTORE=false
 
 # ─────────────────────────────────────────────
 # Colors
@@ -40,16 +45,19 @@ for arg in "$@"; do
     --keep-data) PURGE=false ;;
     -y|--yes)    AUTO_CONFIRM=true ;;
     --keep-mempalace) KEEP_MEMPALACE=true ;;
+    --keep-datastore) KEEP_DATASTORE=true ;;
     --help|-h)
       echo ""
       echo "Usage: bash uninstall.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --purge      Also remove ~/.opsintelligence (config, memory, skills, cron_jobs.json, security logs)"
-      echo "  --keep-data  Keep user data (default behaviour)"
-      echo "  --keep-mempalace  Keep $STATE_DIR/mempalace (managed MemPalace venv + world)"
-      echo "  -y, --yes    Auto-confirm deletion without prompting"
-      echo "  --help       Show this help"
+      echo "  --purge            Also remove ~/.opsintelligence (config, memory, skills, cron_jobs.json,"
+      echo "                     security logs, and the ops-plane datastore ops.db)"
+      echo "  --keep-data        Keep user data (default behaviour)"
+      echo "  --keep-mempalace   Keep $STATE_DIR/mempalace (managed MemPalace venv + world)"
+      echo "  --keep-datastore   With --purge, keep the ops-plane datastore (ops.db + users/RBAC/audit)"
+      echo "  -y, --yes          Auto-confirm deletion without prompting"
+      echo "  --help             Show this help"
       echo ""
       exit 0
       ;;
@@ -308,12 +316,18 @@ remove_user_data() {
 
   echo ""
   echo -e "${RED}${BOLD}  ⚠ This will permanently delete:${NC}"
-  echo -e "  ${RED}• $STATE_DIR/opsintelligence.yaml     (config)${NC}"
-  echo -e "  ${RED}• $STATE_DIR/memory/             (memory)${NC}"
-  echo -e "  ${RED}• $STATE_DIR/skills/             (skills)${NC}"
-  echo -e "  ${RED}• $STATE_DIR/tools/              (generated tools)${NC}"
-  echo -e "  ${RED}• $STATE_DIR/cron_jobs.json      (persistent cron jobs)${NC}"
-  echo -e "  ${RED}• $STATE_DIR/security/           (audit logs)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/opsintelligence.yaml  (config)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/memory/          (agent memory tiers)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/skills/          (installed skills)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/tools/           (generated tools)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/cron_jobs.json   (persistent cron jobs)${NC}"
+  echo -e "  ${RED}• $STATE_DIR/security/        (guardrail audit logs)${NC}"
+  if $KEEP_DATASTORE; then
+    echo -e "  ${YELLOW}• $STATE_DIR/ops.db*          (KEPT — users/RBAC/audit preserved)${NC}"
+  else
+    echo -e "  ${RED}• $STATE_DIR/ops.db*          (ops-plane datastore: users, roles,"
+    echo -e "                                            api keys, sessions, audit log)${NC}"
+  fi
   echo     "  • $STATE_DIR/logs/"
   echo     "  • $HOME/.cache/opsintelligence/"
   echo ""
@@ -326,9 +340,32 @@ remove_user_data() {
     fi
   fi
 
-  rm -rf "$STATE_DIR"
+  if $KEEP_DATASTORE; then
+    # Snapshot ops.db* aside, wipe state dir, restore datastore.
+    local snap
+    snap="$(mktemp -d "${TMPDIR:-/tmp}/opsintelligence-ds.XXXXXX")"
+    local kept=0
+    local f
+    for f in "$STATE_DIR"/ops.db "$STATE_DIR"/ops.db-wal "$STATE_DIR"/ops.db-shm; do
+      if [[ -f "$f" ]]; then
+        cp -p "$f" "$snap/"
+        kept=$((kept + 1))
+      fi
+    done
+    rm -rf "$STATE_DIR"
+    mkdir -p "$STATE_DIR"
+    if [[ $kept -gt 0 ]]; then
+      mv "$snap"/* "$STATE_DIR"/ 2>/dev/null || true
+      ok "Removed user data (kept ${kept} datastore file(s) under $STATE_DIR/)"
+    else
+      warn "No ops.db found to preserve — nothing to keep"
+    fi
+    rm -rf "$snap"
+  else
+    rm -rf "$STATE_DIR"
+    ok "Removed user data: $STATE_DIR (including ops.db)"
+  fi
   rm -rf "$HOME/.cache/opsintelligence" 2>/dev/null || true
-  ok "Removed user data: $STATE_DIR and caches"
 }
 
 # ─────────────────────────────────────────────
@@ -345,12 +382,13 @@ else
   remove_mempalace_managed
   echo ""
   if $KEEP_MEMPALACE; then
-    warn "Config and data at ${BOLD}$STATE_DIR${NC} were kept (including ${BOLD}mempalace/${NC})."
+    warn "Config and data at ${BOLD}$STATE_DIR${NC} were kept (including ${BOLD}mempalace/${NC} and ${BOLD}ops.db${NC})."
   else
-    warn "Config and data at ${BOLD}$STATE_DIR${NC} were kept (managed ${BOLD}mempalace/${NC} removed unless you used ${BOLD}--keep-mempalace${NC})."
+    warn "Config and data at ${BOLD}$STATE_DIR${NC} were kept (including ${BOLD}ops.db${NC}; managed ${BOLD}mempalace/${NC} removed unless you used ${BOLD}--keep-mempalace${NC})."
   fi
-  warn "Remove everything:  ${BOLD}bash uninstall.sh --purge${NC}"
-  warn "Remove Plano image: ${BOLD}docker rmi katanemo/plano${NC}"
+  warn "Remove everything:        ${BOLD}bash uninstall.sh --purge${NC}"
+  warn "Purge but keep datastore: ${BOLD}bash uninstall.sh --purge --keep-datastore${NC}"
+  warn "Remove Plano image:       ${BOLD}docker rmi katanemo/plano${NC}"
 fi
 
 echo ""

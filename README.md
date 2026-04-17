@@ -69,12 +69,63 @@ in an environment variable via `token_env:` — never in the YAML file.
 
 ---
 
+## Install
+
+**One-liner (recommended, pulls the latest release binary):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/install.sh | bash
+```
+
+**Pin a specific version:**
+
+```bash
+OPSINTELLIGENCE_VERSION=v0.1.0 bash install.sh
+```
+
+**Build from source (requires Go 1.24+):**
+
+```bash
+git clone https://github.com/hridesh-net/OpsIntelligence.git
+cd OpsIntelligence
+FORCE_BUILD=1 bash install.sh
+```
+
+The installer is loud about what it does: it drops the `opsintelligence`
+binary under `/usr/local/bin` (falls back to `~/.local/bin` if not
+writable), scaffolds `~/.opsintelligence/` (state + datastore), and
+optionally registers a login service so the gateway starts on sign-in.
+Pass `SKIP_SERVICE=1` if you don't want that.
+
+Common environment toggles:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `OPSINTELLIGENCE_VERSION` | `latest` | Release tag to install |
+| `INSTALL_DIR` | `/usr/local/bin` | Where the binary lands |
+| `STATE_DIR` | `~/.opsintelligence` | Config + datastore root |
+| `FORCE_BUILD=1` | — | Build from source instead of downloading |
+| `SKIP_VENV=1` | — | Skip Python venv for the tool sandbox |
+| `SKIP_SERVICE=1` | — | Skip launchd/systemd registration |
+| `WITH_MEMPALACE=1` | — | Bootstrap managed MemPalace after install |
+| `WITH_GEMMA=1` | — | Download the default Gemma GGUF for local-intel |
+
+**Uninstall:**
+
+```bash
+bash uninstall.sh                      # remove binary + service, keep state
+bash uninstall.sh --purge              # remove everything incl. ops.db
+bash uninstall.sh --purge --keep-datastore  # wipe state but preserve users/RBAC
+```
+
+`--keep-datastore` is useful when moving OpsIntelligence to a new host:
+your users, roles, API keys, and audit log stay behind for the next
+install to pick up.
+
 ## Quick start
 
 ```bash
-# 1. Clone and build
-git clone https://github.com/hridesh-net/OpsIntelligence.git
-cd OpsIntelligence
+# 1. Install (see above) or build locally:
 make build    # -> ./bin/opsintelligence
 
 # 2. Onboard (writes ~/.opsintelligence/opsintelligence.yaml)
@@ -93,12 +144,44 @@ make build    # -> ./bin/opsintelligence
 The first onboarding run collects: one LLM provider API key, optional
 Slack tokens, optional GitHub / GitLab / Jenkins / SonarQube tokens,
 and the active team name. Anything advanced (memory tiers, MCP
-clients, cron, webhooks) is edited directly in
-`~/.opsintelligence/opsintelligence.yaml`.
+clients, cron, webhooks) can be edited either in
+`~/.opsintelligence/opsintelligence.yaml` **or** from the dashboard —
+see below.
 
 See [`.opsintelligence.yaml.example`](.opsintelligence.yaml.example)
 for the complete, commented reference — including copy-paste cron
 heartbeats and webhook presets for GitHub/GitLab/Jenkins.
+
+---
+
+## Dashboard
+
+Once the daemon is up, the dashboard is served out of the gateway
+itself:
+
+```
+http://127.0.0.1:18790/dashboard/
+```
+
+The **first** visit walks you through creating the initial owner
+account (datastore-backed, RBAC-protected). After that, the dashboard
+gives you:
+
+- **Overview** — running tasks, recent events, gateway health.
+- **Tasks** — live event stream (SSE), per-task transcripts.
+- **Users & Roles** — managed via the underlying datastore (SQLite
+  locally, Postgres on cloud installs).
+- **API keys** — create/revoke, scoped to RBAC permissions.
+- **Settings** — full parity with the CLI: gateway bind + TLS, auth /
+  OIDC, datastore, LLM providers, MCP clients, channels, webhooks,
+  agent + DevOps guardrails. Every section uses optimistic concurrency
+  (`If-Match`) so two admins editing in parallel never silently
+  overwrite each other.
+
+For cloud installs, flip `gateway.bind: lan` (or `0.0.0.0`), set
+`gateway.tls.cert` + `gateway.tls.key`, and optionally wire OIDC under
+`auth.oidc` — all of which can be done from the same Settings page
+once an owner exists.
 
 ---
 

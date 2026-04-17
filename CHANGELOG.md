@@ -6,6 +6,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-04-16
+
+First tagged release of OpsIntelligence, cut from the AssistClaw fork.
+This tag ships the complete agent + gateway + datastore + dashboard
+surface that phases 1 through 3c have landed, plus a cleaned-up
+install/uninstall flow ready for both local and cloud deployments.
+
+### Release highlights
+
+- Autonomous DevOps agent: PR review, Sonar triage, CI/CD monitoring,
+  runbooks, incident scribe, with team-configurable policy files
+  under `teams/<active>/`.
+- Master + sub-agent supervision loop with `subagent_intervene`,
+  `supervisor_report`, and shared-context opt-in.
+- Webhook adapter framework with a first-class GitHub adapter
+  (HMAC-SHA256 verification, event/action filtering, dedicated CLI
+  setup flow).
+- Ops-plane datastore (users, roles, API keys, sessions, OIDC state,
+  audit log, task history) — SQLite by default, Postgres for cloud.
+  Strictly separate from the agent memory tiers.
+- Dashboard SPA at `/dashboard/` with login, overview, tasks (SSE),
+  users + API keys placeholders, and full-parity Settings pages for
+  every config section (`gateway`, `auth`, `datastore`, `providers`,
+  `mcp`, `channels`, `webhooks`, `agent`, `devops`).
+- Authentication + RBAC — Argon2id passwords, bootstrap flow, API
+  keys scoped to permissions, CSRF double-submit, OIDC-ready,
+  `authenticator` middleware on every protected route.
+- `internal/configsvc` shared service so the CLI and the dashboard
+  mutate `opsintelligence.yaml` through the same optimistic-
+  concurrency-controlled code path.
+- Skills marketplace + `skills install` from GitHub / path /
+  marketplace; comprehensive `gh-pr-review` skill covering local
+  checkout, test/lint, and GitHub Reviews API posting.
+- Smart-prompt chains (`pr-review`, `sonar-triage`, `cicd-regression`,
+  `incident-scribe`) with meta prompts `self-critique`,
+  `evidence-extractor`, `plan-then-act`.
+
+### Install / uninstall
+
+- **`install.sh`** — refreshed for the ops-plane surface. Scaffolds
+  `$STATE_DIR/datastore/` (so headless cloud installs never race on
+  permissions), fixed the header box alignment, and expanded the
+  `--help` output to include the new post-install dashboard hints.
+  The "done" banner now points at
+  `http://127.0.0.1:18790/dashboard/`, names the first-run owner
+  bootstrap explicitly, and lists the datastore path
+  (`$STATE_DIR/ops.db`, SQLite by default).
+- **`uninstall.sh`** — now aware of the datastore.
+  - `--purge` removes `ops.db`, `ops.db-wal`, `ops.db-shm` along
+    with the existing config/memory/skills/security trees; the
+    confirmation preview calls this out explicitly.
+  - New `--keep-datastore` flag (pair with `--purge`) snapshots
+    `ops.db*` aside, wipes the rest of the state tree, and restores
+    the datastore — the supported migration path when moving
+    OpsIntelligence between hosts without losing users, roles, API
+    keys, or the audit log.
+  - Non-purge summary now calls out `ops.db` explicitly and offers
+    both `--purge` and `--purge --keep-datastore` next-steps.
+
 ### Added
 
 - **Phase 3c: Settings UI wired to the configsvc HTTP API.** The

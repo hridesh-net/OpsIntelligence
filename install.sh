@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # OpsIntelligence installer — installs the Go binary, optional Python venv,
-# and creates the ~/.opsintelligence config directory. No Docker required.
+# and creates the ~/.opsintelligence config + datastore directories. No
+# Docker required. Works for both local installs (loopback bind, SQLite
+# datastore) and cloud installs (lan/0.0.0.0 bind, Postgres datastore).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/install.sh | bash
 #   bash install.sh
-#   OPSINTELLIGENCE_VERSION=v3.10.4 bash install.sh
+#   OPSINTELLIGENCE_VERSION=v0.1.0 bash install.sh
 #
 # Environment:
 #   OPSINTELLIGENCE_VERSION   Git tag or "latest" (default: latest)
 #   INSTALL_DIR          Binary destination (default: /usr/local/bin or ~/.local/bin if not writable)
-#   STATE_DIR            Config/state root (default: ~/.opsintelligence)
+#   STATE_DIR            Config/state/datastore root (default: ~/.opsintelligence)
 #   FORCE_BUILD=1        Build from source instead of downloading release
 #   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). CI sets fts5,opsintelligence_localgemma
 #   SKIP_VENV=1          Skip Python venv creation
@@ -23,6 +25,16 @@
 #                        'opsintelligence local-intel setup --state-dir'. Override source via
 #                        OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL (and optional OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256).
 #                        Optional auth token: OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_TOKEN.
+#
+# After install:
+#   1. Open the dashboard at http://127.0.0.1:18790/dashboard/ (default port).
+#      The first visit prompts you to create the initial owner account
+#      (datastore-backed, RBAC-protected). Same first-run flow happens
+#      whether you run locally or on a cloud server — just point at the
+#      right host:port.
+#   2. Or use the CLI: `opsintelligence onboard` for the interactive
+#      provider/team setup, then `opsintelligence start` to run the
+#      gateway + workers as a daemon.
 
 set -eo pipefail
 
@@ -309,13 +321,21 @@ build_sensing() {
 }
 
 # ─────────────────────────────────────────────
-# Config directory scaffold
+# Config + datastore directory scaffold
 # ─────────────────────────────────────────────
+# The Go binary creates ops.db (the RBAC/audit/sessions datastore)
+# itself on first start, but we pre-create the parent dirs so a
+# headless cloud install never races on permissions. Agent memory and
+# the ops-plane datastore stay in separate sub-trees by design.
 setup_config() {
-  log "Setting up config directory: $STATE_DIR"
-  mkdir -p "$STATE_DIR"/{memory,tools,logs,security}
+  log "Setting up config + datastore directory: $STATE_DIR"
+  mkdir -p "$STATE_DIR"/{memory,tools,logs,security,channels}
   mkdir -p "$STATE_DIR"/skills/{bundled,custom}
   mkdir -p "$STATE_DIR"/workspace/public
+  # Datastore lives at $STATE_DIR/ops.db (sqlite default). Postgres
+  # users override datastore.dsn in opsintelligence.yaml; this dir is
+  # still needed for migration scratch space + audit log fallback.
+  mkdir -p "$STATE_DIR"/datastore
 }
 
 # MemPalace (Python) — not part of the Go binary; optional one-shot bootstrap via CLI.
@@ -451,7 +471,7 @@ install_login_service() {
 # Main
 # ─────────────────────────────────────────────
 usage() {
-  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -463,9 +483,9 @@ main() {
   done
 
   echo ""
-  echo -e "${BOLD}  ╔═══════════════════════════════╗${NC}"
-  echo -e "${BOLD}  ║     OpsIntelligence Installer       ║${NC}"
-  echo -e "${BOLD}  ╚═══════════════════════════════╝${NC}"
+  echo -e "${BOLD}  ╔═══════════════════════════════════╗${NC}"
+  echo -e "${BOLD}  ║     OpsIntelligence Installer     ║${NC}"
+  echo -e "${BOLD}  ╚═══════════════════════════════════╝${NC}"
   echo ""
 
   check_deps
@@ -484,13 +504,21 @@ main() {
   echo ""
   echo -e "  Get started:"
   echo -e "    ${BOLD}opsintelligence --help${NC}"
-  echo -e "    ${BOLD}opsintelligence onboard${NC}               (first-time setup)"
-  echo -e "    ${BOLD}opsintelligence skills marketplace${NC}    (browse available skills)"
+  echo -e "    ${BOLD}opsintelligence onboard${NC}               (first-time CLI setup)"
+  echo -e "    ${BOLD}opsintelligence start${NC}                 (run gateway + workers)"
+  echo -e "    ${BOLD}opsintelligence skills marketplace${NC}    (browse skills)"
   echo -e "    ${BOLD}opsintelligence skills add github${NC}     (install a skill)"
   echo -e "    ${BOLD}opsintelligence agent${NC}                 (interactive REPL)"
   echo ""
-  echo -e "  Config: ${BOLD}$STATE_DIR/opsintelligence.yaml${NC}"
-  echo -e "  Binary: ${BOLD}$INSTALL_DIR/opsintelligence${NC}"
+  echo -e "  Dashboard: ${BOLD}http://127.0.0.1:18790/dashboard/${NC}"
+  echo -e "             First visit prompts you to create the initial"
+  echo -e "             ${BOLD}owner${NC} account (datastore-backed, RBAC-protected)."
+  echo -e "             For cloud installs, set ${BOLD}gateway.bind: lan${NC} +"
+  echo -e "             ${BOLD}gateway.tls.cert/key${NC} and use the public hostname."
+  echo ""
+  echo -e "  Config:    ${BOLD}$STATE_DIR/opsintelligence.yaml${NC}"
+  echo -e "  Datastore: ${BOLD}$STATE_DIR/ops.db${NC} (sqlite, default)"
+  echo -e "  Binary:    ${BOLD}$INSTALL_DIR/opsintelligence${NC}"
   if [[ "${WITH_MEMPALACE:-0}" == "1" ]]; then
     echo -e "  MemPalace: ${BOLD}bootstrapped under $STATE_DIR/mempalace/${NC} (merge printed YAML into opsintelligence.yaml)"
   else
