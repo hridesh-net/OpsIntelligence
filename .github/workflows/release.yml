@@ -126,10 +126,29 @@ jobs:
             -o dist/gemma-4-e2b-it.gguf "${GEMMA_GGUF_SOURCE_URL}"
           sha256sum dist/gemma-4-e2b-it.gguf | awk '{print $1}' > dist/gemma-4-e2b-it.gguf.sha256
           
+      # dist/ must exist before copying artifacts. The Gemma step only
+      # mkdir -p dist when GEMMA_GGUF_SOURCE_URL is set; without it, the
+      # previous workflow accidentally ran `cp bin-archives/* dist/` into
+      # a missing directory — cp failed, || true hid it, and releases shipped
+      # with zero assets (404 on install.sh).
+      - name: Stage binaries for release
+        shell: bash
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          cp bin-archives/* dist/ 2>/dev/null || true
+          echo "dist contents:"
+          ls -la dist/ || true
+          bins=(dist/opsintelligence*)
+          if [[ ${#bins[@]} -eq 0 ]]; then
+            echo "::error::No opsintelligence binaries in dist/ after merging artifacts. Check build job outputs and bin-archives/."
+            ls -la bin-archives/ || true
+            exit 1
+          fi
+
       - name: Create Release Notes
         id: release_notes
         run: |
-          cp bin-archives/* dist/ || true
           echo "## OpsIntelligence ${GITHUB_REF_NAME}" > release_notes.md
           if echo "${GITHUB_REF_NAME}" | grep -q '-'; then
             echo "**Pre-release (beta / RC).** Not marked stable; expect changes before the final release." >> release_notes.md

@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitHub Actions release workflow published empty assets.** The
+  `release` job ran `cp bin-archives/* dist/` but `dist/` was only
+  created when `GEMMA_GGUF_SOURCE_URL` was set. With the variable
+  empty, `cp` failed into a missing directory; `|| true` hid the
+  failure and `softprops/action-gh-release` uploaded nothing — hence
+  `404` on `releases/latest/download/opsintelligence-darwin-arm64`.
+  A **Stage binaries for release** step now always `mkdir -p dist`
+  before copying, lists `dist/`, and **fails the job** if no
+  `dist/opsintelligence*` files exist.
+
 ### Documentation
 
 - **README — "Installing on a client or locked-down machine".** Step-by-
