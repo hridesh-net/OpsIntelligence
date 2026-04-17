@@ -6,6 +6,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 3d: Users, Roles & API Keys management.** The dashboard's
+  `#/users` and `#/apikeys` routes are no longer placeholders —
+  both surfaces are live, RBAC-gated, and audit-logged.
+  - **`internal/gateway/users_api.go`** — HTTP twin of
+    `opsintelligence admin user` + `role`:
+    - `GET /api/v1/users` (`users.read`) — list users with role
+      names; password hash is never serialised.
+    - `POST /api/v1/users` (`users.manage` + `secrets.write`) —
+      create a local user with argon2id-hashed password and
+      optional initial roles.
+    - `GET /api/v1/users/{id}` (`users.read`).
+    - `PATCH /api/v1/users/{id}` — partial update of email,
+      display name, status, password. Self-edit allowed without
+      `users.manage` **except** status changes; resetting another
+      user's password requires `secrets.write`.
+    - `DELETE /api/v1/users/{id}` (`users.delete`) — with
+      self-delete + last-owner guards.
+    - `GET|POST /api/v1/users/{id}/roles` and
+      `DELETE /api/v1/users/{id}/roles/{roleIDOrName}` —
+      `roles.manage` for mutation, `users.read` for list.
+      Accepts `role-owner`, `owner`, or short names.
+  - **`internal/gateway/roles_api.go`** — read-only role catalogue:
+    - `GET /api/v1/roles` (`roles.read`) seeds built-in roles
+      lazily so a fresh deployment never 404s on `role-viewer`.
+    - `GET /api/v1/roles/{idOrName}` returns permissions so the
+      dashboard can render "what can this role do?".
+  - **`internal/gateway/apikeys_api.go`** — HTTP twin of
+    `opsintelligence admin apikey`:
+    - `GET /api/v1/apikeys` — `apikeys.read.all` lists everyone;
+      `apikeys.read.own` (or `?mine=1` scoping) returns just the
+      caller's keys.
+    - `POST /api/v1/apikeys` — mints. Self-mint needs
+      `apikeys.manage.own`; minting for another user needs
+      `apikeys.manage.all`. The plaintext `opi_<keyid>_<secret>`
+      token is returned **exactly once** in the response body;
+      argon2id-hashed secret is persisted via
+      `auth.GenerateAPIKey`. Honours `auth.api_keys.enabled` —
+      disabled config rejects regardless of RBAC.
+    - `DELETE /api/v1/apikeys/{id}` — accepts `ak-<keyid>` or
+      bare `key_id`; owner can revoke with `apikeys.manage.own`,
+      anyone else needs `apikeys.manage.all`.
+  - **Guardrails** (both surfaces enforce):
+    1. Last-owner cannot be disabled, deleted, or lose `role-owner`.
+    2. Caller cannot delete themselves.
+    3. A user without `users.manage` cannot flip their own status.
+    4. Password mutations for another user require `secrets.write`.
+    5. API-key plaintext is returned only on mint.
+  - **Audit** — every mutation writes a row (`ResourceType=user`
+    or `apikey`) with path/method metadata plus role/key IDs and
+    `mint_type` (`self`/`delegated`).
+  - **Routing (`internal/gateway/authsvc.go`)** — new mounts use
+    per-method routers: `GET` through `Protect`, mutating verbs
+    through `ProtectCSRF` (cookie sessions require
+    `X-CSRF-Token`; API-key callers are exempt by scheme).
+- **Phase 3d: Dashboard Users & API Keys UI.** The
+  `#/users` and `#/apikeys` routes now render full management
+  surfaces in the SPA shell shipped in phase 3c.
+  - **`internal/webui/dashboard/assets/app.html`** — replaced the
+    two placeholder cards with `#users-body` / `#apikeys-body`
+    mount points and added a generic `#modal-backdrop` element
+    that every management dialog (invite, edit, roles, mint,
+    revoke, show-plaintext) hangs off.
+  - **`internal/webui/dashboard/assets/app.js`** — real
+    renderers, RBAC-aware action buttons, modals:
+    - `renderUsersView` — `GET /api/v1/users`, tabular layout
+      with username + email, status pill, role chips, last
+      login. Action buttons: **Edit** (display name / email /
+      reset password), **Enable/Disable** (dark-pilled toggle),
+      **Roles** (grant+revoke picker using cached
+      `GET /api/v1/roles`), **Delete**. Buttons that would need
+      permissions the operator lacks are disabled client-side
+      via `meHasPerm`, and the backend remains authoritative.
+    - **Invite flow** — `openInviteUserModal` minimal form with
+      username, email, display name, password, initial-role
+      multiselect; calls `POST /api/v1/users`.
+    - `renderAPIKeysView` — `GET /api/v1/apikeys`, tabular layout
+      with key ID, name, owner (for `apikeys.read.all`), status
+      pill, created / expires / last-used, revoke button. Mint
+      button launches `openMintKeyModal`.
+    - **Mint flow** — `POST /api/v1/apikeys` with optional owner
+      (only shown when the caller has `apikeys.manage.all`),
+      optional expiry (Go duration), comma-separated scopes. The
+      response pipes through `showMintedKey` which dispays the
+      plaintext in a warn-banner modal with a one-click copy
+      button and explicit "you will not see this again" copy.
+    - **Revoke flow** — confirm-then-`DELETE` for both users
+      and keys; errors round-trip through the generic modal.
+  - **`internal/webui/dashboard/assets/style.css`** — new
+    component styles for `.admin-table`, status `.pill-*`, role
+    `.chip-role`, `.modal-backdrop`, `.warn-banner`,
+    `.token-row`, and `.role-matrix`.
+  - **`internal/webui/dashboard/dashboard_test.go`** — smoke
+    tests now assert the new DOM anchors, JS renderers, and CSS
+    classes all ship in the embedded bundle.
+- **`doc/users-apikeys-api.md`** — new reference covering the
+  permission matrix, the complete request/response shape of every
+  endpoint, the guardrails enforced server-side, and the full set
+  of audit actions emitted by the new handlers.
+
+### Testing
+
+- `internal/gateway/users_api_test.go` exercises the happy path
+  and the security edges:
+  `TestUsers_List_RequiresUsersRead`,
+  `TestUsers_List_OwnerSees_AllUsers` (verifies password-hash
+  leakage), `TestUsers_Create_OwnerCanMintWithRole`,
+  `TestUsers_Create_DeveloperDenied`,
+  `TestUsers_PatchSelf_AllowedWithoutUsersManage`,
+  `TestUsers_Delete_BlocksLastOwner`,
+  `TestUsers_Roles_GrantAndRevoke`,
+  `TestRoles_List_ReturnsBuiltIns`,
+  `TestAPIKeys_Create_ReturnsPlainTokenOnce` (checks the list
+  endpoint does **not** leak the plaintext after mint),
+  `TestAPIKeys_Create_OwnForOtherRequires_ManageAll`,
+  `TestAPIKeys_Revoke_OwnerCanRevokeAny`.
+
 ## [0.1.0] — 2026-04-16
 
 First tagged release of OpsIntelligence, cut from the AssistClaw fork.

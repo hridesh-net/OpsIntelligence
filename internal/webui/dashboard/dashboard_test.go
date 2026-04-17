@@ -21,6 +21,10 @@ func TestHandler_ServesAppShell(t *testing.T) {
 		`data-section="mcp"`,
 		`data-section="webhooks"`,
 		`id="settings-body"`,
+		// phase 3d: users + apikeys bodies + modal scaffolding
+		`id="users-body"`,
+		`id="apikeys-body"`,
+		`id="modal-backdrop"`,
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(body, s) {
@@ -48,6 +52,12 @@ func TestHandler_ServesSPABundle(t *testing.T) {
 		"If-Match",
 		"renderProvidersSection",
 		"renderMCPSection",
+		// phase 3d: users + apikeys + modal helpers
+		"renderUsersView",
+		"renderAPIKeysView",
+		"openMintKeyModal",
+		"showMintedKey",
+		"openManageRolesModal",
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(body, s) {
@@ -65,6 +75,11 @@ func TestHandler_ServesStyles(t *testing.T) {
 		".settings-nav-item",
 		".section-form",
 		".toast",
+		// phase 3d: admin tables + modal + chips
+		".admin-table",
+		".modal-backdrop",
+		".pill-active",
+		".chip-role",
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(body, s) {

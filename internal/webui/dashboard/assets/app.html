@@ -72,22 +72,11 @@
       </section>
 
       <section class="view hidden" id="view-users">
-        <div class="placeholder">
-          <h2>Users &amp; roles</h2>
-          <p>Coming soon — CLI-parity user/role management.</p>
-          <p class="note">
-            For now, use <code>opsintelligence admin user</code> and
-            <code>opsintelligence admin role</code>.
-          </p>
-        </div>
+        <div id="users-body" class="admin-body"></div>
       </section>
 
       <section class="view hidden" id="view-apikeys">
-        <div class="placeholder">
-          <h2>API keys</h2>
-          <p>Coming soon — issue and revoke <code>opi_*</code> keys.</p>
-          <p class="note">For now, use <code>opsintelligence admin apikey</code>.</p>
-        </div>
+        <div id="apikeys-body" class="admin-body"></div>
       </section>
 
       <section class="view hidden" id="view-settings">
@@ -117,6 +106,23 @@
         </div>
       </section>
     </main>
+
+    <div
+      id="modal-backdrop"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div class="modal">
+        <header class="modal-header">
+          <h2 id="modal-title">Dialog</h2>
+          <button type="button" class="ghost modal-close" id="modal-close" aria-label="Close">×</button>
+        </header>
+        <div class="modal-body" id="modal-body"></div>
+        <footer class="modal-footer" id="modal-footer"></footer>
+      </div>
+    </div>
 
     <script src="app.js" defer></script>
   </body>

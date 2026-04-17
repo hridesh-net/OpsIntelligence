@@ -169,9 +169,18 @@ gives you:
 
 - **Overview** — running tasks, recent events, gateway health.
 - **Tasks** — live event stream (SSE), per-task transcripts.
-- **Users & Roles** — managed via the underlying datastore (SQLite
-  locally, Postgres on cloud installs).
-- **API keys** — create/revoke, scoped to RBAC permissions.
+- **Users & Roles** — invite, edit, enable/disable, delete, and
+  grant/revoke built-in roles (`owner`, `admin`, `operator`,
+  `developer`, `auditor`, `viewer`). Self-delete and last-owner
+  changes are guarded server-side. Backed by
+  `/api/v1/users` + `/api/v1/roles`.
+- **API keys** — mint (with name, expiry, scopes, and — for
+  `apikeys.manage.all` — any user as owner), list, revoke. The
+  plaintext `opi_<keyid>_<secret>` token is shown exactly once in a
+  copy-to-clipboard dialog at mint time. Backed by
+  `/api/v1/apikeys`. See
+  [`doc/users-apikeys-api.md`](doc/users-apikeys-api.md) for the
+  full permission matrix and request/response shape.
 - **Settings** — full parity with the CLI: gateway bind + TLS, auth /
   OIDC, datastore, LLM providers, MCP clients, channels, webhooks,
   agent + DevOps guardrails. Every section uses optimistic concurrency

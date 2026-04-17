@@ -246,10 +246,12 @@
       case "users":
         titleEl.textContent = "Users & Roles";
         subEl.textContent = "Identity, roles and permissions.";
+        renderUsersView(actionsEl);
         break;
       case "apikeys":
         titleEl.textContent = "API keys";
         subEl.textContent = "Long-lived bearer credentials for automation.";
+        renderAPIKeysView(actionsEl);
         break;
       case "settings":
         titleEl.textContent = "Settings";
@@ -1376,6 +1378,640 @@
     });
 
     return { server, clients };
+  }
+
+  // ─────────────────────── users & roles view ───────────────────────
+  //
+  // Panel layout: a "Invite user" action in the header + a table of
+  // users with inline actions (disable/enable, edit, grant/revoke
+  // role, delete). Every action goes through the /api/v1/users/* and
+  // /api/v1/users/<id>/roles/* endpoints (phase 3d backend) and is
+  // permission-gated on the server, so the UI is allowed to be
+  // optimistic; we surface failures via the toast.
+
+  let ROLES_CACHE = null; // resolved once per dashboard load
+
+  async function renderUsersView(actionsEl) {
+    const body = document.getElementById("users-body");
+    if (!body) return;
+    body.innerHTML = `<div class="loading">Loading users…</div>`;
+
+    const canManage = meHasPerm("users.manage");
+    const canDelete = meHasPerm("users.delete");
+    const canGrantRole = meHasPerm("roles.manage");
+
+    if (canManage && actionsEl) {
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = "Invite user";
+      btn.addEventListener("click", () => openInviteUserModal());
+      actionsEl.appendChild(btn);
+    }
+
+    try {
+      const roles = await getRolesCached();
+      const data = await fetchJSON(`${API}/users`);
+      const users = Array.isArray(data.users) ? data.users : [];
+      body.innerHTML = `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Roles</th>
+                <th>Last login</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      `;
+      const tbody = document.getElementById("users-tbody");
+      users.forEach((u) => {
+        const tr = document.createElement("tr");
+        tr.dataset.userId = u.id;
+        tr.innerHTML = `
+          <td>
+            <div class="primary-cell">${escapeHTML(u.username)}</div>
+            ${
+              u.display_name
+                ? `<div class="secondary-cell">${escapeHTML(u.display_name)}</div>`
+                : ""
+            }
+          </td>
+          <td>${escapeHTML(u.email || "—")}</td>
+          <td><span class="pill pill-${escapeHTML(u.status)}">${escapeHTML(u.status)}</span></td>
+          <td>${renderRoleChips(u.roles || [])}</td>
+          <td class="mono-cell">${u.last_login_at ? formatDate(u.last_login_at) : "—"}</td>
+          <td class="col-actions"></td>
+        `;
+        const actions = tr.querySelector(".col-actions");
+        if (canManage) {
+          actions.appendChild(makeButton("Edit", "ghost", () => openEditUserModal(u, roles)));
+          actions.appendChild(
+            makeButton(u.status === "disabled" ? "Enable" : "Disable", "ghost", async () => {
+              const next = u.status === "disabled" ? "active" : "disabled";
+              const ok = await patchUser(u.id, { status: next });
+              if (ok) reroute();
+            })
+          );
+        }
+        if (canGrantRole) {
+          actions.appendChild(
+            makeButton("Roles", "ghost", () => openManageRolesModal(u, roles))
+          );
+        }
+        if (canDelete && (ME && ME.user_id !== u.id)) {
+          actions.appendChild(
+            makeButton("Delete", "ghost danger", async () => {
+              if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
+              try {
+                await sendJSON(`${API}/users/${encodeURIComponent(u.id)}`, "DELETE");
+                showToast(`Deleted ${u.username}`, "ok");
+                reroute();
+              } catch (err) {
+                showToast(err.message || "delete failed", "error");
+              }
+            })
+          );
+        }
+        tbody.appendChild(tr);
+      });
+      if (!users.length) {
+        body.innerHTML += `<p class="note">No users yet.</p>`;
+      }
+    } catch (err) {
+      body.innerHTML = errorBlock(err.message || "failed to load users");
+    }
+  }
+
+  async function getRolesCached() {
+    if (ROLES_CACHE) return ROLES_CACHE;
+    try {
+      const data = await fetchJSON(`${API}/roles`);
+      ROLES_CACHE = Array.isArray(data.roles) ? data.roles : [];
+    } catch (err) {
+      ROLES_CACHE = [];
+      // If the caller lacks roles.read we'll still render the users
+      // table; only the role picker is degraded.
+    }
+    return ROLES_CACHE;
+  }
+
+  function renderRoleChips(roleNames) {
+    if (!roleNames.length) return `<span class="chip chip-muted">none</span>`;
+    return roleNames
+      .map((n) => `<span class="chip chip-role">${escapeHTML(n)}</span>`)
+      .join(" ");
+  }
+
+  async function patchUser(id, body) {
+    try {
+      await sendJSON(`${API}/users/${encodeURIComponent(id)}`, "PATCH", body);
+      showToast("updated", "ok");
+      return true;
+    } catch (err) {
+      showToast(err.message || "update failed", "error");
+      return false;
+    }
+  }
+
+  function openInviteUserModal() {
+    const modal = openModal({ title: "Invite user" });
+    modal.body.innerHTML = `
+      <form id="invite-form" class="modal-form">
+        <div class="field">
+          <label>Username</label>
+          <input name="username" type="text" autocomplete="off" required />
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input name="email" type="email" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>Display name</label>
+          <input name="display_name" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>Initial password</label>
+          <input name="password" type="password" autocomplete="new-password" required />
+          <p class="field-help">Share over a secure channel; prompt the user to change on first login.</p>
+        </div>
+        <div class="field">
+          <label>Role</label>
+          <select name="role" id="invite-role"></select>
+        </div>
+      </form>
+    `;
+    const select = modal.body.querySelector("#invite-role");
+    getRolesCached().then((roles) => {
+      const opts = [`<option value="">(none)</option>`];
+      roles.forEach((r) => {
+        opts.push(
+          `<option value="${escapeHTML(r.name)}">${escapeHTML(r.name)}${
+            r.is_builtin ? "" : " (custom)"
+          }</option>`
+        );
+      });
+      select.innerHTML = opts.join("");
+      select.value = "viewer";
+    });
+    setModalFooter(modal, [
+      { label: "Cancel", kind: "ghost", onClick: () => closeModal(modal) },
+      {
+        label: "Create",
+        kind: "primary",
+        onClick: async () => {
+          const form = modal.body.querySelector("#invite-form");
+          const fd = new FormData(form);
+          const role = String(fd.get("role") || "").trim();
+          const payload = {
+            username: String(fd.get("username") || "").trim(),
+            email: String(fd.get("email") || "").trim(),
+            display_name: String(fd.get("display_name") || "").trim(),
+            password: String(fd.get("password") || ""),
+          };
+          if (role) payload.roles = [role];
+          if (!payload.username || !payload.password) {
+            showToast("username and password required", "warn");
+            return;
+          }
+          try {
+            await sendJSON(`${API}/users`, "POST", payload);
+            closeModal(modal);
+            showToast(`Invited ${payload.username}`, "ok");
+            reroute();
+          } catch (err) {
+            showToast(err.message || "invite failed", "error");
+          }
+        },
+      },
+    ]);
+  }
+
+  function openEditUserModal(user, roles) {
+    const modal = openModal({ title: `Edit ${user.username}` });
+    modal.body.innerHTML = `
+      <form id="edit-user-form" class="modal-form">
+        <div class="field">
+          <label>Display name</label>
+          <input name="display_name" type="text" value="${escapeHTML(user.display_name || "")}" />
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input name="email" type="email" value="${escapeHTML(user.email || "")}" />
+        </div>
+        <div class="field">
+          <label>Reset password</label>
+          <input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" />
+          <p class="field-help">Only filled when you want to set a new password.</p>
+        </div>
+      </form>
+    `;
+    setModalFooter(modal, [
+      { label: "Cancel", kind: "ghost", onClick: () => closeModal(modal) },
+      {
+        label: "Save",
+        kind: "primary",
+        onClick: async () => {
+          const form = modal.body.querySelector("#edit-user-form");
+          const fd = new FormData(form);
+          const body = {
+            email: String(fd.get("email") || "").trim(),
+            display_name: String(fd.get("display_name") || "").trim(),
+          };
+          const pw = String(fd.get("password") || "");
+          if (pw) body.password = pw;
+          try {
+            await sendJSON(`${API}/users/${encodeURIComponent(user.id)}`, "PATCH", body);
+            closeModal(modal);
+            showToast("saved", "ok");
+            reroute();
+          } catch (err) {
+            showToast(err.message || "save failed", "error");
+          }
+        },
+      },
+    ]);
+  }
+
+  async function openManageRolesModal(user, roles) {
+    const modal = openModal({ title: `Roles · ${user.username}` });
+    modal.body.innerHTML = `<div class="loading">Loading roles…</div>`;
+    try {
+      const data = await fetchJSON(`${API}/users/${encodeURIComponent(user.id)}/roles`);
+      const current = new Set((data.roles || []).map((r) => r.id));
+      modal.body.innerHTML = `
+        <p class="field-help">
+          Grant or revoke a built-in role. Changes take effect at the next
+          request the user makes — active sessions keep the roles they were
+          issued until they log out.
+        </p>
+        <div id="role-matrix" class="role-matrix"></div>
+      `;
+      const matrix = modal.body.querySelector("#role-matrix");
+      roles.forEach((r) => {
+        const row = document.createElement("div");
+        row.className = "role-row";
+        const has = current.has(r.id);
+        row.innerHTML = `
+          <div>
+            <div class="primary-cell">${escapeHTML(r.name)}${
+              r.is_builtin ? "" : ` <span class="chip chip-muted">custom</span>`
+            }</div>
+            <div class="secondary-cell">${escapeHTML(r.description || "")}</div>
+          </div>
+        `;
+        const toggle = makeButton(has ? "Revoke" : "Grant", has ? "ghost danger" : "primary", async () => {
+          try {
+            if (has) {
+              await sendJSON(
+                `${API}/users/${encodeURIComponent(user.id)}/roles/${encodeURIComponent(r.id)}`,
+                "DELETE"
+              );
+            } else {
+              await sendJSON(`${API}/users/${encodeURIComponent(user.id)}/roles`, "POST", {
+                role: r.id,
+              });
+            }
+            showToast(has ? `Revoked ${r.name}` : `Granted ${r.name}`, "ok");
+            closeModal(modal);
+            reroute();
+          } catch (err) {
+            showToast(err.message || "role change failed", "error");
+          }
+        });
+        row.appendChild(toggle);
+        matrix.appendChild(row);
+      });
+    } catch (err) {
+      modal.body.innerHTML = errorBlock(err.message || "failed to load roles");
+    }
+    setModalFooter(modal, [{ label: "Close", kind: "ghost", onClick: () => closeModal(modal) }]);
+  }
+
+  // ─────────────────────── api keys view ───────────────────────
+
+  async function renderAPIKeysView(actionsEl) {
+    const body = document.getElementById("apikeys-body");
+    if (!body) return;
+    body.innerHTML = `<div class="loading">Loading API keys…</div>`;
+
+    const canManageAny =
+      meHasPerm("apikeys.manage.own") || meHasPerm("apikeys.manage.all");
+    const canReadAll = meHasPerm("apikeys.read.all");
+    const canManageAll = meHasPerm("apikeys.manage.all");
+
+    if (canManageAny && actionsEl) {
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = "Mint new key";
+      btn.addEventListener("click", () => openMintKeyModal(canManageAll));
+      actionsEl.appendChild(btn);
+    }
+
+    try {
+      const data = await fetchJSON(`${API}/apikeys${canReadAll ? "" : "?mine=1"}`);
+      const keys = Array.isArray(data.keys) ? data.keys : [];
+      body.innerHTML = `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Key ID</th>
+                <th>Name</th>
+                <th>Owner</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Expires</th>
+                <th>Last used</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="apikeys-tbody"></tbody>
+          </table>
+        </div>
+      `;
+      const tbody = document.getElementById("apikeys-tbody");
+      keys.forEach((k) => {
+        const isOwn = ME && ME.user_id === k.user_id;
+        const canRevoke = (isOwn && meHasPerm("apikeys.manage.own")) || canManageAll;
+        const tr = document.createElement("tr");
+        tr.dataset.keyId = k.key_id;
+        tr.innerHTML = `
+          <td class="mono-cell">${escapeHTML(k.key_id)}</td>
+          <td>${escapeHTML(k.name)}</td>
+          <td>${escapeHTML(k.username || k.user_id)}</td>
+          <td><span class="pill pill-${escapeHTML(k.status)}">${escapeHTML(k.status)}</span></td>
+          <td class="mono-cell">${formatDate(k.created_at)}</td>
+          <td class="mono-cell">${k.expires_at ? formatDate(k.expires_at) : "never"}</td>
+          <td class="mono-cell">${k.last_used_at ? formatDate(k.last_used_at) : "never"}</td>
+          <td class="col-actions"></td>
+        `;
+        const actions = tr.querySelector(".col-actions");
+        if (canRevoke && k.status === "active") {
+          actions.appendChild(
+            makeButton("Revoke", "ghost danger", async () => {
+              if (!confirm(`Revoke key ${k.key_id} (${k.name})?`)) return;
+              try {
+                await sendJSON(`${API}/apikeys/${encodeURIComponent(k.key_id)}`, "DELETE");
+                showToast("revoked", "ok");
+                reroute();
+              } catch (err) {
+                showToast(err.message || "revoke failed", "error");
+              }
+            })
+          );
+        }
+        tbody.appendChild(tr);
+      });
+      if (!keys.length) {
+        body.innerHTML += `<p class="note">No API keys${canReadAll ? "" : " (for you)"} yet.</p>`;
+      }
+    } catch (err) {
+      body.innerHTML = errorBlock(err.message || "failed to load API keys");
+    }
+  }
+
+  function openMintKeyModal(canManageAll) {
+    const modal = openModal({ title: "Mint new API key" });
+    modal.body.innerHTML = `
+      <form id="mint-form" class="modal-form">
+        <div class="field">
+          <label>Name</label>
+          <input name="name" type="text" required />
+          <p class="field-help">Shown in the key list. e.g. "CI · prod-deploy".</p>
+        </div>
+        ${
+          canManageAll
+            ? `<div class="field">
+                 <label>Owner username</label>
+                 <input name="username" type="text" placeholder="(defaults to you)" />
+                 <p class="field-help">Leave empty to mint for yourself.</p>
+               </div>`
+            : ""
+        }
+        <div class="field">
+          <label>Expires (duration)</label>
+          <input name="expires" type="text" placeholder="e.g. 720h  (leave empty for no expiry)" />
+          <p class="field-help">Go duration syntax: <code>h</code>, <code>m</code>, <code>s</code>.</p>
+        </div>
+        <div class="field">
+          <label>Scopes (comma-separated, optional)</label>
+          <input name="scopes" type="text" placeholder="tasks.read,tasks.cancel" />
+          <p class="field-help">Intersected with the owner's permissions. Empty = full owner permissions.</p>
+        </div>
+      </form>
+    `;
+    setModalFooter(modal, [
+      { label: "Cancel", kind: "ghost", onClick: () => closeModal(modal) },
+      {
+        label: "Mint",
+        kind: "primary",
+        onClick: async () => {
+          const form = modal.body.querySelector("#mint-form");
+          const fd = new FormData(form);
+          const body = {
+            name: String(fd.get("name") || "").trim(),
+            expires: String(fd.get("expires") || "").trim(),
+          };
+          const scopesRaw = String(fd.get("scopes") || "").trim();
+          if (scopesRaw) {
+            body.scopes = scopesRaw.split(",").map((s) => s.trim()).filter(Boolean);
+          }
+          if (canManageAll) {
+            const u = String(fd.get("username") || "").trim();
+            if (u) body.username = u;
+          }
+          if (!body.name) {
+            showToast("name is required", "warn");
+            return;
+          }
+          try {
+            const res = await sendJSON(`${API}/apikeys`, "POST", body);
+            closeModal(modal);
+            showMintedKey(res);
+          } catch (err) {
+            showToast(err.message || "mint failed", "error");
+          }
+        },
+      },
+    ]);
+  }
+
+  function showMintedKey(res) {
+    const modal = openModal({ title: "Copy this token now" });
+    modal.body.innerHTML = `
+      <p class="warn-banner">
+        This is the only time the full token is shown. Store it somewhere
+        safe <strong>now</strong> — we only keep the hash.
+      </p>
+      <div class="field">
+        <label>Token</label>
+        <div class="token-row">
+          <input id="minted-token" readonly value="${escapeHTML(res.plain_token || "")}" />
+          <button type="button" class="ghost" id="copy-token-btn">Copy</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Key ID</label>
+        <input readonly value="${escapeHTML(res.key && res.key.key_id || "")}" />
+      </div>
+      ${
+        res.key && res.key.expires_at
+          ? `<p class="field-help">Expires ${escapeHTML(formatDate(res.key.expires_at))}.</p>`
+          : `<p class="field-help">No expiry set.</p>`
+      }
+    `;
+    const copyBtn = modal.body.querySelector("#copy-token-btn");
+    copyBtn.addEventListener("click", async () => {
+      const input = modal.body.querySelector("#minted-token");
+      try {
+        await navigator.clipboard.writeText(input.value);
+        showToast("copied", "ok");
+      } catch (_) {
+        input.select();
+        document.execCommand("copy");
+        showToast("copied (fallback)", "ok");
+      }
+    });
+    setModalFooter(modal, [
+      {
+        label: "Done",
+        kind: "primary",
+        onClick: () => {
+          closeModal(modal);
+          reroute();
+        },
+      },
+    ]);
+  }
+
+  // ─────────────────────── shared ui helpers ───────────────────────
+
+  function meHasPerm(perm) {
+    if (!ME || !Array.isArray(ME.roles)) return false;
+    // The dashboard does not ship the full permission set; rely on
+    // the server's 403s for the authoritative answer. Here we use a
+    // conservative role → perm mapping so we hide buttons the caller
+    // can't use. If a button IS rendered but the backend rejects the
+    // call, we still surface a toast.
+    const roleToPerms = {
+      owner: ["*"],
+      admin: [
+        "users.read", "users.manage", "users.delete",
+        "roles.read", "roles.manage",
+        "apikeys.read.all", "apikeys.manage.all", "apikeys.read.own", "apikeys.manage.own",
+        "settings.read", "settings.write", "secrets.read", "secrets.write",
+      ],
+      operator: [
+        "users.read", "roles.read",
+        "apikeys.read.own", "apikeys.manage.own",
+      ],
+      developer: ["apikeys.read.own", "apikeys.manage.own"],
+      auditor: ["users.read", "roles.read", "apikeys.read.all"],
+      viewer: [],
+    };
+    for (const role of ME.roles) {
+      const perms = roleToPerms[role] || [];
+      if (perms.includes("*")) return true;
+      if (perms.includes(perm)) return true;
+      // Namespace wildcards just in case a future role uses them.
+      if (perms.some((p) => p.endsWith(".*") && perm.startsWith(p.slice(0, -1)))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function sendJSON(url, method, body) {
+    const opts = {
+      method,
+      credentials: "same-origin",
+      headers: { ...csrfHeaders() },
+    };
+    if (body !== undefined && body !== null) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let parsed = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch (_) {}
+    }
+    if (!res.ok) {
+      const msg = (parsed && parsed.error) || `${res.status}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return parsed;
+  }
+
+  function makeButton(label, kind, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = kind || "ghost";
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function reroute() {
+    // Re-trigger the current route to refresh the view after a write.
+    route();
+  }
+
+  function formatDate(s) {
+    if (!s) return "";
+    try {
+      const d = new Date(s);
+      return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+    } catch (_) {
+      return String(s);
+    }
+  }
+
+  // ─────────────────────── modal ───────────────────────
+
+  function openModal({ title }) {
+    const backdrop = document.getElementById("modal-backdrop");
+    const titleEl = document.getElementById("modal-title");
+    const body = document.getElementById("modal-body");
+    const footer = document.getElementById("modal-footer");
+    titleEl.textContent = title || "";
+    body.innerHTML = "";
+    footer.innerHTML = "";
+    backdrop.classList.remove("hidden");
+    document.getElementById("modal-close").onclick = () => closeModal({ backdrop });
+    // esc-to-close
+    const keyHandler = (ev) => {
+      if (ev.key === "Escape") closeModal({ backdrop, keyHandler });
+    };
+    document.addEventListener("keydown", keyHandler);
+    return { backdrop, body, footer, keyHandler };
+  }
+
+  function closeModal(modal) {
+    if (!modal || !modal.backdrop) return;
+    modal.backdrop.classList.add("hidden");
+    if (modal.keyHandler) {
+      document.removeEventListener("keydown", modal.keyHandler);
+    }
+  }
+
+  function setModalFooter(modal, buttons) {
+    if (!modal || !modal.footer) return;
+    modal.footer.innerHTML = "";
+    buttons.forEach((spec) => {
+      modal.footer.appendChild(makeButton(spec.label, spec.kind, spec.onClick));
+    });
   }
 
   // ─────────────────────── helpers ───────────────────────

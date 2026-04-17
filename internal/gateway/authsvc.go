@@ -155,6 +155,57 @@ func (s *AuthService) Mount(mux *http.ServeMux) {
 	// Phase 3b: configsvc-backed settings API.
 	mux.Handle("/api/v1/config", s.Protect(http.HandlerFunc(s.handleConfigRoot)))
 	mux.Handle("/api/v1/config/", s.ProtectCSRF(http.HandlerFunc(s.handleConfigSections)))
+
+	// Phase 3d: users, roles, and API keys management. Reads use
+	// Protect (no CSRF); mutating verbs run through ProtectCSRF so
+	// cookie sessions need the paired X-CSRF-Token header. API-key
+	// callers are exempt from CSRF by virtue of Authenticator's
+	// per-scheme logic.
+	mux.Handle("/api/v1/users", s.usersRouter())
+	mux.Handle("/api/v1/users/", s.userSubtreeRouter())
+	mux.Handle("/api/v1/roles", s.Protect(http.HandlerFunc(s.handleRoles)))
+	mux.Handle("/api/v1/roles/", s.Protect(http.HandlerFunc(s.handleRoleGet)))
+	mux.Handle("/api/v1/apikeys", s.apikeysRouter())
+	mux.Handle("/api/v1/apikeys/", s.apikeyItemRouter())
+}
+
+// usersRouter dispatches between Protect (for GET) and ProtectCSRF
+// (for POST) on the same path so mutating verbs always pay the CSRF
+// cost but read verbs stay cookie-friendly.
+func (s *AuthService) usersRouter() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			s.Protect(http.HandlerFunc(s.handleUsers)).ServeHTTP(w, r)
+			return
+		}
+		s.ProtectCSRF(http.HandlerFunc(s.handleUsers)).ServeHTTP(w, r)
+	})
+}
+
+func (s *AuthService) userSubtreeRouter() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			s.Protect(http.HandlerFunc(s.handleUserSubtree)).ServeHTTP(w, r)
+			return
+		}
+		s.ProtectCSRF(http.HandlerFunc(s.handleUserSubtree)).ServeHTTP(w, r)
+	})
+}
+
+func (s *AuthService) apikeysRouter() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			s.Protect(http.HandlerFunc(s.handleAPIKeys)).ServeHTTP(w, r)
+			return
+		}
+		s.ProtectCSRF(http.HandlerFunc(s.handleAPIKeys)).ServeHTTP(w, r)
+	})
+}
+
+func (s *AuthService) apikeyItemRouter() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.ProtectCSRF(http.HandlerFunc(s.handleAPIKeyItem)).ServeHTTP(w, r)
+	})
 }
 
 // Protect is the handler-wrapping shorthand that phase-3b handlers
