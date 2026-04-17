@@ -87,6 +87,14 @@ type Config struct {
 	// api keys, sessions, audit log, task history, oidc state). Strictly
 	// separate from agent memory. Default: SQLite under state_dir/ops.db.
 	Datastore DatastoreConfig `yaml:"datastore"`
+
+	// Auth configures identity + authentication for the HTTP gateway
+	// and dashboard. Zero-value fields default to a secure local
+	// profile: local password login enabled, API keys enabled, OIDC
+	// off, CSRF on, sessions HttpOnly + Lax, legacy shared token
+	// disabled. Cloud operators opt into OIDC / TLS / shared-token
+	// overrides explicitly.
+	Auth AuthConfig `yaml:"auth"`
 }
 
 // DatastoreConfig configures the ops-plane persistence backend.
@@ -117,6 +125,138 @@ type DatastoreConfig struct {
 	// Migrations controls auto-run on startup: "auto" (default) or
 	// "manual" (operator runs `opsintelligence datastore migrate`).
 	Migrations string `yaml:"migrations"`
+}
+
+// AuthConfig configures the identity + authentication surface exposed
+// by the HTTP gateway and dashboard. Every field has a sensible
+// default; operators opt into the stricter settings (OIDC, longer
+// token expiry, stricter password policy) rather than having to
+// disable defaults they did not consent to.
+type AuthConfig struct {
+	// Local enables username + password login against the datastore
+	// users table. Default: true. Disable only in OIDC-only deploys
+	// where every user must go through the IdP.
+	Local LocalAuthConfig `yaml:"local"`
+
+	// APIKeys controls the long-lived bearer credential flow.
+	APIKeys APIKeyConfig `yaml:"api_keys"`
+
+	// Sessions controls the browser cookie session — cookie name,
+	// TTL, Secure flag, SameSite. Used by the dashboard.
+	Sessions SessionConfig `yaml:"sessions"`
+
+	// CSRF toggles the double-submit CSRF check on unsafe methods for
+	// cookie-auth'd users. Default: true. API key / legacy bearer
+	// paths bypass CSRF by design.
+	CSRF CSRFConfig `yaml:"csrf"`
+
+	// OIDC is the enterprise SSO path (phase 4). When Issuer is set,
+	// the dashboard offers a "Sign in with <provider>" button and the
+	// callback provisions a user row on first login.
+	OIDC OIDCConfig `yaml:"oidc"`
+
+	// LegacySharedToken is the pre-RBAC bootstrap credential.
+	// Supplied via env OPSINTELLIGENCE_GATEWAY_TOKEN or inline YAML.
+	// Accepted as Authorization: Bearer <token> and produces a
+	// "legacy-shared-token" system principal. Left empty in new
+	// installs; set ONLY when migrating from pre-2b gateways that
+	// already trust a static token. Prefer issuing API keys instead.
+	LegacySharedToken string `yaml:"legacy_shared_token"`
+
+	// AllowAnonymousBootstrap lets the /api/v1/bootstrap endpoint
+	// answer without an auth principal so a fresh install can create
+	// its first owner user from the dashboard login page. Default:
+	// true; flipped to false automatically after the first user is
+	// provisioned (handled in the bootstrap handler, not here).
+	// Use a *bool so "explicitly false in YAML" differs from "unset".
+	AllowAnonymousBootstrap *bool `yaml:"allow_anonymous_bootstrap"`
+}
+
+// LocalAuthConfig is the username+password flow.
+type LocalAuthConfig struct {
+	// Enabled defaults to true.
+	Enabled *bool `yaml:"enabled"`
+	// MinPasswordLength is enforced at registration + password
+	// change. Default: 12. Values < 8 are silently raised to 8.
+	MinPasswordLength int `yaml:"min_password_length"`
+	// RequireMixedCase / RequireDigit / RequireSymbol toggle
+	// character-class rules. All default off to stay out of the
+	// NIST "change every 90 days + mixed case" anti-pattern —
+	// operators can opt in when an internal policy demands it.
+	RequireMixedCase bool `yaml:"require_mixed_case"`
+	RequireDigit     bool `yaml:"require_digit"`
+	RequireSymbol    bool `yaml:"require_symbol"`
+}
+
+// APIKeyConfig controls the `opi_<id>_<secret>` bearer credential flow.
+type APIKeyConfig struct {
+	// Enabled defaults to true.
+	Enabled *bool `yaml:"enabled"`
+	// DefaultExpiry is a Go duration string (e.g. "720h" = 30 days).
+	// Empty means "no expiry" — keys live until explicitly revoked.
+	// The admin CLI uses this as the default when the operator does
+	// not pass --expires.
+	DefaultExpiry string `yaml:"default_expiry"`
+	// MaxExpiry caps how far in the future an expiry can be set.
+	// Empty means uncapped.
+	MaxExpiry string `yaml:"max_expiry"`
+}
+
+// SessionConfig mirrors the fields of auth.SessionOptions but in
+// YAML-friendly types. The gateway translates it into an auth.SessionOptions
+// at boot time.
+type SessionConfig struct {
+	// CookieName defaults to "opi_session".
+	CookieName string `yaml:"cookie_name"`
+	// CSRFCookieName defaults to "opi_csrf".
+	CSRFCookieName string `yaml:"csrf_cookie_name"`
+	// Path cookie scope. Default: "/".
+	Path string `yaml:"path"`
+	// Domain is left empty by default (exact-host cookie).
+	Domain string `yaml:"domain"`
+	// Secure forces the Secure flag. By default it tracks
+	// Gateway.TLS — false for http://127.0.0.1 local runs, true when
+	// TLS is configured.
+	Secure *bool `yaml:"secure"`
+	// SameSite: "lax" (default), "strict", or "none".
+	SameSite string `yaml:"same_site"`
+	// TTL is a Go duration string. Default: "168h" (7 days).
+	TTL string `yaml:"ttl"`
+}
+
+// CSRFConfig is intentionally tiny.
+type CSRFConfig struct {
+	// Enabled defaults to true.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// OIDCConfig is the enterprise SSO path, wired in phase 4.
+type OIDCConfig struct {
+	// Enabled defaults to false. When true, Issuer + ClientID are
+	// required.
+	Enabled bool `yaml:"enabled"`
+	// Issuer is the OIDC discovery URL (e.g. https://accounts.google.com).
+	Issuer string `yaml:"issuer"`
+	// ClientID / ClientSecret are the registered relying party.
+	// ClientSecret should usually come from an env override or the
+	// datastore secrets table.
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	// RedirectURL is the callback on this deployment, e.g.
+	// https://opi.example.com/api/v1/auth/oidc/callback.
+	RedirectURL string `yaml:"redirect_url"`
+	// Scopes defaults to [openid, profile, email].
+	Scopes []string `yaml:"scopes"`
+	// UsernameClaim defaults to "preferred_username".
+	UsernameClaim string `yaml:"username_claim"`
+	// EmailClaim defaults to "email".
+	EmailClaim string `yaml:"email_claim"`
+	// AllowedDomains restricts signup to the listed email domains.
+	// Empty means allow any domain the IdP returns.
+	AllowedDomains []string `yaml:"allowed_domains"`
+	// DefaultRole is granted to newly-provisioned users. Defaults
+	// to "viewer" — admins promote from the dashboard/CLI.
+	DefaultRole string `yaml:"default_role"`
 }
 
 // DevOpsConfig groups the built-in DevOps platform integrations.
@@ -877,6 +1017,8 @@ func applyDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Datastore.Migrations) == "" {
 		cfg.Datastore.Migrations = "auto"
 	}
+
+	applyAuthDefaults(cfg)
 	if cfg.Agent.ToolsDir == "" {
 		cfg.Agent.ToolsDir = filepath.Join(cfg.StateDir, "tools")
 	}
@@ -1105,6 +1247,96 @@ func applyTeamPromptFiles(cfg *Config) {
 	sort.Strings(paths)
 	cfg.Extensions.Enabled = true
 	cfg.Extensions.PromptFiles = append(cfg.Extensions.PromptFiles, paths...)
+}
+
+// applyAuthDefaults fills in the Auth section. Kept separate from
+// applyDefaults for readability — this section will grow as phase 2c+
+// lands OIDC, TOTP, and per-policy knobs.
+//
+// Rules:
+//   - Local + API keys default ON; OIDC defaults OFF; CSRF defaults ON.
+//   - Sessions.Secure tracks Gateway.TLS: off for http://127.0.0.1,
+//     on as soon as the operator configures a cert.
+//   - LegacySharedToken inherits OPSINTELLIGENCE_GATEWAY_TOKEN when
+//     unset, so existing automation migrating to 2b does not break.
+func applyAuthDefaults(cfg *Config) {
+	a := &cfg.Auth
+	trueVal, falseVal := true, false
+
+	if a.Local.Enabled == nil {
+		a.Local.Enabled = &trueVal
+	}
+	if a.Local.MinPasswordLength == 0 {
+		a.Local.MinPasswordLength = 12
+	}
+	if a.Local.MinPasswordLength < 8 {
+		a.Local.MinPasswordLength = 8
+	}
+
+	if a.APIKeys.Enabled == nil {
+		a.APIKeys.Enabled = &trueVal
+	}
+
+	if strings.TrimSpace(a.Sessions.CookieName) == "" {
+		a.Sessions.CookieName = "opi_session"
+	}
+	if strings.TrimSpace(a.Sessions.CSRFCookieName) == "" {
+		a.Sessions.CSRFCookieName = "opi_csrf"
+	}
+	if strings.TrimSpace(a.Sessions.Path) == "" {
+		a.Sessions.Path = "/"
+	}
+	if strings.TrimSpace(a.Sessions.SameSite) == "" {
+		a.Sessions.SameSite = "lax"
+	}
+	if strings.TrimSpace(a.Sessions.TTL) == "" {
+		a.Sessions.TTL = "168h"
+	}
+	if a.Sessions.Secure == nil {
+		// Default tracks TLS: Secure iff a TLS cert is configured,
+		// so local http://127.0.0.1 dashboards keep working.
+		if strings.TrimSpace(cfg.Gateway.TLS.Cert) != "" && strings.TrimSpace(cfg.Gateway.TLS.Key) != "" {
+			a.Sessions.Secure = &trueVal
+		} else {
+			a.Sessions.Secure = &falseVal
+		}
+	}
+
+	if a.CSRF.Enabled == nil {
+		a.CSRF.Enabled = &trueVal
+	}
+
+	// Legacy shared token. Inline YAML > env > empty.
+	if strings.TrimSpace(a.LegacySharedToken) == "" {
+		if env := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_GATEWAY_TOKEN")); env != "" {
+			a.LegacySharedToken = env
+		}
+	}
+
+	// OIDC defaults only apply when the operator enabled it.
+	if a.OIDC.Enabled {
+		if len(a.OIDC.Scopes) == 0 {
+			a.OIDC.Scopes = []string{"openid", "profile", "email"}
+		}
+		if strings.TrimSpace(a.OIDC.UsernameClaim) == "" {
+			a.OIDC.UsernameClaim = "preferred_username"
+		}
+		if strings.TrimSpace(a.OIDC.EmailClaim) == "" {
+			a.OIDC.EmailClaim = "email"
+		}
+		if strings.TrimSpace(a.OIDC.DefaultRole) == "" {
+			a.OIDC.DefaultRole = "viewer"
+		}
+		if strings.TrimSpace(a.OIDC.ClientSecret) == "" {
+			if env := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_OIDC_CLIENT_SECRET")); env != "" {
+				a.OIDC.ClientSecret = env
+			}
+		}
+	}
+
+	if a.AllowAnonymousBootstrap == nil {
+		a.AllowAnonymousBootstrap = &trueVal
+	}
 }
 
 // resolveDevOpsTokens replaces empty Token fields with the value of TokenEnv (os.Getenv)

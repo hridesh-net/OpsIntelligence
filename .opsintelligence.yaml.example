@@ -303,6 +303,56 @@ datastore:
   migrations: "auto"
 
 # ─────────────────────────────────────────────
+# Auth (identity + session for the HTTP gateway + dashboard)
+#
+# Defaults shown below are safe for a local install on http://127.0.0.1:
+# local password login on, API keys on, OIDC off, CSRF on, Secure
+# cookies tracked from gateway TLS, legacy shared token empty.
+#
+# Every knob here can also be driven from the dashboard Settings UI
+# (phase 3c). CLI and UI call the same shared configsvc layer.
+# ─────────────────────────────────────────────
+auth:
+  local:
+    enabled: true
+    min_password_length: 12       # hard floor of 8
+    require_mixed_case: false
+    require_digit: false
+    require_symbol: false
+  api_keys:
+    enabled: true
+    # default_expiry: Go duration string (e.g. "720h"). Empty = never.
+    default_expiry: ""
+    # max_expiry caps user-supplied --expires. Empty = uncapped.
+    max_expiry: ""
+  sessions:
+    cookie_name: "opi_session"
+    csrf_cookie_name: "opi_csrf"
+    path: "/"
+    domain: ""
+    # secure: auto-tracks gateway.tls.cert when unset. Force true in prod.
+    # secure: true
+    same_site: "lax"              # lax | strict | none
+    ttl: "168h"                   # 7 days idle timeout
+  csrf:
+    enabled: true
+  oidc:
+    enabled: false
+    # issuer: "https://accounts.google.com"
+    # client_id: "..."
+    # client_secret: "${OPSINTELLIGENCE_OIDC_CLIENT_SECRET}"
+    # redirect_url: "https://opi.example.com/api/v1/auth/oidc/callback"
+    scopes: []                    # default: [openid, profile, email]
+    username_claim: ""            # default: preferred_username
+    email_claim: ""               # default: email
+    allowed_domains: []
+    default_role: ""              # default: viewer
+  # legacy_shared_token is the pre-RBAC bootstrap credential. Inherits
+  # OPSINTELLIGENCE_GATEWAY_TOKEN when unset. Prefer issuing API keys.
+  legacy_shared_token: ""
+  allow_anonymous_bootstrap: true # auto-disabled after first user
+
+# ─────────────────────────────────────────────
 # Tracing (off by default)
 # ─────────────────────────────────────────────
 tracing:

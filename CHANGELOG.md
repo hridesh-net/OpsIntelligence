@@ -8,6 +8,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auth primitives + Authenticator middleware + admin CLI (phase 2b
+  of the cloud-dashboard + RBAC rollout).** Everything the HTTP
+  gateway and dashboard need to turn a request into a `*auth.Principal`
+  backed by a real user row, plus the operator-facing CLI to
+  provision those rows on day one.
+  - **`internal/auth/passwords.go`** — argon2id default hasher with
+    PHC-style envelope (`$argon2id$v=19$m=...,t=...,p=...$salt$digest`)
+    and bcrypt (`$2a$/$2b$/$2y$`) verify-only path for migrating
+    legacy rows. `HashPassword`, `VerifyPassword`, `NeedsRehash`,
+    `RandomToken`, `ConstantTimeEqual` utilities. `ErrInvalidCredentials`
+    / `ErrMalformedHash` sentinels split user-visible 401s from
+    corrupt-data logs.
+  - **`internal/auth/apikeys.go`** — wire format `opi_<key_id>_<secret>`
+    so leaked keys grep cleanly; 8-char lowercase `key_id` is the
+    public handle shown in audit / dashboard, 32-byte secret is
+    argon2id-hashed and never stored. `GenerateAPIKey`, `ParseAPIKey`,
+    `VerifyAPIKey` (revoke + expiry aware), `MaskAPIKey` helper.
+  - **`internal/auth/sessions.go`** — `SessionManager` built on
+    `datastore.SessionRepo`. Signed HttpOnly session cookie +
+    double-submit CSRF cookie, `Secure` flag tracks TLS by default.
+    `Create` / `Load` / `Touch` / `Revoke` / `IssueCSRF` / `CSRFTokenFrom`.
+  - **`internal/auth/middleware.go`** — `Authenticator` HTTP
+    middleware running the credential chain
+    `cookie → API key bearer → legacy shared token`. Attaches
+    `*auth.Principal` to request context via `auth.WithPrincipal`,
+    touches session rows async, 401s with `WWW-Authenticate: Bearer`
+    by default, supports `AllowAnonymous` for `/api/v1/bootstrap`,
+    plus a sibling `RequireCSRF` middleware that only fires for
+    cookie-authed unsafe methods (API keys/bearer tokens bypass).
+    Custom `ErrorHandler` hook for JSON rendering in the gateway.
+  - **`internal/config.AuthConfig`** — YAML surface for every knob:
+    local policy, API key expiry defaults, session cookie/TTL,
+    CSRF toggle, full OIDC block (wired in phase 4), legacy shared
+    token (inherits `OPSINTELLIGENCE_GATEWAY_TOKEN`),
+    `allow_anonymous_bootstrap`. Defaults applied in
+    `applyAuthDefaults`; `Secure` cookie flag auto-tracks
+    `gateway.tls.cert`/`gateway.tls.key`.
+  - **`opsintelligence admin` CLI** with `init`, `user
+    {add,list,disable,enable,delete,password}`, `role
+    {list,grant,revoke}`, `apikey {create,list,revoke}`. Interactive
+    password prompts go through `golang.org/x/term` without echo,
+    API-key secrets print exactly once at creation time. The
+    command group is the CLI twin of the Settings UI that lands in
+    phase 3c.
+  - **Tests**: argon2id hash/verify round-trip, bcrypt interop,
+    malformed-hash rejection, salt uniqueness, `NeedsRehash` on
+    weaker params, API-key generate/parse/verify with revoke +
+    expiry, masked token never leaks secret, Authenticator chain
+    against a real SQLite store (401 without creds, 401 on revoked
+    session, 200 on cookie / API key / legacy token, `AllowAnonymous`
+    path, CSRF GET bypass + POST reject + POST accept).
+  - **Documentation**: `.opsintelligence.yaml.example` gains a
+    fully-commented `auth:` block mirroring every knob.
+  - **Deferred to phase 2c**: minimal dashboard shell (login page +
+    empty Settings frame) wired to this middleware.
+  - **Deferred to phase 3a**: `internal/configsvc` shared layer so
+    CLI commands and the dashboard REST API both drive config
+    through identical methods.
 - **RBAC engine + identity primitives (phase 2a of the cloud-dashboard
   + RBAC rollout).** New `internal/auth` and `internal/rbac` packages
   establish the identity and authorisation layer above the ops-plane

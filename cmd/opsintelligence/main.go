@@ -212,6 +212,7 @@ func rootCmd() *cobra.Command {
 		cronCmd(flags),
 		dlqCmd(flags),
 		datastoreCmd(flags),
+		adminCmd(flags),
 		doctorCmd(flags),
 		versionCmd(flags),
 		localgemmaCmd(flags),
