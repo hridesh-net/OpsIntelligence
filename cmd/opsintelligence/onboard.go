@@ -1,809 +1,1965 @@
-// Package main — OpsIntelligence onboarding.
-//
-// This is a deliberately practical wizard for the DevOps fork. It collects:
-//   - a default LLM provider from a broad provider list (OpenAI, Anthropic,
-//     Groq, Mistral, Together, OpenRouter, NVIDIA, Cohere, DeepSeek,
-//     Perplexity, xAI, HuggingFace, Ollama, vLLM, LM Studio, Azure OpenAI,
-//     Bedrock, Vertex, Voyage)
-//   - provider API key/base-url/model fields needed for the chosen provider
-//   - Messaging channels (Telegram, Discord, Slack, WhatsApp) — optional, AssistClaw-style
-//   - DevOps integration tokens (GitHub, GitLab, Jenkins, SonarQube) — optional
-//   - an active team name
-//
-// It writes a starter ~/.opsintelligence/opsintelligence.yaml. Advanced users
-// should edit the YAML directly (see .opsintelligence.yaml.example).
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
-	"github.com/spf13/cobra"
-
+	"github.com/charmbracelet/lipgloss"
+	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	"github.com/opsintelligence/opsintelligence/internal/channels/whatsapp"
 	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/localintel"
+	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
+	"github.com/opsintelligence/opsintelligence/internal/skills"
+	"github.com/spf13/cobra"
 )
 
-// onboardNeedsAPIKey mirrors AssistClaw: local providers have no cloud key; Vertex uses the dedicated Vertex step.
-func onboardNeedsAPIKey(provider string) bool {
-	switch provider {
-	case "ollama", "vllm", "lm_studio", "vertex":
-		return false
-	default:
-		return true
-	}
+type provEntry struct {
+	provider     string
+	apiKey       string
+	baseURL      string
+	apiVersion   string
+	awsRegion    string
+	awsProfile   string
+	awsAccessKey string
+	awsSecretKey string
+	vertexProj   string
+	vertexLoc    string
+	vertexCreds  string
+	model        string
 }
 
-func onboardBaseURLDefault(provider string) (string, bool) {
-	switch provider {
-	case "ollama":
-		return "http://127.0.0.1:11434", true
-	case "vllm":
-		return "http://127.0.0.1:8000", true
-	case "lm_studio":
-		return "http://127.0.0.1:1234", true
-	default:
-		return "", false
-	}
+type embedEntry struct {
+	provider string
+	apiKey   string
+	baseURL  string
+	model    string
 }
 
-func onboardPickContains(picks []string, want string) bool {
-	for _, p := range picks {
-		if p == want {
-			return true
+func inferBedrockAuthMode(e provEntry) string {
+	if strings.TrimSpace(e.apiKey) != "" {
+		return "api_key"
+	}
+	if strings.TrimSpace(e.awsProfile) != "" {
+		return "profile"
+	}
+	if strings.TrimSpace(e.awsAccessKey) != "" {
+		return "iam"
+	}
+	return "profile"
+}
+
+// ensureSelectValue prepends a select option when the saved value is not in the list (e.g. custom model IDs).
+func ensureSelectValue(opts []huh.Option[string], current, prefix string) []huh.Option[string] {
+	current = strings.TrimSpace(current)
+	if current == "" || current == "custom" {
+		return opts
+	}
+	for _, o := range opts {
+		if o.Value == current {
+			return opts
 		}
 	}
-	return false
+	label := current
+	if len(label) > 72 {
+		label = label[:69] + "…"
+	}
+	return append([]huh.Option[string]{huh.NewOption(prefix+label, current)}, opts...)
 }
 
-func onboardSplitCSV(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
+func normalizeGatewayBind(bind string) string {
+	switch strings.TrimSpace(bind) {
+	case "loopback", "127.0.0.1", "":
+		return "loopback"
+	case "lan", "0.0.0.0":
+		return "lan"
+	case "tailscale", "tailnet":
+		return "tailscale"
+	default:
+		return bind
 	}
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
-// runOnboarding is invoked by `loadConfig` when no config file exists. It runs
-// the non-interactive skeleton path so fresh installs get a usable YAML before
-// the daemon starts. Users can re-run `opsintelligence onboard` later for the
-// full wizard.
-func runOnboarding(path string) (string, error) {
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return path, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-	content := renderOnboardYAML(onboardValues{
-		Provider:   "openai",
-		ActiveTeam: "platform",
-	})
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return path, fmt.Errorf("write %s: %w", path, err)
-	}
-	return path, nil
-}
-
-func onboardCmd(flags *globalFlags) *cobra.Command {
-	_ = flags
-	var nonInteractive bool
-	cmd := &cobra.Command{
+func onboardCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
 		Use:   "onboard",
-		Short: "Interactive setup: write a starter opsintelligence.yaml",
-		Long: `Runs a minimal wizard that collects LLM provider credentials, messaging channels
-(Telegram, Discord, Slack, WhatsApp — optional, same flow as AssistClaw), DevOps tokens
-(GitHub/GitLab/Jenkins/SonarQube — optional), and an active team name, then writes ~/.opsintelligence/opsintelligence.yaml.
-
-Advanced configuration (memory tiers, MCP clients, cron, webhooks, extensions) is best edited
-directly in YAML — see .opsintelligence.yaml.example in the repository.`,
+		Short: "Run the interactive first-time setup wizard",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var (
-				provider       = "openai"
-				apiKey         string
-				providerURL    string
-				defaultModel   string
-				openrouterSite string
-				openrouterURL  string
-				azureAPIVer    string
-				bedrockRegion  string
-				bedrockProfile string
-				accessKeyID    string
-				secretKey      string
-				vertexProject  string
-				vertexLocation string
-				vertexCreds    string
-				slackBotToken  string
-				slackAppToken  string
-				githubToken    string
-				gitlabURL      string
-				gitlabToken    string
-				jenkinsURL     string
-				jenkinsUser    string
-				jenkinsToken   string
-				sonarURL       string
-				sonarToken     string
-				activeTeam     = "platform"
-				// AssistClaw-style opt-in: configure provider creds, messaging channels, DevOps integrations.
-				configureProvider = true
-				integrationPicks  []string
-				channelPicks      []string
-				tgBotToken        string
-				tgDMMode          = "pairing"
-				tgAllowFromRaw    string
-				tgReqMention      = true
-				dcBotToken        string
-				dcDMMode          = "pairing"
-				dcAllowFromRaw    string
-				dcReqMention      = true
-				slackDMMode       = "pairing"
-				slackAllowFromRaw string
-				waSessionID       string
-				waDMMode          = "pairing"
-				waAllowFromRaw    string
-			)
-
-			if !nonInteractive {
-				runStep := func(group *huh.Group) error {
-					form := huh.NewForm(group).WithShowHelp(true).WithShowErrors(true)
-					form.WithProgramOptions(tea.WithAltScreen())
-					return form.Run()
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewSelect[string]().
-							Title("Default LLM provider").
-							Options(
-								huh.NewOption("OpenAI", "openai"),
-								huh.NewOption("Anthropic", "anthropic"),
-								huh.NewOption("Groq", "groq"),
-								huh.NewOption("Mistral", "mistral"),
-								huh.NewOption("Together AI", "together"),
-								huh.NewOption("OpenRouter", "openrouter"),
-								huh.NewOption("NVIDIA NIM", "nvidia"),
-								huh.NewOption("Cohere", "cohere"),
-								huh.NewOption("DeepSeek", "deepseek"),
-								huh.NewOption("Perplexity", "perplexity"),
-								huh.NewOption("xAI (Grok)", "xai"),
-								huh.NewOption("HuggingFace Inference", "huggingface"),
-								huh.NewOption("Ollama (local)", "ollama"),
-								huh.NewOption("vLLM (OpenAI-compatible)", "vllm"),
-								huh.NewOption("LM Studio (local)", "lm_studio"),
-								huh.NewOption("Azure OpenAI", "azure_openai"),
-								huh.NewOption("AWS Bedrock", "bedrock"),
-								huh.NewOption("Google Vertex AI", "vertex"),
-								huh.NewOption("Voyage", "voyage"),
-							).
-							Value(&provider),
-						huh.NewInput().
-							Title("Default model (optional)").
-							Description("Examples: gpt-5, claude-sonnet-4-5, grok-4, llama-3.3-70b.").
-							Value(&defaultModel),
-					).Title("Provider selection"),
-				); err != nil {
-					return err
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewConfirm().
-							Title("Configure provider API keys and connection details now?").
-							Description("Say No to skip — you can edit ~/.opsintelligence/opsintelligence.yaml later (same idea as AssistClaw).").
-							Value(&configureProvider),
-					).Title("Provider setup"),
-				); err != nil {
-					return err
-				}
-				if configureProvider {
-					var credFields []huh.Field
-					if onboardNeedsAPIKey(provider) {
-						credFields = append(credFields,
-							huh.NewInput().
-								Title("Provider API key").
-								Description("Stored in your local config file.").
-								EchoMode(huh.EchoModePassword).
-								Value(&apiKey))
-					}
-					if def, ok := onboardBaseURLDefault(provider); ok {
-						if strings.TrimSpace(providerURL) == "" {
-							providerURL = def
-						}
-						credFields = append(credFields,
-							huh.NewInput().
-								Title("Base URL").
-								Description("Override if your server listens elsewhere.").
-								Value(&providerURL))
-					} else if provider == "azure_openai" {
-						credFields = append(credFields,
-							huh.NewInput().
-								Title("Azure OpenAI endpoint").
-								Description("e.g. https://YOUR_RESOURCE.openai.azure.com").
-								Value(&providerURL))
-					} else if provider == "vertex" {
-						// Project / location / service-account path are collected on the Vertex step.
-					} else if provider == "bedrock" {
-						// Region / IAM / keys are collected on the Bedrock step; optional bearer still uses api_key above.
-					} else {
-						credFields = append(credFields,
-							huh.NewInput().
-								Title("Base URL (optional override)").
-								Description("For OpenAI-compatible proxies or custom endpoints. Leave blank for provider defaults.").
-								Value(&providerURL))
-					}
-					if len(credFields) > 0 {
-						if err := runStep(huh.NewGroup(credFields...).Title("Provider credentials")); err != nil {
-							return err
-						}
-					}
-					if provider == "openrouter" {
-						if err := runStep(
-							huh.NewGroup(
-								huh.NewInput().Title("OpenRouter app/site name (optional)").Description("Used for request attribution.").Value(&openrouterSite),
-								huh.NewInput().Title("OpenRouter site URL (optional)").Description("e.g. https://ops.example.com").Value(&openrouterURL),
-							).Title("OpenRouter options"),
-						); err != nil {
-							return err
-						}
-					}
-					if provider == "azure_openai" {
-						if err := runStep(
-							huh.NewGroup(
-								huh.NewInput().Title("Azure API version (optional)").Description("e.g. 2024-06-01").Value(&azureAPIVer),
-							).Title("Azure OpenAI options"),
-						); err != nil {
-							return err
-						}
-					}
-					if provider == "bedrock" {
-						if err := runStep(
-							huh.NewGroup(
-								huh.NewInput().Title("Bedrock region (optional)").Description("e.g. us-east-1").Value(&bedrockRegion),
-								huh.NewInput().Title("Bedrock profile (optional)").Description("Named AWS profile.").Value(&bedrockProfile),
-								huh.NewInput().Title("AWS access key ID (optional)").Description("Only if not using profile/role auth.").Value(&accessKeyID),
-								huh.NewInput().Title("AWS secret access key (optional)").EchoMode(huh.EchoModePassword).Description("Only if not using profile/role auth.").Value(&secretKey),
-							).Title("AWS Bedrock options"),
-						); err != nil {
-							return err
-						}
-					}
-					if provider == "vertex" {
-						if err := runStep(
-							huh.NewGroup(
-								huh.NewInput().Title("Vertex project ID (optional)").Value(&vertexProject),
-								huh.NewInput().Title("Vertex location (optional)").Description("e.g. us-central1").Value(&vertexLocation),
-								huh.NewInput().Title("Vertex credentials file path (optional)").Description("Service-account JSON path").Value(&vertexCreds),
-							).Title("Vertex options"),
-						); err != nil {
-							return err
-						}
-					}
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewMultiSelect[string]().
-							Title("Messaging channels").
-							Description("AssistClaw-style: pick chat apps to configure now. Space toggles; leave empty to skip.").
-							Options(
-								huh.NewOption("Telegram", "telegram"),
-								huh.NewOption("Discord", "discord"),
-								huh.NewOption("Slack (Socket Mode)", "slack"),
-								huh.NewOption("WhatsApp", "whatsapp"),
-							).
-							Value(&channelPicks),
-					).Title("Messaging channels"),
-				); err != nil {
-					return err
-				}
-				dmModeOpts := []huh.Option[string]{
-					huh.NewOption("Pairing (recommended)", "pairing"),
-					huh.NewOption("Allowlist only", "allowlist"),
-					huh.NewOption("Open (public)", "open"),
-					huh.NewOption("Disabled", "disabled"),
-				}
-				if onboardPickContains(channelPicks, "telegram") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewInput().Title("Telegram bot token").Value(&tgBotToken),
-							huh.NewSelect[string]().Title("Telegram security mode").Options(dmModeOpts...).Value(&tgDMMode),
-							huh.NewInput().Title("Whitelisted Telegram IDs").Description("Comma-separated numeric IDs or @usernames (allowlist mode).").Value(&tgAllowFromRaw),
-							huh.NewConfirm().Title("Require @bot mention in groups?").Value(&tgReqMention),
-						).Title("Telegram"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(channelPicks, "discord") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewInput().Title("Discord bot token").Value(&dcBotToken),
-							huh.NewSelect[string]().Title("Discord security mode").Options(dmModeOpts...).Value(&dcDMMode),
-							huh.NewInput().Title("Whitelisted Discord user IDs").Description("Comma-separated (allowlist mode).").Value(&dcAllowFromRaw),
-							huh.NewConfirm().Title("Require @bot mention in server channels?").Description("Recommended for busy servers.").Value(&dcReqMention),
-						).Title("Discord"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(channelPicks, "slack") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewInput().Title("Slack bot token").Description("xoxb-…").Value(&slackBotToken),
-							huh.NewInput().Title("Slack app token").Description("xapp-… (Socket Mode).").Value(&slackAppToken),
-							huh.NewSelect[string]().Title("Slack security mode").Options(dmModeOpts...).Value(&slackDMMode),
-							huh.NewInput().Title("Whitelisted Slack user IDs").Description("Comma-separated (allowlist mode).").Value(&slackAllowFromRaw),
-						).Title("Slack"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(channelPicks, "whatsapp") {
-					if strings.TrimSpace(waSessionID) == "" {
-						waSessionID = "personal"
-					}
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("WhatsApp").Description("Links via QR on first start; session DB lives under your state directory."),
-							huh.NewInput().Title("WhatsApp session ID").Description("e.g. personal").Value(&waSessionID),
-							huh.NewSelect[string]().Title("WhatsApp security mode").Options(dmModeOpts...).Value(&waDMMode),
-							huh.NewInput().Title("Whitelisted numbers").Description("Comma-separated E.164 (allowlist mode).").Value(&waAllowFromRaw),
-						).Title("WhatsApp"),
-					); err != nil {
-						return err
-					}
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewMultiSelect[string]().
-							Title("Which DevOps integrations should we configure now?").
-							Description("Space to toggle · Enter to confirm · leave empty to skip all (configure later in YAML).").
-							Options(
-								huh.NewOption("GitHub (PAT or app token)", "github"),
-								huh.NewOption("GitLab", "gitlab"),
-								huh.NewOption("Jenkins", "jenkins"),
-								huh.NewOption("SonarQube", "sonar"),
-							).
-							Value(&integrationPicks),
-					).Title("DevOps integrations"),
-				); err != nil {
-					return err
-				}
-				if onboardPickContains(integrationPicks, "github") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("GitHub").Description("PAT or App installation token with repo/read:org scope."),
-							huh.NewInput().Title("GitHub token").EchoMode(huh.EchoModePassword).Value(&githubToken),
-						).Title("GitHub"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(integrationPicks, "gitlab") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("GitLab").Description("Base URL and personal/project access token."),
-							huh.NewInput().Title("GitLab base URL").Value(&gitlabURL),
-							huh.NewInput().Title("GitLab token").EchoMode(huh.EchoModePassword).Value(&gitlabToken),
-						).Title("GitLab"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(integrationPicks, "jenkins") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("Jenkins").Description("Base URL plus user + API token for job status."),
-							huh.NewInput().Title("Jenkins base URL").Value(&jenkinsURL),
-							huh.NewInput().Title("Jenkins user").Value(&jenkinsUser),
-							huh.NewInput().Title("Jenkins API token").EchoMode(huh.EchoModePassword).Value(&jenkinsToken),
-						).Title("Jenkins"),
-					); err != nil {
-						return err
-					}
-				}
-				if onboardPickContains(integrationPicks, "sonar") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("SonarQube").Description("Base URL and token for quality-gate + issues."),
-							huh.NewInput().Title("Sonar base URL").Value(&sonarURL),
-							huh.NewInput().Title("Sonar token").EchoMode(huh.EchoModePassword).Value(&sonarToken),
-						).Title("SonarQube"),
-					); err != nil {
-						return err
-					}
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewInput().
-							Title("Active team name").
-							Description("Directory under ~/.opsintelligence/teams/<name> whose *.md files the agent must follow.").
-							Value(&activeTeam),
-					).Title("Team policy"),
-				); err != nil {
-					return err
-				}
+			path := gf.configPath
+			if path == "" {
+				path = config.DefaultConfigPath()
 			}
-
-			path := config.DefaultConfigPath()
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+			shouldStart, err := runOnboarding(path)
+			if err != nil {
+				return err
 			}
-			content := renderOnboardYAML(onboardValues{
-				Provider:           provider,
-				APIKey:             apiKey,
-				ProviderURL:        providerURL,
-				DefaultModel:       defaultModel,
-				OpenRouterURL:      openrouterURL,
-				OpenRouterApp:      openrouterSite,
-				AzureAPIVer:        azureAPIVer,
-				BedrockRegion:      bedrockRegion,
-				BedrockProfile:     bedrockProfile,
-				AccessKeyID:        accessKeyID,
-				SecretKey:          secretKey,
-				VertexProject:      vertexProject,
-				VertexLocation:     vertexLocation,
-				VertexCreds:        vertexCreds,
-				TelegramBot:        tgBotToken,
-				TelegramDMMode:     tgDMMode,
-				TelegramAllow:      tgAllowFromRaw,
-				TelegramReqMention: tgReqMention,
-				DiscordBot:         dcBotToken,
-				DiscordDMMode:      dcDMMode,
-				DiscordAllow:       dcAllowFromRaw,
-				DiscordReqMention:  dcReqMention,
-				SlackBot:           slackBotToken,
-				SlackApp:           slackAppToken,
-				SlackDMMode:        slackDMMode,
-				SlackAllow:         slackAllowFromRaw,
-				WhatsAppEnabled:    onboardPickContains(channelPicks, "whatsapp"),
-				WaSession:          waSessionID,
-				WaDMMode:           waDMMode,
-				WaAllow:            waAllowFromRaw,
-				GitHubToken:        githubToken,
-				GitLabURL:          gitlabURL,
-				GitLabToken:        gitlabToken,
-				JenkinsURL:         jenkinsURL,
-				JenkinsUser:        jenkinsUser,
-				JenkinsToken:       jenkinsToken,
-				SonarURL:           sonarURL,
-				SonarToken:         sonarToken,
-				ActiveTeam:         activeTeam,
-			})
-			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-				return fmt.Errorf("write %s: %w", path, err)
+			if shouldStart {
+				fmt.Println("\n🚀 Starting OpsIntelligence in background mode...")
+				return Detach("start")
 			}
-			fmt.Printf("Wrote %s\n", path)
-			fmt.Println("Next: edit this YAML to tune memory/MCP/webhooks, then run `opsintelligence doctor`.")
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Write a minimal YAML skeleton without prompts (for CI provisioning)")
-	return cmd
 }
 
-type onboardValues struct {
-	Provider                              string
-	APIKey                                string
-	ProviderURL                           string
-	DefaultModel                          string
-	OpenRouterURL, OpenRouterApp          string
-	AzureAPIVer                           string
-	BedrockRegion, BedrockProfile         string
-	AccessKeyID, SecretKey                string
-	VertexProject, VertexLocation         string
-	VertexCreds                           string
-	TelegramBot                           string
-	TelegramDMMode                        string
-	TelegramAllow                         string
-	TelegramReqMention                    bool
-	DiscordBot                            string
-	DiscordDMMode                         string
-	DiscordAllow                          string
-	DiscordReqMention                     bool
-	SlackBot, SlackApp                    string
-	SlackDMMode                           string
-	SlackAllow                            string
-	WhatsAppEnabled                       bool
-	WaSession                             string
-	WaDMMode                              string
-	WaAllow                               string
-	GitHubToken                           string
-	GitLabURL, GitLabToken                string
-	JenkinsURL, JenkinsUser, JenkinsToken string
-	SonarURL, SonarToken                  string
-	ActiveTeam                            string
+// collectProvider guides the user through selecting and configuring an LLM provider.
+// openAICompatProviders is the list of provider keys that work with Plano
+// (all OpenAI-compatible providers). Anthropic, Bedrock, and Vertex use their
+// own proprietary protocols and are NOT OpenAI-compatible.
+var openAICompatProviders = map[string]bool{
+	"openai":     true,
+	"azure":      true,
+	"ollama":     true,
+	"vllm":       true,
+	"lmstudio":   true,
+	"groq":       true,
+	"mistral":    true,
+	"openrouter": true,
+	"deepseek":   true,
+	"perplexity": true,
+	"nvidia":     true,
+	"xai":        true,
 }
 
-func renderOnboardYAML(v onboardValues) string {
-	var b strings.Builder
-	b.WriteString("version: 1\n\n")
-	b.WriteString("state_dir: \"~/.opsintelligence\"\n\n")
+func collectProvider(theme *huh.Theme, providerType string, isPrimary bool, initial provEntry) (provEntry, error) {
+	return collectProviderFiltered(theme, providerType, isPrimary, initial, false)
+}
 
-	b.WriteString("gateway:\n")
-	b.WriteString("  host: \"127.0.0.1\"\n")
-	b.WriteString("  port: 18789\n")
-	b.WriteString("  token: \"\"\n\n")
+func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bool, initial provEntry, planoMode bool) (provEntry, error) {
+	entry := initial
+	var providerOptions []huh.Option[string]
 
-	b.WriteString("agent:\n")
-	b.WriteString("  max_iterations: 64\n")
-	b.WriteString("  system_prompt_ext: |\n")
-	b.WriteString("    Always read and follow the team's files under teams/<active-team>/ before giving opinions\n")
-	b.WriteString("    on PRs, Sonar, or CI. If a guideline conflicts with the user, ask for clarification.\n")
-	b.WriteString("  enabled_skills:\n    - devops\n\n")
+	allPrimary := []huh.Option[string]{
+		huh.NewOption("Anthropic (Recommended)", "anthropic"),
+		huh.NewOption("OpenAI", "openai"),
+		huh.NewOption("Ollama (Local / Free)", "ollama"),
+		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Vertex AI", "vertex"),
+		huh.NewOption("Groq", "groq"),
+		huh.NewOption("Mistral", "mistral"),
+		huh.NewOption("DeepSeek", "deepseek"),
+		huh.NewOption("xAI (Grok)", "xai"),
+		huh.NewOption("Perplexity", "perplexity"),
+		huh.NewOption("OpenRouter", "openrouter"),
+		huh.NewOption("NVIDIA NIM", "nvidia"),
+		huh.NewOption("Together AI", "together"),
+		huh.NewOption("HuggingFace (Inference API)", "huggingface"),
+		huh.NewOption("Cohere", "cohere"),
+		huh.NewOption("Azure OpenAI", "azure"),
+		huh.NewOption("vLLM (Local / Custom)", "vllm"),
+		huh.NewOption("LM Studio (Local)", "lmstudio"),
+	}
+	allSecondary := []huh.Option[string]{
+		huh.NewOption("Ollama (Local / Free)", "ollama"),
+		huh.NewOption("OpenAI", "openai"),
+		huh.NewOption("Groq (Super Fast)", "groq"),
+		huh.NewOption("Anthropic", "anthropic"),
+		huh.NewOption("Mistral", "mistral"),
+		huh.NewOption("OpenRouter", "openrouter"),
+		huh.NewOption("Azure OpenAI", "azure"),
+		huh.NewOption("DeepSeek", "deepseek"),
+		huh.NewOption("xAI (Grok)", "xai"),
+		huh.NewOption("Perplexity", "perplexity"),
+		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Vertex AI", "vertex"),
+		huh.NewOption("NVIDIA NIM", "nvidia"),
+		huh.NewOption("Together AI", "together"),
+		huh.NewOption("HuggingFace (Inference API)", "huggingface"),
+		huh.NewOption("Cohere", "cohere"),
+		huh.NewOption("vLLM (Local / Custom)", "vllm"),
+		huh.NewOption("LM Studio (Local)", "lmstudio"),
+	}
 
-	b.WriteString("providers:\n")
-	switch v.Provider {
-	case "azure_openai":
-		b.WriteString("  azure_openai:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+	source := allSecondary
+	if isPrimary {
+		source = allPrimary
+	}
+
+	if planoMode {
+		// Plano only routes to OpenAI-compatible providers
+		for _, o := range source {
+			if openAICompatProviders[o.Value] {
+				providerOptions = append(providerOptions, o)
+			}
 		}
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+	} else {
+		providerOptions = source
+	}
+
+	title := fmt.Sprintf("Which %s AI provider would you like to use?", providerType)
+	formProvider := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title(title).
+				Options(providerOptions...).
+				Value(&entry.provider),
+		),
+	).WithTheme(theme)
+
+	if err := formProvider.Run(); err != nil {
+		return provEntry{}, fmt.Errorf("onboarding interrupted")
+	}
+
+	// Prevent old config artifacts from leaking if user changed provider
+	if entry.provider != initial.provider {
+		entry.apiKey = ""
+		entry.baseURL = ""
+		entry.apiVersion = ""
+		entry.awsRegion = ""
+		entry.awsProfile = ""
+		entry.awsAccessKey = ""
+		entry.awsSecretKey = ""
+		entry.vertexProj = ""
+		entry.vertexLoc = ""
+		entry.vertexCreds = ""
+		entry.model = ""
+	}
+
+	var fields []huh.Field
+	needsAPIKey := map[string]bool{
+		"anthropic":  true,
+		"openai":     true,
+		"groq":       true,
+		"mistral":    true,
+		"openrouter": true,
+		"azure":      true,
+		"deepseek":   true,
+		"perplexity": true,
+		"voyage":     true,
+		"xai":        true,
+	}
+
+	needsBaseURL := map[string]string{
+		"ollama":   "http://localhost:11434",
+		"vllm":     "http://localhost:8000/v1",
+		"lmstudio": "http://localhost:1234/v1",
+		"azure":    "https://YOUR_RESOURCE_NAME.openai.azure.com",
+	}
+
+	if needsAPIKey[entry.provider] {
+		fields = append(fields, huh.NewInput().
+			Title("Enter API Key").
+			Description("Stored safely in your local configuration.").
+			Password(true).
+			Value(&entry.apiKey))
+	}
+
+	if defaultURL, ok := needsBaseURL[entry.provider]; ok {
+		if strings.TrimSpace(entry.baseURL) == "" {
+			entry.baseURL = defaultURL
 		}
-		if v.AzureAPIVer != "" {
-			b.WriteString("    api_version: \"" + v.AzureAPIVer + "\"\n")
+		fields = append(fields, huh.NewInput().
+			Title(fmt.Sprintf("Enter Base URL (Default: %s)", defaultURL)).
+			Value(&entry.baseURL))
+	}
+
+	if entry.provider == "azure" {
+		fields = append(fields, huh.NewInput().
+			Title("Enter Azure API Version (e.g., 2024-02-15-preview)").
+			Value(&entry.apiVersion))
+	}
+
+	if entry.provider == "bedrock" {
+		bedrockAuthMode := inferBedrockAuthMode(entry)
+		if strings.TrimSpace(entry.awsRegion) == "" {
+			entry.awsRegion = "us-east-1"
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		formBedrockAuth := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("AWS Bedrock Authentication").
+					Description("Tip: Bearer Tokens are currently most stable in us-east-1. IAM keys are recommended for other regions.").
+					Options(
+						huh.NewOption("Direct IAM Keys (AccessKeyID/SecretKey)", "iam"),
+						huh.NewOption("AWS Named Profile (~/.aws/credentials)", "profile"),
+						huh.NewOption("Native Bedrock API Key (Bearer Token)", "api_key"),
+					).
+					Value(&bedrockAuthMode),
+			),
+		).WithTheme(theme)
+		if err := formBedrockAuth.Run(); err != nil {
+			return provEntry{}, fmt.Errorf("onboarding interrupted")
 		}
-		b.WriteString("\n")
-	case "bedrock":
-		b.WriteString("  bedrock:\n")
-		if v.BedrockRegion != "" {
-			b.WriteString("    region: \"" + v.BedrockRegion + "\"\n")
+
+		fields = append(fields, huh.NewInput().Title("AWS Region").Value(&entry.awsRegion))
+
+		switch bedrockAuthMode {
+		case "iam":
+			fields = append(fields,
+				huh.NewInput().Title("AWS Access Key ID").Value(&entry.awsAccessKey),
+				huh.NewInput().Title("AWS Secret Access Key").Password(true).Value(&entry.awsSecretKey),
+			)
+		case "profile":
+			entry.awsProfile = "default"
+			fields = append(fields, huh.NewInput().Title("AWS Profile").Value(&entry.awsProfile))
+		case "api_key":
+			fields = append(fields, huh.NewInput().Title("Bedrock API Key").Password(true).Value(&entry.apiKey))
 		}
-		if v.BedrockProfile != "" {
-			b.WriteString("    profile: \"" + v.BedrockProfile + "\"\n")
+	}
+
+	if entry.provider == "vertex" {
+		fields = append(fields,
+			huh.NewInput().Title("GCP Project ID").Value(&entry.vertexProj),
+			huh.NewInput().Title("GCP Location (e.g. us-central1)").Value(&entry.vertexLoc),
+			huh.NewInput().Title("Service Account JSON Path (Optional)").Value(&entry.vertexCreds),
+		)
+	}
+
+	if len(fields) > 0 {
+		formDetails := huh.NewForm(huh.NewGroup(fields...)).WithTheme(theme)
+		if err := formDetails.Run(); err != nil {
+			return provEntry{}, fmt.Errorf("onboarding interrupted")
 		}
-		if v.AccessKeyID != "" {
-			b.WriteString("    access_key_id: \"" + v.AccessKeyID + "\"\n")
+	}
+
+	modelChoices := map[string][]huh.Option[string]{
+		"anthropic": {
+			huh.NewOption("Claude 3.7 Sonnet (Latest)", "claude-3-7-sonnet-20250219"),
+			huh.NewOption("Claude 3.5 Sonnet (Classic)", "claude-3-5-sonnet-20241022"),
+			huh.NewOption("Claude 3.5 Haiku (Fast)", "claude-3-5-haiku-20241022"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"openai": {
+			huh.NewOption("GPT-4o (Smartest)", "gpt-4o"),
+			huh.NewOption("GPT-4o-mini (Efficient)", "gpt-4o-mini"),
+			huh.NewOption("o3-mini (Reasoning)", "o3-mini"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"ollama": {
+			huh.NewOption("Llama 3.2 (3B)", "llama3.2"),
+			huh.NewOption("Mistral (7B)", "mistral"),
+			huh.NewOption("DeepSeek-R1 (70B Distill)", "deepseek-r1"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"groq": {
+			huh.NewOption("Llama 3.3 70B Versatile", "llama-3.3-70b-versatile"),
+			huh.NewOption("Mixtral 8x7B", "mixtral-8x7b-32768"),
+			huh.NewOption("DeepSeek-R1 70B", "deepseek-r1-distill-llama-70b"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"deepseek": {
+			huh.NewOption("DeepSeek Chat", "deepseek-chat"),
+			huh.NewOption("DeepSeek Reasoner (R1)", "deepseek-reasoner"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"perplexity": {
+			huh.NewOption("Sonar Reasoning Pro", "sonar-reasoning-pro"),
+			huh.NewOption("Sonar Pro", "sonar-pro"),
+			huh.NewOption("Sonar Reasoning", "sonar-reasoning"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"xai": {
+			huh.NewOption("Grok 4", "grok-4-latest"),
+			huh.NewOption("Grok Beta", "grok-beta"),
+			huh.NewOption("Grok Vision", "grok-vision-beta"),
+			huh.NewOption("Grok 2", "grok-2"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"vertex": {
+			huh.NewOption("Gemini 1.5 Pro", "gemini-1.5-pro"),
+			huh.NewOption("Gemini 1.5 Flash", "gemini-1.5-flash"),
+			huh.NewOption("Gemini 2.0 Flash Exp", "gemini-2.0-flash-exp"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+	}
+
+	var modelOpts []huh.Option[string]
+	if entry.provider == "bedrock" {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		picks := bedrock.ListOnboardingTextModels(ctx, bedrock.Config{
+			Region:          strings.TrimSpace(entry.awsRegion),
+			Profile:         strings.TrimSpace(entry.awsProfile),
+			AccessKeyID:     strings.TrimSpace(entry.awsAccessKey),
+			SecretAccessKey: strings.TrimSpace(entry.awsSecretKey),
+			APIKey:          strings.TrimSpace(entry.apiKey),
+		})
+		for _, p := range picks {
+			modelOpts = append(modelOpts, huh.NewOption(p.Label, p.ID))
 		}
-		if v.SecretKey != "" {
-			b.WriteString("    secret_access_key: \"" + v.SecretKey + "\"\n")
+		modelOpts = append(modelOpts, huh.NewOption("Other / Custom...", "custom"))
+		modelOpts = ensureSelectValue(modelOpts, entry.model, "Current — ")
+	} else if opts, ok := modelChoices[entry.provider]; ok {
+		modelOpts = append([]huh.Option[string](nil), opts...)
+		modelOpts = ensureSelectValue(modelOpts, entry.model, "Current — ")
+	}
+
+	if len(modelOpts) > 0 {
+		desc := ""
+		if entry.provider == "bedrock" {
+			desc = "Lists ON_DEMAND text models in your region (AWS API) plus OpsIntelligence defaults."
 		}
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		formModel := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Select Model").
+					Description(desc).
+					Options(modelOpts...).
+					Value(&entry.model),
+			),
+		).WithTheme(theme)
+		if err := formModel.Run(); err != nil {
+			return provEntry{}, fmt.Errorf("onboarding interrupted")
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+
+		if entry.model == "custom" {
+			formCustom := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Enter Custom Model ID").
+						Value(&entry.model),
+				),
+			).WithTheme(theme)
+			if err := formCustom.Run(); err != nil {
+				return provEntry{}, fmt.Errorf("onboarding interrupted")
+			}
 		}
-		b.WriteString("\n")
-	case "vertex":
-		b.WriteString("  vertex:\n")
-		if v.VertexProject != "" {
-			b.WriteString("    project_id: \"" + v.VertexProject + "\"\n")
+	} else {
+		formModel := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Enter Model ID").
+					Value(&entry.model),
+			),
+		).WithTheme(theme)
+		if err := formModel.Run(); err != nil {
+			return provEntry{}, fmt.Errorf("onboarding interrupted")
 		}
-		if v.VertexLocation != "" {
-			b.WriteString("    location: \"" + v.VertexLocation + "\"\n")
+	}
+
+	return entry, nil
+}
+
+// runOnboarding leads the user through the setup process.
+// Returns (true, nil) if the agent should be started immediately.
+func runOnboarding(configPath string) (bool, error) {
+	var (
+		primary            provEntry
+		secondary          provEntry
+		embed              embedEntry
+		gwMode             string
+		gwPort             int    = 18790
+		gwHost             string = "127.0.0.1"
+		gwToken            string
+		tsMode             string = "off"
+		selectedChannels   []string
+		tgBotToken         string
+		tgDMMode           string = "pairing"
+		tgAllowFromRaw     string
+		dcBotToken         string
+		dcDMMode           string = "pairing"
+		dcAllowFromRaw     string
+		dcRequireMention   bool = true
+		slBotToken         string
+		slAppToken         string
+		slDMMode           string = "pairing"
+		slAllowFromRaw     string
+		waSessionID        string
+		waDMMode           string = "pairing"
+		waAllowFromRaw     string
+		selectedSkills     []string
+		codingModel        string
+		visionModel        string
+		tpl                string
+		usePlano           bool
+		planoEndpoint      string
+		planoFastModel     string
+		planoPowerfulModel string
+		localIntelEnabled  bool
+		localIntelGGUF     string
+		// DevOps YAML block (optional; not collected in wizard yet — empty disables integrations)
+		githubToken  string
+		gitlabURL    string
+		gitlabToken  string
+		jenkinsURL   string
+		jenkinsUser  string
+		jenkinsToken string
+		sonarURL     string
+		sonarToken   string
+		activeTeam   string
+	)
+
+	theme := huh.ThemeBase()
+	theme.Focused.Title = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	theme.Focused.SelectedOption = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	theme.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
+	theme.Focused.TextInput.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+
+	tui.PrintOnboardBanner(version)
+	fmt.Println(lipgloss.NewStyle().Faint(true).Render("  Let's configure your autonomous agent environment."))
+	fmt.Println()
+
+	// Load existing config if available to pre-populate defaults
+	var existing *config.Config
+	if _, err := os.Stat(configPath); err == nil {
+		if c, err := config.Load(configPath); err == nil {
+			existing = c
 		}
-		if v.VertexCreds != "" {
-			b.WriteString("    credentials: \"" + v.VertexCreds + "\"\n")
+	}
+
+	if existing != nil {
+		// Pre-populate Primary
+		defProv := ""
+		if existing.Routing.Default != "" {
+			parts := strings.Split(existing.Routing.Default, "/")
+			if len(parts) > 0 {
+				defProv = parts[0]
+				if defProv == "azure_openai" {
+					defProv = "azure"
+				}
+			}
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+
+		if defProv != "" {
+			primary.provider = defProv
+			switch defProv {
+			case "anthropic":
+				if existing.Providers.Anthropic != nil {
+					primary.apiKey = existing.Providers.Anthropic.APIKey
+					primary.baseURL = existing.Providers.Anthropic.BaseURL
+					primary.model = existing.Providers.Anthropic.DefaultModel
+				}
+			case "openai":
+				if existing.Providers.OpenAI != nil {
+					primary.apiKey = existing.Providers.OpenAI.APIKey
+					primary.baseURL = existing.Providers.OpenAI.BaseURL
+					primary.model = existing.Providers.OpenAI.DefaultModel
+				}
+			case "azure":
+				if existing.Providers.AzureOpenAI != nil {
+					primary.apiKey = existing.Providers.AzureOpenAI.APIKey
+					primary.baseURL = existing.Providers.AzureOpenAI.BaseURL
+					primary.apiVersion = existing.Providers.AzureOpenAI.APIVersion
+					primary.model = existing.Providers.AzureOpenAI.DefaultModel
+				}
+			case "ollama":
+				if existing.Providers.Ollama != nil {
+					primary.baseURL = existing.Providers.Ollama.BaseURL
+					primary.model = existing.Providers.Ollama.DefaultModel
+				}
+			case "vllm":
+				if existing.Providers.VLLM != nil {
+					primary.baseURL = existing.Providers.VLLM.BaseURL
+					primary.apiKey = existing.Providers.VLLM.APIKey
+					primary.model = existing.Providers.VLLM.DefaultModel
+				}
+			case "lmstudio":
+				if existing.Providers.LMStudio != nil {
+					primary.baseURL = existing.Providers.LMStudio.BaseURL
+					primary.model = existing.Providers.LMStudio.DefaultModel
+				}
+			case "bedrock":
+				if existing.Providers.Bedrock != nil {
+					primary.awsRegion = existing.Providers.Bedrock.Region
+					primary.awsProfile = existing.Providers.Bedrock.Profile
+					primary.awsAccessKey = existing.Providers.Bedrock.AccessKeyID
+					primary.awsSecretKey = existing.Providers.Bedrock.SecretAccessKey
+					primary.apiKey = existing.Providers.Bedrock.APIKey
+					primary.model = existing.Providers.Bedrock.DefaultModel
+				}
+			case "groq":
+				if existing.Providers.Groq != nil {
+					primary.apiKey = existing.Providers.Groq.APIKey
+					primary.model = existing.Providers.Groq.DefaultModel
+				}
+			case "mistral":
+				if existing.Providers.Mistral != nil {
+					primary.apiKey = existing.Providers.Mistral.APIKey
+					primary.model = existing.Providers.Mistral.DefaultModel
+				}
+			case "openrouter":
+				if existing.Providers.OpenRouter != nil {
+					primary.apiKey = existing.Providers.OpenRouter.APIKey
+					primary.model = existing.Providers.OpenRouter.DefaultModel
+				}
+			case "deepseek":
+				if existing.Providers.DeepSeek != nil {
+					primary.apiKey = existing.Providers.DeepSeek.APIKey
+					primary.model = existing.Providers.DeepSeek.DefaultModel
+				}
+			case "perplexity":
+				if existing.Providers.Perplexity != nil {
+					primary.apiKey = existing.Providers.Perplexity.APIKey
+					primary.model = existing.Providers.Perplexity.DefaultModel
+				}
+			case "xai":
+				if existing.Providers.XAI != nil {
+					primary.apiKey = existing.Providers.XAI.APIKey
+					primary.model = existing.Providers.XAI.DefaultModel
+				}
+			case "together":
+				if existing.Providers.Together != nil {
+					primary.apiKey = existing.Providers.Together.APIKey
+					primary.baseURL = existing.Providers.Together.BaseURL
+					primary.model = existing.Providers.Together.DefaultModel
+				}
+			case "nvidia":
+				if existing.Providers.NVIDIA != nil {
+					primary.apiKey = existing.Providers.NVIDIA.APIKey
+					primary.baseURL = existing.Providers.NVIDIA.BaseURL
+					primary.model = existing.Providers.NVIDIA.DefaultModel
+				}
+			case "cohere":
+				if existing.Providers.Cohere != nil {
+					primary.apiKey = existing.Providers.Cohere.APIKey
+					primary.baseURL = existing.Providers.Cohere.BaseURL
+					primary.model = existing.Providers.Cohere.DefaultModel
+				}
+			case "huggingface":
+				if existing.Providers.HuggingFace != nil {
+					primary.apiKey = existing.Providers.HuggingFace.APIKey
+					primary.baseURL = existing.Providers.HuggingFace.BaseURL
+					primary.model = existing.Providers.HuggingFace.DefaultModel
+					if primary.model == "" && existing.Providers.HuggingFace.Model != "" {
+						primary.model = existing.Providers.HuggingFace.Model
+					}
+				}
+			case "voyage":
+				if existing.Providers.Voyage != nil {
+					primary.apiKey = existing.Providers.Voyage.APIKey
+					primary.baseURL = existing.Providers.Voyage.BaseURL
+					primary.model = existing.Providers.Voyage.DefaultModel
+				}
+			case "vertex":
+				if existing.Providers.Vertex != nil {
+					primary.vertexProj = existing.Providers.Vertex.ProjectID
+					primary.vertexLoc = existing.Providers.Vertex.Location
+					primary.vertexCreds = existing.Providers.Vertex.Credentials
+					primary.model = existing.Providers.Vertex.DefaultModel
+				}
+			}
 		}
-		b.WriteString("\n")
-	case "voyage":
-		b.WriteString("  voyage:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+
+		// Pre-populate Secondary
+		if existing.Routing.Fallback != "" {
+			parts := strings.Split(existing.Routing.Fallback, "/")
+			if len(parts) > 0 {
+				sProv := parts[0]
+				if sProv == "azure_openai" {
+					sProv = "azure"
+				}
+				secondary.provider = sProv
+				switch sProv {
+				case "anthropic":
+					if existing.Providers.Anthropic != nil {
+						secondary.apiKey = existing.Providers.Anthropic.APIKey
+						secondary.baseURL = existing.Providers.Anthropic.BaseURL
+						secondary.model = existing.Providers.Anthropic.DefaultModel
+					}
+				case "openai":
+					if existing.Providers.OpenAI != nil {
+						secondary.apiKey = existing.Providers.OpenAI.APIKey
+						secondary.baseURL = existing.Providers.OpenAI.BaseURL
+						secondary.model = existing.Providers.OpenAI.DefaultModel
+					}
+				case "azure":
+					if existing.Providers.AzureOpenAI != nil {
+						secondary.apiKey = existing.Providers.AzureOpenAI.APIKey
+						secondary.baseURL = existing.Providers.AzureOpenAI.BaseURL
+						secondary.apiVersion = existing.Providers.AzureOpenAI.APIVersion
+						secondary.model = existing.Providers.AzureOpenAI.DefaultModel
+					}
+				case "ollama":
+					if existing.Providers.Ollama != nil {
+						secondary.baseURL = existing.Providers.Ollama.BaseURL
+						secondary.model = existing.Providers.Ollama.DefaultModel
+					}
+				case "vllm":
+					if existing.Providers.VLLM != nil {
+						secondary.baseURL = existing.Providers.VLLM.BaseURL
+						secondary.apiKey = existing.Providers.VLLM.APIKey
+						secondary.model = existing.Providers.VLLM.DefaultModel
+					}
+				case "lmstudio":
+					if existing.Providers.LMStudio != nil {
+						secondary.baseURL = existing.Providers.LMStudio.BaseURL
+						secondary.model = existing.Providers.LMStudio.DefaultModel
+					}
+				case "bedrock":
+					if existing.Providers.Bedrock != nil {
+						secondary.awsRegion = existing.Providers.Bedrock.Region
+						secondary.awsProfile = existing.Providers.Bedrock.Profile
+						secondary.awsAccessKey = existing.Providers.Bedrock.AccessKeyID
+						secondary.awsSecretKey = existing.Providers.Bedrock.SecretAccessKey
+						secondary.apiKey = existing.Providers.Bedrock.APIKey
+						secondary.model = existing.Providers.Bedrock.DefaultModel
+					}
+				case "groq":
+					if existing.Providers.Groq != nil {
+						secondary.apiKey = existing.Providers.Groq.APIKey
+						secondary.model = existing.Providers.Groq.DefaultModel
+					}
+				case "mistral":
+					if existing.Providers.Mistral != nil {
+						secondary.apiKey = existing.Providers.Mistral.APIKey
+						secondary.model = existing.Providers.Mistral.DefaultModel
+					}
+				case "openrouter":
+					if existing.Providers.OpenRouter != nil {
+						secondary.apiKey = existing.Providers.OpenRouter.APIKey
+						secondary.model = existing.Providers.OpenRouter.DefaultModel
+					}
+				case "deepseek":
+					if existing.Providers.DeepSeek != nil {
+						secondary.apiKey = existing.Providers.DeepSeek.APIKey
+						secondary.model = existing.Providers.DeepSeek.DefaultModel
+					}
+				case "perplexity":
+					if existing.Providers.Perplexity != nil {
+						secondary.apiKey = existing.Providers.Perplexity.APIKey
+						secondary.model = existing.Providers.Perplexity.DefaultModel
+					}
+				case "xai":
+					if existing.Providers.XAI != nil {
+						secondary.apiKey = existing.Providers.XAI.APIKey
+						secondary.model = existing.Providers.XAI.DefaultModel
+					}
+				case "together":
+					if existing.Providers.Together != nil {
+						secondary.apiKey = existing.Providers.Together.APIKey
+						secondary.baseURL = existing.Providers.Together.BaseURL
+						secondary.model = existing.Providers.Together.DefaultModel
+					}
+				case "nvidia":
+					if existing.Providers.NVIDIA != nil {
+						secondary.apiKey = existing.Providers.NVIDIA.APIKey
+						secondary.baseURL = existing.Providers.NVIDIA.BaseURL
+						secondary.model = existing.Providers.NVIDIA.DefaultModel
+					}
+				case "cohere":
+					if existing.Providers.Cohere != nil {
+						secondary.apiKey = existing.Providers.Cohere.APIKey
+						secondary.baseURL = existing.Providers.Cohere.BaseURL
+						secondary.model = existing.Providers.Cohere.DefaultModel
+					}
+				case "huggingface":
+					if existing.Providers.HuggingFace != nil {
+						secondary.apiKey = existing.Providers.HuggingFace.APIKey
+						secondary.baseURL = existing.Providers.HuggingFace.BaseURL
+						secondary.model = existing.Providers.HuggingFace.DefaultModel
+						if secondary.model == "" && existing.Providers.HuggingFace.Model != "" {
+							secondary.model = existing.Providers.HuggingFace.Model
+						}
+					}
+				case "voyage":
+					if existing.Providers.Voyage != nil {
+						secondary.apiKey = existing.Providers.Voyage.APIKey
+						secondary.baseURL = existing.Providers.Voyage.BaseURL
+						secondary.model = existing.Providers.Voyage.DefaultModel
+					}
+				case "vertex":
+					if existing.Providers.Vertex != nil {
+						secondary.vertexProj = existing.Providers.Vertex.ProjectID
+						secondary.vertexLoc = existing.Providers.Vertex.Location
+						secondary.vertexCreds = existing.Providers.Vertex.Credentials
+						secondary.model = existing.Providers.Vertex.DefaultModel
+					}
+				}
+			}
 		}
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+
+		// Pre-populate Embeddings
+		if len(existing.Embeddings.Priority) > 0 {
+			eName := existing.Embeddings.Priority[0]
+			if eName == "azure_openai" {
+				eName = "azure"
+			}
+			embed.provider = eName
+			switch eName {
+			case "openai":
+				if existing.Embeddings.OpenAI != nil {
+					embed.apiKey = existing.Embeddings.OpenAI.APIKey
+					embed.baseURL = existing.Embeddings.OpenAI.BaseURL
+					embed.model = existing.Embeddings.OpenAI.DefaultModel
+				}
+			case "azure":
+				if existing.Embeddings.AzureOpenAI != nil {
+					embed.apiKey = existing.Embeddings.AzureOpenAI.APIKey
+					embed.baseURL = existing.Embeddings.AzureOpenAI.BaseURL
+					embed.model = existing.Embeddings.AzureOpenAI.DefaultModel
+				}
+			case "ollama":
+				if existing.Embeddings.OllamaEmbed != nil {
+					embed.baseURL = existing.Embeddings.OllamaEmbed.BaseURL
+					embed.model = existing.Embeddings.OllamaEmbed.DefaultModel
+				}
+			case "bedrock":
+				if existing.Embeddings.Bedrock != nil {
+					embed.apiKey = existing.Embeddings.Bedrock.APIKey // If using bearer token
+					embed.model = existing.Embeddings.Bedrock.DefaultModel
+				}
+			case "cohere":
+				if existing.Embeddings.Cohere != nil {
+					embed.apiKey = existing.Embeddings.Cohere.APIKey
+					embed.model = existing.Embeddings.Cohere.DefaultModel
+				}
+			case "google":
+				if existing.Embeddings.Google != nil {
+					embed.apiKey = existing.Embeddings.Google.APIKey
+					embed.model = existing.Embeddings.Google.DefaultModel
+				}
+			case "voyage":
+				if existing.Embeddings.Voyage != nil {
+					embed.apiKey = existing.Embeddings.Voyage.APIKey
+					embed.model = existing.Embeddings.Voyage.DefaultModel
+				}
+			case "mistral":
+				if existing.Embeddings.Mistral != nil {
+					embed.apiKey = existing.Embeddings.Mistral.APIKey
+					embed.model = existing.Embeddings.Mistral.DefaultModel
+				}
+			case "vertex":
+				if existing.Embeddings.Vertex != nil {
+					embed.model = existing.Embeddings.Vertex.DefaultModel
+				}
+			}
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+
+		// Pre-populate Gateway & Routing
+		gwMode = normalizeGatewayBind(existing.Gateway.Bind)
+		if existing.Gateway.Host != "" {
+			gwHost = existing.Gateway.Host
 		}
-		b.WriteString("\n")
-	case "anthropic":
-		b.WriteString("  anthropic:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		if existing.Gateway.Port != 0 {
+			gwPort = existing.Gateway.Port
 		}
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		gwToken = existing.Gateway.Token
+		tsMode = existing.Gateway.Tailscale.Mode
+		for _, r := range existing.Routing.Rules {
+			if r.Task == "coding" {
+				codingModel = r.Model
+			}
+			if r.Task == "vision" {
+				visionModel = r.Model
+			}
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+
+		if existing.Plano.Enabled {
+			usePlano = true
+			if strings.TrimSpace(existing.Plano.Endpoint) != "" {
+				planoEndpoint = existing.Plano.Endpoint
+			} else {
+				planoEndpoint = "http://localhost:12000/v1"
+			}
+			prefs := existing.Plano.Preferences
+			if len(prefs) >= 2 {
+				planoFastModel = prefs[0].PreferModel
+				planoPowerfulModel = prefs[1].PreferModel
+			} else if len(prefs) == 1 {
+				planoFastModel = prefs[0].PreferModel
+			}
 		}
-		b.WriteString("\n")
-	case "groq", "mistral", "together", "nvidia", "cohere", "deepseek", "perplexity", "xai":
-		b.WriteString("  " + v.Provider + ":\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+
+		// Pre-populate Channels
+		if existing.Channels.Telegram != nil {
+			selectedChannels = append(selectedChannels, "telegram")
+			tgBotToken = existing.Channels.Telegram.BotToken
+			tgDMMode = existing.Channels.Telegram.DMMode
+			if tgDMMode == "" {
+				tgDMMode = "pairing"
+			}
+			tgAllowFromRaw = strings.Join(existing.Channels.Telegram.AllowFrom, ", ")
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		if existing.Channels.WhatsApp != nil {
+			selectedChannels = append(selectedChannels, "whatsapp")
+			waSessionID = existing.Channels.WhatsApp.SessionID
+			waDMMode = existing.Channels.WhatsApp.DMMode
+			if waDMMode == "" {
+				waDMMode = "pairing"
+			}
+			waAllowFromRaw = strings.Join(existing.Channels.WhatsApp.AllowFrom, ", ")
 		}
-		b.WriteString("\n")
-	case "openrouter":
-		b.WriteString("  openrouter:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		if existing.Channels.Discord != nil {
+			selectedChannels = append(selectedChannels, "discord")
+			dcBotToken = existing.Channels.Discord.BotToken
+			dcDMMode = existing.Channels.Discord.DMMode
+			if dcDMMode == "" {
+				dcDMMode = "pairing"
+			}
+			dcAllowFromRaw = strings.Join(existing.Channels.Discord.AllowFrom, ", ")
+			if existing.Channels.Discord.RequireMention != nil {
+				dcRequireMention = *existing.Channels.Discord.RequireMention
+			}
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		if existing.Channels.Slack != nil {
+			selectedChannels = append(selectedChannels, "slack")
+			slBotToken = existing.Channels.Slack.BotToken
+			slAppToken = existing.Channels.Slack.AppToken
+			slDMMode = existing.Channels.Slack.DMMode
+			if slDMMode == "" {
+				slDMMode = "pairing"
+			}
+			slAllowFromRaw = strings.Join(existing.Channels.Slack.AllowFrom, ", ")
 		}
-		if v.OpenRouterApp != "" {
-			b.WriteString("    site_name: \"" + v.OpenRouterApp + "\"\n")
+
+		// Pre-populate Skills
+		selectedSkills = existing.Agent.EnabledSkills
+
+		localIntelEnabled = existing.Agent.LocalIntel.Enabled
+		localIntelGGUF = existing.Agent.LocalIntel.GGUFPath
+	}
+
+	// ────────────────────────────────────────────────────────────────────────
+	// Step 1: Primary LLM Provider
+	// ────────────────────────────────────────────────────────────────────────
+	var err error
+	primary, err = collectProvider(theme, "primary", true, primary)
+	if err != nil {
+		return false, err
+	}
+
+	secChoice := "none"
+	if secondary.provider != "" && secondary.provider != "none" {
+		secChoice = "configure"
+	}
+
+	formSecondaryChoice := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Secondary / Fallback Provider?").
+				Description("Pick a second model for high availability or specific tasks.").
+				Options(
+					huh.NewOption("None", "none"),
+					huh.NewOption("Choose a secondary provider", "configure"),
+				).
+				Value(&secChoice),
+		),
+	).WithTheme(theme)
+	if err := formSecondaryChoice.Run(); err != nil {
+		return false, fmt.Errorf("onboarding interrupted")
+	}
+
+	if secChoice == "configure" {
+		// Secondary provider — show all providers (no Plano filter yet)
+		secondary, err = collectProvider(theme, "secondary", false, secondary)
+		if err != nil {
+			return false, err
 		}
-		if v.OpenRouterURL != "" {
-			b.WriteString("    site_url: \"" + v.OpenRouterURL + "\"\n")
+	} else {
+		secondary.provider = "none"
+	}
+
+	// ─── Step 3: Plano Smart Routing ────────────────────────────────────────
+	// Only offered when a secondary provider is configured.
+	// Plano needs at least 2 OpenAI-compatible endpoints to route between.
+	if secChoice == "configure" && secondary.provider != "" && secondary.provider != "none" {
+		planoHint := ""
+		if !openAICompatProviders[primary.provider] {
+			planoHint = "\n\n⚠ Note: your primary provider (" + primary.provider + ") is not OpenAI-compatible.\n" +
+				"Plano will route to your secondary provider for complex tasks."
 		}
-		b.WriteString("\n")
-	case "huggingface":
-		b.WriteString("  huggingface:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		_ = huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title("Enable Smart Routing with Plano? (Optional — press Enter to skip)").
+				Description(
+					"Plano auto-routes each prompt by complexity: simple → fast/cheap model,\n" +
+						"complex → powerful model. Cuts LLM costs 30–60%.\n" +
+						"Requires Docker. Runs locally on port 12000." + planoHint,
+				).
+				Value(&usePlano),
+		)).WithTheme(theme).Run()
+	} // end if secChoice == "configure" && secondary
+
+	if secChoice == "configure" && usePlano {
+		if strings.TrimSpace(planoEndpoint) == "" {
+			planoEndpoint = "http://localhost:12000/v1"
 		}
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		fastOpts := []huh.Option[string]{
+			huh.NewOption("GPT-4o mini", "openai/gpt-4o-mini"),
+			huh.NewOption("Groq Llama3 8B", "groq/llama3-8b-8192"),
+			huh.NewOption("Mistral 7B", "mistral/mistral-7b-instruct"),
+			huh.NewOption("Ollama Llama3.2", "ollama/llama3.2"),
+			huh.NewOption("DeepSeek V2 (Lite)", "deepseek/deepseek-chat"),
 		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
-			b.WriteString("    model: \"" + v.DefaultModel + "\"\n")
+		fastOpts = ensureSelectValue(fastOpts, planoFastModel, "Current — ")
+		powerOpts := []huh.Option[string]{
+			huh.NewOption("GPT-4o", "openai/gpt-4o"),
+			huh.NewOption("GPT-4.1", "openai/gpt-4.1"),
+			huh.NewOption("Groq Llama3 70B", "groq/llama3-70b-8192"),
+			huh.NewOption("Mistral Large", "mistral/mistral-large-latest"),
+			huh.NewOption("Ollama Llama3.1 70B", "ollama/llama3.1:70b"),
+			huh.NewOption("DeepSeek R1", "deepseek/deepseek-r1"),
 		}
-		b.WriteString("\n")
-	case "ollama", "vllm", "lm_studio":
-		b.WriteString("  " + v.Provider + ":\n")
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
-		} else if v.Provider == "ollama" {
-			b.WriteString("    base_url: \"http://127.0.0.1:11434\"\n")
+		powerOpts = ensureSelectValue(powerOpts, planoPowerfulModel, "Current — ")
+		_ = huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Plano endpoint").
+				Description("Leave as default if running Plano locally via Docker.").
+				Value(&planoEndpoint),
+			huh.NewSelect[string]().
+				Title("Fast (cheap) model — for simple queries").
+				Description("Used for greetings, short Q&A, and conversational turns.").
+				Options(fastOpts...).
+				Value(&planoFastModel),
+			huh.NewSelect[string]().
+				Title("Powerful model — for complex tasks").
+				Description("Used for coding, multi-step reasoning, and analysis.").
+				Options(powerOpts...).
+				Value(&planoPowerfulModel),
+		)).WithTheme(theme).Run()
+
+		// ── Docker prerequisites ──────────────────────────────────────────────
+		fmt.Println()
+		dockerOK := setupPlanoDocker(planoEndpoint)
+		if !dockerOK {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(
+				"  ⚠  Plano Docker setup skipped. Start it manually:\n" +
+					"     docker run -d -p 12000:12000 --name plano katanemo/plano:latest",
+			))
+		}
+		fmt.Println()
+	}
+	// ─────────────────────────────────────────────────────────────────────────
+
+	codingOpts := []huh.Option[string]{
+		huh.NewOption("Use Default", "default"),
+		huh.NewOption("Claude 3.5 Sonnet", "anthropic/claude-3-5-sonnet-20241022"),
+		huh.NewOption("GPT-4o", "openai/gpt-4o"),
+		huh.NewOption("DeepSeek-R1 (Local)", "ollama/deepseek-r1"),
+	}
+	if codingModel == "" {
+		codingModel = "default"
+	}
+	if visionModel == "" {
+		visionModel = "default"
+	}
+	codingOpts = ensureSelectValue(codingOpts, codingModel, "Current — ")
+	visionOpts := []huh.Option[string]{
+		huh.NewOption("Use Default", "default"),
+		huh.NewOption("Claude 3.5 Sonnet", "anthropic/claude-3-5-sonnet-20241022"),
+		huh.NewOption("GPT-4o", "openai/gpt-4o"),
+	}
+	visionOpts = ensureSelectValue(visionOpts, visionModel, "Current — ")
+	formRouting := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Advanced Routing: Coding").
+				Options(codingOpts...).
+				Value(&codingModel),
+			huh.NewSelect[string]().
+				Title("Advanced Routing: Vision").
+				Options(visionOpts...).
+				Value(&visionModel),
+		),
+	).WithTheme(theme)
+	if err := formRouting.Run(); err != nil {
+		return false, fmt.Errorf("onboarding interrupted")
+	}
+
+	// Embedding selection
+	formEmbed := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Embedding Provider").
+				Description("Used for Semantic Memory (local learning).").
+				Options(
+					huh.NewOption("OpenAI (Recommended)", "openai"),
+					huh.NewOption("Azure OpenAI", "azure"),
+					huh.NewOption("Ollama (Local)", "ollama"),
+					huh.NewOption("AWS Bedrock", "bedrock"),
+					huh.NewOption("Cohere", "cohere"),
+					huh.NewOption("Google Generative AI", "google"),
+					huh.NewOption("Voyage AI", "voyage"),
+					huh.NewOption("Mistral Native", "mistral"),
+					huh.NewOption("Google Vertex AI", "vertex"),
+				).
+				Value(&embed.provider),
+		),
+	).WithTheme(theme)
+	if err := formEmbed.Run(); err != nil {
+		return false, fmt.Errorf("onboarding interrupted")
+	}
+
+	var embedFields []huh.Field
+	if embed.provider == "ollama" {
+		if strings.TrimSpace(embed.baseURL) == "" {
+			embed.baseURL = "http://localhost:11434"
+		}
+		embedFields = append(embedFields, huh.NewInput().Title("Ollama Base URL").Value(&embed.baseURL))
+	} else if embed.provider == "azure" {
+		embedFields = append(embedFields,
+			huh.NewInput().Title("Azure Endpoint").Value(&embed.baseURL),
+			huh.NewInput().Title("Azure API Key").Password(true).Value(&embed.apiKey),
+		)
+	} else if embed.provider != "bedrock" {
+		embedFields = append(embedFields, huh.NewInput().
+			Title(fmt.Sprintf("%s API Key (Embeddings)", embed.provider)).
+			Password(true).
+			Value(&embed.apiKey))
+	}
+
+	embedModels := map[string][]huh.Option[string]{
+		"openai":  {huh.NewOption("text-embedding-3-small", "text-embedding-3-small"), huh.NewOption("text-embedding-3-large", "text-embedding-3-large")},
+		"azure":   {huh.NewOption("text-embedding-3-small", "text-embedding-3-small"), huh.NewOption("text-embedding-3-large", "text-embedding-3-large")},
+		"ollama":  {huh.NewOption("nomic-embed-text", "nomic-embed-text"), huh.NewOption("mxbai-embed-large", "mxbai-embed-large")},
+		"cohere":  {huh.NewOption("embed-v4.0", "embed-v4.0")},
+		"google":  {huh.NewOption("text-embedding-004", "text-embedding-004")},
+		"voyage":  {huh.NewOption("voyage-3", "voyage-3"), huh.NewOption("voyage-3-lite", "voyage-3-lite")},
+		"mistral": {huh.NewOption("mistral-embed", "mistral-embed")},
+		"vertex":  {huh.NewOption("text-embedding-004", "text-embedding-004"), huh.NewOption("text-multilingual-embedding-002", "text-multilingual-embedding-002")},
+	}
+	var embedModelOpts []huh.Option[string]
+	if embed.provider == "bedrock" {
+		if primary.provider == "bedrock" {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			for _, p := range bedrock.ListOnboardingEmbeddingModels(ctx, bedrock.Config{
+				Region:          strings.TrimSpace(primary.awsRegion),
+				Profile:         strings.TrimSpace(primary.awsProfile),
+				AccessKeyID:     strings.TrimSpace(primary.awsAccessKey),
+				SecretAccessKey: strings.TrimSpace(primary.awsSecretKey),
+				APIKey:          strings.TrimSpace(primary.apiKey),
+			}) {
+				embedModelOpts = append(embedModelOpts, huh.NewOption(p.Label, p.ID))
+			}
+		}
+		if len(embedModelOpts) == 0 {
+			embedModelOpts = []huh.Option[string]{
+				huh.NewOption("Titan Text Embed v2", "amazon.titan-embed-text-v2:0"),
+				huh.NewOption("Titan Text Embed v1", "amazon.titan-embed-text-v1"),
+				huh.NewOption("Cohere English v3", "cohere.embed-english-v3"),
+			}
+		}
+	} else if opts, ok := embedModels[embed.provider]; ok {
+		embedModelOpts = append([]huh.Option[string](nil), opts...)
+	}
+	embedModelOpts = ensureSelectValue(embedModelOpts, embed.model, "Current — ")
+	embedDesc := ""
+	if embed.provider == "bedrock" {
+		embedDesc = "Bedrock: when your primary LLM is also Bedrock, models are listed from AWS for your region."
+	}
+	embedFields = append(embedFields, huh.NewSelect[string]().Title("Embedding Model").Description(embedDesc).Options(embedModelOpts...).Value(&embed.model))
+
+	if len(embedFields) > 0 {
+		formEmbedDetail := huh.NewForm(huh.NewGroup(embedFields...)).WithTheme(theme)
+		if err := formEmbedDetail.Run(); err != nil {
+			return false, fmt.Errorf("onboarding interrupted")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).
+		Render("  On-device Gemma (optional)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
+		Render("  A small Gemma 4 E2B model can run locally and attach a short advisory before your cloud model acts. Onboard will automatically use a packaged models/*.gguf first, then your release asset if needed. Official release binaries include local Gemma support by default.\n"))
+
+	formLocalIntel := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Enable on-device Gemma (agent.local_intel)?").
+				Description("Adds a local pre-pass for routing hints; the main LLM stays your cloud provider. Onboard will auto-provision the GGUF.").
+				Value(&localIntelEnabled),
+			huh.NewInput().
+				Title("Path to Gemma 4 E2B .gguf (optional)").
+				Description("Saved as agent.local_intel.gguf_path. Leave empty to use OPSINTELLIGENCE_LOCAL_GEMMA_GGUF or an embedded-weights build later.").
+				Value(&localIntelGGUF),
+		),
+	).WithTheme(theme)
+	if err := formLocalIntel.Run(); err != nil {
+		return false, fmt.Errorf("onboarding interrupted")
+	}
+	if localIntelEnabled && strings.TrimSpace(localIntelGGUF) == "" {
+		stateDir := filepath.Dir(configPath)
+		dst := localintel.DefaultGGUFPath(stateDir)
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).
+			Render("  Preparing Local Gemma model"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
+			Render("  Using packaged models/*.gguf if present; otherwise downloading from OpsIntelligence release assets."))
+		if src, ok := discoverBundledGGUF(dst); ok {
+			if err := copyFileAtomic(src, dst); err != nil {
+				return false, fmt.Errorf("local Gemma setup failed: copy bundled model: %w", err)
+			}
+			localIntelGGUF = dst
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Local Gemma prepared from packaged model"))
 		} else {
-			b.WriteString("    base_url: \"http://127.0.0.1:8000\"\n")
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
+				Render("  Downloading GGUF with progress..."))
+			res, err := localintel.BootstrapGGUF(context.Background(), localintel.BootstrapOptions{
+				StateDir: stateDir,
+				GGUFPath: dst,
+				Progress: os.Stderr,
+			})
+			if err != nil {
+				return false, fmt.Errorf("local Gemma setup failed: %w", err)
+			}
+			localIntelGGUF = res.Path
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Local Gemma downloaded and prepared"))
 		}
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
-		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
-		}
-		b.WriteString("\n")
-	default:
-		b.WriteString("  openai:\n")
-		if v.APIKey != "" {
-			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
-		}
-		if v.ProviderURL != "" {
-			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
-		}
-		if v.DefaultModel != "" {
-			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
-		}
-		b.WriteString("\n")
 	}
 
-	b.WriteString("channels:\n")
-	b.WriteString("  outbound:\n")
-	b.WriteString("    max_attempts: 5\n    base_delay_ms: 250\n    max_delay_ms: 10000\n")
-	b.WriteString("    jitter_percent: 0.2\n    breaker_threshold: 5\n    breaker_cooldown_s: 30\n")
-	b.WriteString("    dlq_path: \"~/.opsintelligence/channels/dlq.ndjson\"\n")
-	if strings.TrimSpace(v.TelegramBot) != "" {
-		b.WriteString("  telegram:\n")
-		b.WriteString("    bot_token: \"" + v.TelegramBot + "\"\n")
-		if v.TelegramDMMode != "" {
-			b.WriteString("    dm_mode: \"" + v.TelegramDMMode + "\"\n")
-		}
-		if v.TelegramReqMention {
-			b.WriteString("    require_mention: true\n")
-		} else {
-			b.WriteString("    require_mention: false\n")
-		}
-		if ids := onboardSplitCSV(v.TelegramAllow); len(ids) > 0 {
-			b.WriteString("    allow_from:\n")
-			for _, id := range ids {
-				b.WriteString("      - \"" + id + "\"\n")
-			}
-		}
-	}
-	if strings.TrimSpace(v.DiscordBot) != "" {
-		b.WriteString("  discord:\n")
-		b.WriteString("    bot_token: \"" + v.DiscordBot + "\"\n")
-		if v.DiscordDMMode != "" {
-			b.WriteString("    dm_mode: \"" + v.DiscordDMMode + "\"\n")
-		}
-		if v.DiscordReqMention {
-			b.WriteString("    require_mention: true\n")
-		} else {
-			b.WriteString("    require_mention: false\n")
-		}
-		if ids := onboardSplitCSV(v.DiscordAllow); len(ids) > 0 {
-			b.WriteString("    allow_from:\n")
-			for _, id := range ids {
-				b.WriteString("      - \"" + id + "\"\n")
-			}
-		}
-	}
-	if v.SlackBot != "" || v.SlackApp != "" {
-		b.WriteString("  slack:\n")
-		b.WriteString("    bot_token: \"" + v.SlackBot + "\"\n")
-		b.WriteString("    app_token: \"" + v.SlackApp + "\"\n")
-		if v.SlackDMMode != "" {
-			b.WriteString("    dm_mode: \"" + v.SlackDMMode + "\"\n")
-		}
-		if ids := onboardSplitCSV(v.SlackAllow); len(ids) > 0 {
-			b.WriteString("    allow_from:\n")
-			for _, id := range ids {
-				b.WriteString("      - \"" + id + "\"\n")
-			}
-		}
-	}
-	if v.WhatsAppEnabled {
-		sid := strings.TrimSpace(v.WaSession)
-		if sid == "" {
-			sid = "personal"
-		}
-		b.WriteString("  whatsapp:\n")
-		b.WriteString("    session_id: \"" + sid + "\"\n")
-		if v.WaDMMode != "" {
-			b.WriteString("    dm_mode: \"" + v.WaDMMode + "\"\n")
-		}
-		if ids := onboardSplitCSV(v.WaAllow); len(ids) > 0 {
-			b.WriteString("    allow_from:\n")
-			for _, id := range ids {
-				b.WriteString("      - \"" + id + "\"\n")
-			}
-		}
-	}
-	b.WriteString("\n")
+	// Phases 3-5: Gateway, Channels, Skills (simplified for brevity)
+	var gatewayFields []huh.Field
+	gatewayFields = append(gatewayFields,
+		huh.NewSelect[string]().
+			Title("Remote Access Mode").
+			Options(
+				huh.NewOption("Local Only (127.0.0.1)", "loopback"),
+				huh.NewOption("Local Network (LAN - 0.0.0.0)", "lan"),
+				huh.NewOption("Tailscale (Secure VPN)", "tailscale"),
+			).
+			Value(&gwMode),
+		huh.NewInput().Title("Gateway Host").Value(&gwHost),
+		func() huh.Field {
+			portStr := fmt.Sprint(gwPort)
+			return huh.NewInput().Title("Gateway Port").Value(&portStr).Validate(func(s string) error {
+				var p int
+				_, err := fmt.Sscan(s, &p)
+				if err != nil || p < 1 || p > 65535 {
+					return fmt.Errorf("invalid port")
+				}
+				gwPort = p
+				return nil
+			})
+		}(),
+		huh.NewInput().Title("Security Token").Description("Password to protect your Gateway API. Leave empty for none.").Value(&gwToken),
+	)
 
-	b.WriteString("devops:\n")
+	formGateway := huh.NewForm(huh.NewGroup(gatewayFields...)).WithTheme(theme)
+	_ = formGateway.Run()
+
+	if gwToken == "" {
+		gwToken = randomToken(24)
+		fmt.Printf("\n🔑 No security token provided. Generated a secure one for you:\n   %s\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Render(gwToken))
+	}
+
+	if gwMode == "tailscale" {
+		formTS := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Tailscale Mode").
+					Options(
+						huh.NewOption("Off", "off"),
+						huh.NewOption("Serve (Local Tailnet)", "serve"),
+						huh.NewOption("Funnel (Public Internet via Tailscale)", "funnel"),
+					).
+					Value(&tsMode),
+			),
+		).WithTheme(theme)
+		_ = formTS.Run()
+	}
+
+	tgLabel := "Telegram"
+	dcLabel := "Discord"
+	slLabel := "Slack"
+	waLabel := "WhatsApp"
+
+	if existing != nil {
+		if existing.Channels.Telegram != nil && existing.Channels.Telegram.BotToken != "" {
+			tgLabel = "Telegram [Configured]"
+		}
+		if existing.Channels.Discord != nil && existing.Channels.Discord.BotToken != "" {
+			dcLabel = "Discord [Configured]"
+		}
+		if existing.Channels.Slack != nil && existing.Channels.Slack.BotToken != "" {
+			slLabel = "Slack [Configured]"
+		}
+		if existing.Channels.WhatsApp != nil {
+			waLabel = "WhatsApp [Configured]"
+		}
+	}
+
+	formChannels := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Messaging Channels").
+				Options(
+					huh.NewOption(tgLabel, "telegram"),
+					huh.NewOption(dcLabel, "discord"),
+					huh.NewOption(slLabel, "slack"),
+					huh.NewOption(waLabel, "whatsapp"),
+				).
+				Value(&selectedChannels),
+		),
+	).WithTheme(theme)
+	_ = formChannels.Run()
+
+	for _, ch := range selectedChannels {
+		switch ch {
+		case "telegram":
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Telegram Bot Token").
+					Value(&tgBotToken),
+				huh.NewSelect[string]().
+					Title("Telegram Security Mode").
+					Description("pairing: Approve new chatters. allowlist: Only whitelisted. open: Public.").
+					Options(
+						huh.NewOption("Pairing (Recommended)", "pairing"),
+						huh.NewOption("Allowlist only", "allowlist"),
+						huh.NewOption("Open (Public)", "open"),
+						huh.NewOption("Disabled", "disabled"),
+					).
+					Value(&tgDMMode),
+				huh.NewInput().
+					Title("Whitelisted Telegram IDs").
+					Description("Comma-separated (numeric IDs or @usernames). Only for Allowlist mode.").
+					Value(&tgAllowFromRaw),
+			)).WithTheme(theme).Run()
+		case "discord":
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Discord Bot Token").
+					Value(&dcBotToken),
+				huh.NewSelect[string]().
+					Title("Discord Security Mode").
+					Description("pairing: Approve new chatters. allowlist: Only whitelisted. open: Public.").
+					Options(
+						huh.NewOption("Pairing (Recommended)", "pairing"),
+						huh.NewOption("Allowlist only", "allowlist"),
+						huh.NewOption("Open (Public)", "open"),
+						huh.NewOption("Disabled", "disabled"),
+					).
+					Value(&dcDMMode),
+				huh.NewInput().
+					Title("Whitelisted Discord IDs").
+					Description("Comma-separated numeric IDs. Only for Allowlist mode.").
+					Value(&dcAllowFromRaw),
+				huh.NewConfirm().
+					Title("Require @bot mention in server channels?").
+					Description("Recommended: avoids noise in busy guild channels. DMs are unaffected.").
+					Value(&dcRequireMention),
+			)).WithTheme(theme).Run()
+		case "slack":
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Slack Bot Token").
+					Value(&slBotToken),
+				huh.NewInput().
+					Title("Slack App Token").
+					Value(&slAppToken),
+				huh.NewSelect[string]().
+					Title("Slack Security Mode").
+					Description("pairing: Approve new chatters. allowlist: Only whitelisted. open: Public.").
+					Options(
+						huh.NewOption("Pairing (Recommended)", "pairing"),
+						huh.NewOption("Allowlist only", "allowlist"),
+						huh.NewOption("Open (Public)", "open"),
+						huh.NewOption("Disabled", "disabled"),
+					).
+					Value(&slDMMode),
+				huh.NewInput().
+					Title("Whitelisted Slack IDs").
+					Description("Comma-separated numeric IDs. Only for Allowlist mode.").
+					Value(&slAllowFromRaw),
+			)).WithTheme(theme).Run()
+		case "whatsapp":
+			if strings.TrimSpace(waSessionID) == "" {
+				waSessionID = "personal"
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Render("\n--- WhatsApp Integration ---"))
+			fmt.Println("OpsIntelligence acts as a standalone WhatsApp account.")
+			fmt.Println("You will need to scan a QR code using 'Linked Devices' on your phone.")
+
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("WhatsApp Session ID").
+					Description("A name for this session (e.g. 'personal')").
+					Value(&waSessionID),
+				huh.NewSelect[string]().
+					Title("WhatsApp Security Mode").
+					Description("pairing: Approve new chatters. allowlist: Only whitelisted. open: Public.").
+					Options(
+						huh.NewOption("Pairing (Recommended)", "pairing"),
+						huh.NewOption("Allowlist only", "allowlist"),
+						huh.NewOption("Open (Public)", "open"),
+						huh.NewOption("Disabled", "disabled"),
+					).
+					Value(&waDMMode),
+				huh.NewInput().
+					Title("Whitelisted Numbers").
+					Description("Comma-separated (e.g. '1234567890, 9876543210'). Only for Allowlist mode.").
+					Value(&waAllowFromRaw),
+			)).WithTheme(theme).Run()
+
+			var linkNow bool
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().
+					Title("Link WhatsApp now (QR code)?").
+					Description("Recommended: Scan the QR code now to complete setup.").
+					Value(&linkNow),
+			)).WithTheme(theme).Run()
+
+			if linkNow {
+				parts := strings.Split(waAllowFromRaw, ",")
+				var allowFrom []string
+				for _, p := range parts {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						allowFrom = append(allowFrom, p)
+					}
+				}
+				dbPath := filepath.Join(config.DefaultConfigPath(), "..", "whatsapp.db")
+				if home, err := os.UserHomeDir(); err == nil {
+					dbPath = filepath.Join(home, ".opsintelligence", "whatsapp.db")
+				}
+				wa, err := whatsapp.New(dbPath, waSessionID, waDMMode, allowFrom, "INFO", nil)
+				if err == nil {
+					if !wa.IsLinked() {
+						fmt.Println("\n--- WhatsApp Pairing ---")
+						_ = wa.Connect(context.Background())
+						_ = wa.Stop() // Terminate onboarding connection to avoid conflict with agent
+					}
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✔ WhatsApp Linked! Continuing setup..."))
+				} else {
+					fmt.Printf("Error initializing WhatsApp for pairing: %v\n", err)
+				}
+			}
+		}
+	}
+
+	// Skill configuration — identical TUI used by "opsintelligence skills configure"
+	{
+		home, _ := os.UserHomeDir()
+		bundledDir := filepath.Join(home, ".opsintelligence", "skills", "bundled")
+		customDir := filepath.Join(home, ".opsintelligence", "skills", "custom")
+		_ = os.MkdirAll(bundledDir, 0o755)
+		_ = os.MkdirAll(customDir, 0o755)
+
+		// Extract bundled skills from repo if available
+		if src := resolveBundledSkillsSrc(); src != "" {
+			_ = skills.CopyDir(src, bundledDir)
+		}
+
+		mp := skills.NewMarketplace(bundledDir, customDir)
+		idx, err := mp.FetchIndex(context.Background())
+		if err == nil {
+			type skillOption struct {
+				name string
+			}
+
+			const customSentinel = "__custom__"
+			var opts []huh.Option[string]
+			inIndex := make(map[string]bool)
+			for _, e := range idx.Skills {
+				inIndex[e.Name] = true
+				label := e.Name
+				if e.Emoji != "" {
+					label = e.Emoji + "  " + e.Name
+				}
+				if e.Description != "" {
+					desc := e.Description
+					if len(desc) > 72 {
+						desc = desc[:71] + "…"
+					}
+					label += "\n     " + desc
+				}
+				opts = append(opts, huh.NewOption(label, e.Name))
+			}
+			for _, name := range selectedSkills {
+				if name != "" && !inIndex[name] {
+					opts = append(opts, huh.NewOption(name+" (from config)", name))
+				}
+			}
+			opts = append(opts, huh.NewOption("＋  Add custom skill  (local path or URL)", customSentinel))
+
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).
+				Render("\n  🛠  Select Agent Skills"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
+				Render("  Space to toggle · Enter to confirm · ↑↓ to move\n"))
+
+			skillPick := append([]string(nil), selectedSkills...)
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Enable Skills").
+					Description("Bundled skills are fetched automatically if not present locally.").
+					Options(opts...).
+					Value(&skillPick),
+			)).WithTheme(theme).Run()
+
+			selectedSkills = nil
+			var customPath string
+			for _, n := range skillPick {
+				if n == customSentinel {
+					_ = huh.NewForm(huh.NewGroup(
+						huh.NewInput().
+							Title("Custom skill path or URL").
+							Placeholder("/path/to/skill  or  https://github.com/user/skill").
+							Value(&customPath),
+					)).WithTheme(theme).Run()
+					if customPath != "" {
+						dest, err := mp.InstallFromPath(customPath)
+						if err != nil {
+							// Try as URL
+							dest, err = mp.Install(context.Background(), customPath)
+						}
+						if err == nil {
+							selectedSkills = append(selectedSkills, filepath.Base(dest))
+							fmt.Printf("✔ Custom skill installed: %s\n", filepath.Base(dest))
+						} else {
+							fmt.Printf("⚠ Custom skill failed: %v\n", err)
+						}
+					}
+				} else {
+					selectedSkills = append(selectedSkills, n)
+					// Install in background (non-blocking feedback)
+					dest := filepath.Join(customDir, n)
+					if _, err := os.Stat(dest); os.IsNotExist(err) {
+						fmt.Printf("  Installing %s...", n)
+						if _, err := mp.Install(context.Background(), n); err != nil {
+							fmt.Printf(" ⚠ %v\n", err)
+						} else {
+							fmt.Println(" ✔")
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Build the YAML
+	var sb strings.Builder
+	sb.WriteString("# OpsIntelligence Configuration\nversion: 1\n\n")
+
+	sb.WriteString("gateway:\n")
+	sb.WriteString(fmt.Sprintf("  host: \"%s\"\n  port: %d\n  bind: \"%s\"\n", gwHost, gwPort, gwMode))
+	if gwToken != "" {
+		sb.WriteString(fmt.Sprintf("  token: \"%s\"\n", gwToken))
+	}
+	if gwMode == "tailscale" {
+		sb.WriteString("  tailscale:\n")
+		sb.WriteString(fmt.Sprintf("    mode: \"%s\"\n", tsMode))
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("agent:\n  max_iterations: 64\n")
+	if len(selectedSkills) > 0 {
+		sb.WriteString("  enabled_skills:\n")
+		for _, s := range selectedSkills {
+			sb.WriteString(fmt.Sprintf("    - \"%s\"\n", s))
+		}
+	}
+	if localIntelEnabled {
+		sb.WriteString("  local_intel:\n")
+		sb.WriteString("    enabled: true\n")
+		if g := strings.TrimSpace(localIntelGGUF); g != "" {
+			sb.WriteString(fmt.Sprintf("    gguf_path: %q\n", g))
+		}
+		sb.WriteString("    max_tokens: 256\n")
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("providers:\n")
+	writeProv := func(e provEntry) {
+		name := e.provider
+		if name == "azure" {
+			name = "azure_openai"
+		}
+		sb.WriteString(fmt.Sprintf("  %s:\n", name))
+		if e.apiKey != "" {
+			sb.WriteString(fmt.Sprintf("    api_key: \"%s\"\n", e.apiKey))
+		}
+		if e.baseURL != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: \"%s\"\n", e.baseURL))
+		}
+		if e.awsRegion != "" {
+			sb.WriteString(fmt.Sprintf("    region: \"%s\"\n", e.awsRegion))
+		}
+		if e.awsAccessKey != "" {
+			sb.WriteString(fmt.Sprintf("    access_key_id: \"%s\"\n", e.awsAccessKey))
+			sb.WriteString(fmt.Sprintf("    secret_access_key: \"%s\"\n", e.awsSecretKey))
+		}
+		if e.awsProfile != "" {
+			sb.WriteString(fmt.Sprintf("    profile: \"%s\"\n", e.awsProfile))
+		}
+		if e.vertexProj != "" {
+			sb.WriteString(fmt.Sprintf("    project_id: \"%s\"\n", e.vertexProj))
+		}
+		if e.vertexLoc != "" {
+			sb.WriteString(fmt.Sprintf("    location: \"%s\"\n", e.vertexLoc))
+		}
+		if e.vertexCreds != "" {
+			sb.WriteString(fmt.Sprintf("    credentials: \"%s\"\n", e.vertexCreds))
+		}
+		sb.WriteString(fmt.Sprintf("    default_model: \"%s\"\n", e.model))
+	}
+
+	writeProv(primary)
+	if secondary.provider != "" && secondary.provider != "none" {
+		writeProv(secondary)
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("embeddings:\n")
+	sb.WriteString(fmt.Sprintf("  priority:\n    - \"%s\"\n", embed.provider))
+	writeEmbed := func(e embedEntry) {
+		name := e.provider
+		if name == "azure" {
+			name = "azure_openai"
+		}
+		sb.WriteString(fmt.Sprintf("  %s:\n", name))
+		if e.apiKey != "" {
+			sb.WriteString(fmt.Sprintf("    api_key: \"%s\"\n", e.apiKey))
+		}
+		if e.baseURL != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: \"%s\"\n", e.baseURL))
+		}
+		sb.WriteString(fmt.Sprintf("    default_model: \"%s\"\n", e.model))
+	}
+	writeEmbed(embed)
+	sb.WriteString("\n")
+
+	if len(selectedChannels) > 0 {
+		sb.WriteString("channels:\n")
+		for _, ch := range selectedChannels {
+			sb.WriteString(fmt.Sprintf("  %s:\n", ch))
+			if ch == "telegram" {
+				sb.WriteString(fmt.Sprintf("    bot_token: \"%s\"\n", tgBotToken))
+				sb.WriteString(fmt.Sprintf("    dm_mode: \"%s\"\n", tgDMMode))
+				if tgAllowFromRaw != "" {
+					sb.WriteString("    allow_from:\n")
+					parts := strings.Split(tgAllowFromRaw, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
+						}
+					}
+				}
+			}
+			if ch == "discord" {
+				sb.WriteString(fmt.Sprintf("    bot_token: \"%s\"\n", dcBotToken))
+				sb.WriteString(fmt.Sprintf("    dm_mode: \"%s\"\n", dcDMMode))
+				sb.WriteString(fmt.Sprintf("    require_mention: %t\n", dcRequireMention))
+				if dcAllowFromRaw != "" {
+					sb.WriteString("    allow_from:\n")
+					parts := strings.Split(dcAllowFromRaw, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
+						}
+					}
+				}
+			}
+			if ch == "slack" {
+				sb.WriteString(fmt.Sprintf("    bot_token: \"%s\"\n", slBotToken))
+				sb.WriteString(fmt.Sprintf("    app_token: \"%s\"\n", slAppToken))
+				sb.WriteString(fmt.Sprintf("    dm_mode: \"%s\"\n", slDMMode))
+				if slAllowFromRaw != "" {
+					sb.WriteString("    allow_from:\n")
+					parts := strings.Split(slAllowFromRaw, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
+						}
+					}
+				}
+			}
+			if ch == "whatsapp" {
+				sb.WriteString(fmt.Sprintf("    session_id: \"%s\"\n", waSessionID))
+				sb.WriteString(fmt.Sprintf("    dm_mode: \"%s\"\n", waDMMode))
+				if waAllowFromRaw != "" {
+					sb.WriteString("    allow_from:\n")
+					parts := strings.Split(waAllowFromRaw, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
+						}
+					}
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("routing:\n")
+	pName := primary.provider
+	if pName == "azure" {
+		pName = "azure_openai"
+	}
+	sb.WriteString(fmt.Sprintf("  default: \"%s/%s\"\n", pName, primary.model))
+	if secondary.provider != "" && secondary.provider != "none" {
+		sName := secondary.provider
+		if sName == "azure" {
+			sName = "azure_openai"
+		}
+		sb.WriteString(fmt.Sprintf("  fallback: \"%s/%s\"\n", sName, secondary.model))
+	}
+	if codingModel != "default" && codingModel != "" {
+		sb.WriteString("  rules:\n")
+		sb.WriteString(fmt.Sprintf("    - task: \"coding\"\n      model: \"%s\"\n", codingModel))
+	}
+	if visionModel != "default" && visionModel != "" {
+		if codingModel == "default" || codingModel == "" {
+			sb.WriteString("  rules:\n")
+		}
+		sb.WriteString(fmt.Sprintf("    - task: \"vision\"\n      model: \"%s\"\n", visionModel))
+	}
+
+	// Plano smart routing config
+	if usePlano {
+		sb.WriteString("\nplano:\n")
+		sb.WriteString("  enabled: true\n")
+		sb.WriteString(fmt.Sprintf("  endpoint: \"%s\"\n", planoEndpoint))
+		sb.WriteString("  preferences:\n")
+		sb.WriteString("    - description: \"Route simple greetings, weather, casual chat, and short questions to the fast model\"\n")
+		sb.WriteString(fmt.Sprintf("      prefer_model: \"%s\"\n", planoFastModel))
+		sb.WriteString("    - description: \"Route code generation, debugging, analysis, and multi-step reasoning to the powerful model\"\n")
+		sb.WriteString(fmt.Sprintf("      prefer_model: \"%s\"\n", planoPowerfulModel))
+	}
+
+	// Output DevOps YAML
+	sb.WriteString("\ndevops:\n")
 	writeBool := func(key string, ok bool) {
 		if ok {
-			b.WriteString("    enabled: true\n")
+			sb.WriteString("    enabled: true\n")
 		} else {
-			b.WriteString("    enabled: false\n")
+			sb.WriteString("    enabled: false\n")
 		}
-		_ = key
 	}
-	b.WriteString("  github:\n")
-	writeBool("github", v.GitHubToken != "")
-	if v.GitHubToken != "" {
-		b.WriteString("    token: \"" + v.GitHubToken + "\"\n")
+	sb.WriteString("  github:\n")
+	writeBool("github", githubToken != "")
+	if githubToken != "" {
+		sb.WriteString("    token: \"" + githubToken + "\"\n")
 	}
-	b.WriteString("  gitlab:\n")
-	writeBool("gitlab", v.GitLabToken != "" && v.GitLabURL != "")
-	if v.GitLabURL != "" {
-		b.WriteString("    base_url: \"" + v.GitLabURL + "\"\n")
+	sb.WriteString("  gitlab:\n")
+	writeBool("gitlab", gitlabToken != "" && gitlabURL != "")
+	if gitlabURL != "" {
+		sb.WriteString("    base_url: \"" + gitlabURL + "\"\n")
 	}
-	if v.GitLabToken != "" {
-		b.WriteString("    token: \"" + v.GitLabToken + "\"\n")
+	if gitlabToken != "" {
+		sb.WriteString("    token: \"" + gitlabToken + "\"\n")
 	}
-	b.WriteString("  jenkins:\n")
-	writeBool("jenkins", v.JenkinsURL != "" && v.JenkinsToken != "")
-	if v.JenkinsURL != "" {
-		b.WriteString("    base_url: \"" + v.JenkinsURL + "\"\n")
+	sb.WriteString("  jenkins:\n")
+	writeBool("jenkins", jenkinsURL != "" && jenkinsToken != "")
+	if jenkinsURL != "" {
+		sb.WriteString("    base_url: \"" + jenkinsURL + "\"\n")
 	}
-	if v.JenkinsUser != "" {
-		b.WriteString("    user: \"" + v.JenkinsUser + "\"\n")
+	if jenkinsUser != "" {
+		sb.WriteString("    user: \"" + jenkinsUser + "\"\n")
 	}
-	if v.JenkinsToken != "" {
-		b.WriteString("    token: \"" + v.JenkinsToken + "\"\n")
+	if jenkinsToken != "" {
+		sb.WriteString("    token: \"" + jenkinsToken + "\"\n")
 	}
-	b.WriteString("  sonar:\n")
-	writeBool("sonar", v.SonarURL != "" && v.SonarToken != "")
-	if v.SonarURL != "" {
-		b.WriteString("    base_url: \"" + v.SonarURL + "\"\n")
+	sb.WriteString("  sonar:\n")
+	writeBool("sonar", sonarURL != "" && sonarToken != "")
+	if sonarURL != "" {
+		sb.WriteString("    base_url: \"" + sonarURL + "\"\n")
 	}
-	if v.SonarToken != "" {
-		b.WriteString("    token: \"" + v.SonarToken + "\"\n")
+	if sonarToken != "" {
+		sb.WriteString("    token: \"" + sonarToken + "\"\n")
 	}
-	b.WriteString("\n")
 
-	b.WriteString("teams:\n")
-	b.WriteString("  active: \"" + v.ActiveTeam + "\"\n")
-	b.WriteString("  dir: \"~/.opsintelligence/teams\"\n\n")
+	if activeTeam != "" {
+		sb.WriteString("\nteams:\n")
+		sb.WriteString("  active: \"" + activeTeam + "\"\n")
+		sb.WriteString("  dir: \"~/.opsintelligence/teams\"\n")
+	}
 
-	b.WriteString("security:\n  mode: enforce\n  pii_mask: true\n")
-	return b.String()
+	tpl = sb.String()
+	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
+	_ = os.WriteFile(configPath, []byte(tpl), 0o600)
+
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✔ Configuration saved!"))
+
+	if localIntelEnabled {
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  Local Gemma — next steps"))
+		if g := strings.TrimSpace(localIntelGGUF); g != "" {
+			fmt.Println(dim.Render("  • GGUF ready at: " + g))
+		}
+		fmt.Println(dim.Render("  • Verify:  opsintelligence doctor   (see doc/runbooks/doctor-config-validation.md)"))
+		if !localintel.CompiledWithLocalGemma() {
+			fmt.Println(dim.Render("  • This binary lacks in-process Gemma support; install a release binary with local Gemma enabled."))
+			fmt.Println(dim.Render("  • Dev fallback: make install EXTRA_TAGS=opsintelligence_localgemma"))
+			fmt.Println(dim.Render("  • Or: go build -tags fts5,opsintelligence_localgemma -o opsintelligence ./cmd/opsintelligence"))
+		}
+	}
+
+	// ── Auto-start on login (no prompt; idempotent on macOS/Linux) ────────────
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	switch runtime.GOOS {
+	case "windows":
+		fmt.Println()
+		fmt.Println(dim.Render("  Windows: add OpsIntelligence to Task Scheduler for login start — run: opsintelligence service install"))
+	case "darwin", "linux":
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("  Registering OpsIntelligence login service (auto-start after you sign in)…"))
+		if root := filepath.Dir(configPath); root != "" && root != "." {
+			_ = os.Setenv("OPSINTELLIGENCE_STATE_DIR", root)
+			defer func() { _ = os.Unsetenv("OPSINTELLIGENCE_STATE_DIR") }()
+		}
+		if err := installService(); err != nil {
+			fmt.Printf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("⚠ Login service install failed: "+err.Error()))
+			fmt.Println(dim.Render("  Retry with: opsintelligence service install"))
+			fmt.Println(dim.Render("  On headless Linux, you may need: sudo loginctl enable-linger $USER"))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Login service installed (launchd / systemd user)."))
+		}
+	default:
+		fmt.Println()
+		fmt.Println(dim.Render("  Run opsintelligence service install if your OS supports it."))
+	}
+
+	// ── Launch summary banner ─────────────────────────────────────────────────
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	webURL := fmt.Sprintf("http://localhost:%d", gwPort)
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("  🚀 Launching OpsIntelligence in background…"))
+	fmt.Println()
+	fmt.Printf("  %-14s %s\n", dim.Render("Web UI:"), accent.Render(webURL))
+	fmt.Printf("  %-14s %s\n", dim.Render("Token:"), accent.Render(gwToken))
+	fmt.Printf("  %-14s %s\n", dim.Render("Gateway:"), accent.Render(fmt.Sprintf("%s:%d", gwHost, gwPort)))
+	fmt.Println()
+	fmt.Println(dim.Render("  Manage with:"))
+	fmt.Println(dim.Render("    opsintelligence gateway start   │ stop   │ restart"))
+	fmt.Println(dim.Render("    opsintelligence service status          (login auto-start)"))
+	fmt.Println(dim.Render("    opsintelligence status"))
+	if len(selectedChannels) > 0 {
+		fmt.Println()
+		fmt.Println(dim.Render("  Channel setup guides:"))
+		for _, line := range buildChannelSetupGuideLines(selectedChannels, gwHost, gwPort) {
+			fmt.Println(dim.Render("   " + line))
+		}
+	}
+	fmt.Println()
+
+	// Always start daemon after onboarding completes
+	return true, nil
+}
+
+func buildChannelSetupGuideLines(selectedChannels []string, gwHost string, gwPort int) []string {
+	if len(selectedChannels) == 0 {
+		return nil
+	}
+	enabled := make(map[string]bool, len(selectedChannels))
+	for _, ch := range selectedChannels {
+		enabled[strings.ToLower(strings.TrimSpace(ch))] = true
+	}
+
+	var out []string
+	if enabled["telegram"] {
+		out = append(out,
+			"[Telegram] In @BotFather run /setprivacy -> Disable if you want all group messages.",
+			"[Telegram] Keep privacy enabled for mention-only group behavior (recommended).",
+			"[Telegram] DM the bot once, then use /status to verify replies.",
+		)
+	}
+	if enabled["discord"] {
+		out = append(out,
+			"[Discord] Enable Message Content Intent in the Discord Developer Portal.",
+			"[Discord] Invite bot with View Channels, Send Messages, Read Message History, Add Reactions.",
+			"[Discord] If require_mention=true, use @BotName in guild channels to trigger replies.",
+		)
+	}
+	if enabled["slack"] {
+		out = append(out,
+			"[Slack] Install app to workspace and confirm Bot + App tokens are valid.",
+			"[Slack] Enable Socket Mode and subscribe to app_mention + message.im events.",
+		)
+	}
+	if enabled["whatsapp"] {
+		out = append(out,
+			"[WhatsApp] Run `opsintelligence start` and scan QR (Linked Devices) if not already linked.",
+		)
+	}
+
+	out = append(out,
+		"[All channels] Run `opsintelligence doctor` to validate config and channel tokens (doc/runbooks/doctor-config-validation.md).",
+		"[Docs] Telegram setup: doc/channels/telegram-setup.md",
+		"[Docs] Discord setup: doc/channels/discord-setup.md",
+		fmt.Sprintf("[Web UI] http://%s:%d", gwHost, gwPort),
+	)
+	return out
+}
+
+func randomToken(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+// setupPlanoDocker checks Docker availability, pulls the Plano image, and
+// starts a detached Plano container listening on port 12000.
+// Returns true if Plano is confirmed reachable after setup.
+func setupPlanoDocker(endpoint string) bool {
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
+	// 1. Check docker binary
+	fmt.Print("  Checking Docker... ")
+	if err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").Run(); err != nil {
+		fmt.Println(red.Render("✗ Docker not found."))
+		fmt.Println(yellow.Render("  Install Docker Desktop: https://docs.docker.com/get-docker/"))
+		return false
+	}
+	fmt.Println(green.Render("✔ Docker found"))
+
+	// 2. Check if plano container already running
+	out, _ := exec.Command("docker", "ps", "--filter", "name=plano", "--format", "{{.Names}}").Output()
+	if strings.Contains(string(out), "plano") {
+		fmt.Println(green.Render("  ✔ Plano container already running"))
+		return waitForPlano(endpoint, 5)
+	}
+
+	// 3. Pull image
+	fmt.Print("  Pulling katanemo/plano:latest (this may take a minute)... ")
+	pullCmd := exec.Command("docker", "pull", "katanemo/plano:latest")
+	pullCmd.Stdout = os.Stdout
+	pullCmd.Stderr = os.Stderr
+	if err := pullCmd.Run(); err != nil {
+		fmt.Println(red.Render("✗ Pull failed: " + err.Error()))
+		return false
+	}
+	fmt.Println(green.Render("  ✔ Image pulled"))
+
+	// 4. Remove any stopped plano container
+	_ = exec.Command("docker", "rm", "-f", "plano").Run()
+
+	// 5. Start container detached
+	fmt.Print("  Starting Plano container... ")
+	startCmd := exec.Command("docker", "run", "-d",
+		"--name", "plano",
+		"-p", "12000:12000",
+		"--restart", "unless-stopped",
+		"katanemo/plano:latest",
+	)
+	if out, err := startCmd.CombinedOutput(); err != nil {
+		fmt.Println(red.Render("✗ Failed to start: " + string(out)))
+		return false
+	}
+	fmt.Println(green.Render("✔ Container started"))
+
+	// 6. Wait for readiness
+	fmt.Print("  Waiting for Plano to be ready")
+	if waitForPlano(endpoint, 15) {
+		fmt.Println(" " + green.Render("✔ Ready!"))
+		return true
+	}
+	fmt.Println(" " + yellow.Render("⚠ Timed out — Plano may still be starting up"))
+	return false
+}
+
+// waitForPlano polls the Plano /v1/models endpoint until it responds or timeout expires.
+func waitForPlano(endpoint string, timeoutSec int) bool {
+	modelsURL := strings.TrimRight(endpoint, "/") + "/models"
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
+	for time.Now().Before(deadline) {
+		if resp, err := client.Get(modelsURL); err == nil && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return true
+		}
+		fmt.Print(".")
+		time.Sleep(1 * time.Second)
+	}
+	return false
 }

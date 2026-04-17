@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-04-17
+
+### Fixed
+
+- **Onboarding wizard compile and runtime correctness:** `runOnboarding` now returns `(bool, error)` so `opsintelligence onboard` can branch on `shouldStart` and detach correctly; DevOps YAML placeholders are declared; login service install uses `OPSINTELLIGENCE_STATE_DIR`; copy references `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF` in the Gemma path hint.
+
 ## [0.3.1] — 2026-04-18
 
 ### Fixed
