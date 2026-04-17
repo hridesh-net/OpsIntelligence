@@ -8,6 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RBAC engine + identity primitives (phase 2a of the cloud-dashboard
+  + RBAC rollout).** New `internal/auth` and `internal/rbac` packages
+  establish the identity and authorisation layer above the ops-plane
+  datastore. Pure, allocation-light, and dependency-free for the hot
+  path so HTTP middleware / the agent runner / the security guardrail
+  can enforce permissions without importing password hashing or OIDC.
+  - **`internal/auth.Principal`** — the identity object threaded
+    through request context and tool calls. Four principal types
+    (`user`, `apikey`, `system`, `anonymous`), each with a fixed
+    meaning and safe defaults. `WithPrincipal` / `PrincipalFrom` /
+    `MustPrincipal` handle ctx plumbing; `SystemPrincipal(name)` mints
+    the audit-tagged internal actor used by cron, webhook handlers,
+    and master→subagent invocations.
+  - **Permission catalogue** (`internal/rbac/permissions.go`) —
+    34 dotted, namespaced `Permission` constants covering the v1
+    surface: `agent.*`, `tasks.*`, `users.*`, `roles.*`, `apikeys.*`,
+    `audit.*`, `skills.*`, `tools.*`, `webhooks.*`, `channels.*`,
+    `settings.*`, `secrets.*`, `datastore.*`, `dashboard.*`, `chat.*`.
+    Wildcards supported (`tasks.*`, `*`) and matched by an
+    allocation-free `Permission.Matches`.
+  - **Built-in roles** (`internal/rbac/roles.go`) — six shipped
+    roles (`owner`, `admin`, `operator`, `developer`, `auditor`,
+    `viewer`) defined in Go and re-seeded on every boot via
+    `SeedBuiltInRoles`, so tweaking a role is a code change not a
+    migration. Custom roles coexist unchanged.
+  - **Enforcement engine** (`internal/rbac/engine.go`) — `Enforce`,
+    `EnforceAny`, `EnforceAll`, and the fast `Can` / `CanAny`
+    variants. Sentinel errors `ErrDenied` and `ErrNotAuthenticated`
+    let handlers split 401 vs 403; `DeniedError` carries principal
+    and permission for audit logs. System principals always allow,
+    anonymous always fails.
+  - **Bootstrap + Resolver** (`internal/rbac/bootstrap.go`) —
+    `SeedBuiltInRoles` is idempotent (re-seeds on every boot);
+    `BootstrapOwner` creates the `user-owner` row on a fresh database
+    and grants `role-owner`. `Resolver.ForUser` / `ForAPIKey` build a
+    flattened, scope-intersected Principal from the datastore so the
+    Authenticator middleware (phase 2b) only does the lookup once per
+    credential check.
+  - **Tests** cover exact/wildcard/global permission matching, owner
+    bypass, viewer cannot invoke the agent, roles reference only
+    declared permissions, idempotent re-seed, API-key scope
+    intersection against an SQLite-backed store, and Principal
+    context round-trip.
 - **Ops-plane datastore layer (phase 1 of the cloud-dashboard +
   RBAC rollout).** New `internal/datastore` package introduces the
   persistence surface for users, roles, permissions, API keys,
