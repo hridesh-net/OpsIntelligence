@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Onboarding matches AssistClaw-style opt-in configuration.** The wizard now asks whether to
+  configure provider API keys and connection details (skip and edit YAML later), shows an API key
+  field only when the chosen provider typically needs one, and uses a **multi-select** for Slack /
+  GitHub / GitLab / Jenkins / SonarQube so only chosen integrations prompt for credentials (empty
+  selection skips all).
+
 ## [0.2.5] — 2026-04-17
 
 ### Fixed

@@ -27,6 +27,38 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/config"
 )
 
+// onboardNeedsAPIKey mirrors AssistClaw: local providers have no cloud key; Vertex uses the dedicated Vertex step.
+func onboardNeedsAPIKey(provider string) bool {
+	switch provider {
+	case "ollama", "vllm", "lm_studio", "vertex":
+		return false
+	default:
+		return true
+	}
+}
+
+func onboardBaseURLDefault(provider string) (string, bool) {
+	switch provider {
+	case "ollama":
+		return "http://127.0.0.1:11434", true
+	case "vllm":
+		return "http://127.0.0.1:8000", true
+	case "lm_studio":
+		return "http://127.0.0.1:1234", true
+	default:
+		return "", false
+	}
+}
+
+func onboardPickContains(picks []string, want string) bool {
+	for _, p := range picks {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
 // runOnboarding is invoked by `loadConfig` when no config file exists. It runs
 // the non-interactive skeleton path so fresh installs get a usable YAML before
 // the daemon starts. Users can re-run `opsintelligence onboard` later for the
@@ -87,6 +119,9 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				sonarURL       string
 				sonarToken     string
 				activeTeam     = "platform"
+				// AssistClaw-style opt-in: configure provider creds and pick which integrations to set up.
+				configureProvider = true
+				integrationPicks  []string
 			)
 
 			if !nonInteractive {
@@ -131,104 +166,169 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				}
 				if err := runStep(
 					huh.NewGroup(
-						huh.NewInput().
-							Title("Provider API key (optional for local providers)").
-							EchoMode(huh.EchoModePassword).
-							Value(&apiKey),
-						huh.NewInput().
-							Title("Provider base URL (optional override)").
-							Description("For OpenAI-compatible/local providers. Leave blank to use provider defaults.").
-							Value(&providerURL),
-					).Title("Provider credentials"),
+						huh.NewConfirm().
+							Title("Configure provider API keys and connection details now?").
+							Description("Say No to skip — you can edit ~/.opsintelligence/opsintelligence.yaml later (same idea as AssistClaw).").
+							Value(&configureProvider),
+					).Title("Provider setup"),
 				); err != nil {
 					return err
 				}
-				if provider == "openrouter" {
+				if configureProvider {
+					var credFields []huh.Field
+					if onboardNeedsAPIKey(provider) {
+						credFields = append(credFields,
+							huh.NewInput().
+								Title("Provider API key").
+								Description("Stored in your local config file.").
+								EchoMode(huh.EchoModePassword).
+								Value(&apiKey))
+					}
+					if def, ok := onboardBaseURLDefault(provider); ok {
+						if strings.TrimSpace(providerURL) == "" {
+							providerURL = def
+						}
+						credFields = append(credFields,
+							huh.NewInput().
+								Title("Base URL").
+								Description("Override if your server listens elsewhere.").
+								Value(&providerURL))
+					} else if provider == "azure_openai" {
+						credFields = append(credFields,
+							huh.NewInput().
+								Title("Azure OpenAI endpoint").
+								Description("e.g. https://YOUR_RESOURCE.openai.azure.com").
+								Value(&providerURL))
+					} else if provider == "vertex" {
+						// Project / location / service-account path are collected on the Vertex step.
+					} else if provider == "bedrock" {
+						// Region / IAM / keys are collected on the Bedrock step; optional bearer still uses api_key above.
+					} else {
+						credFields = append(credFields,
+							huh.NewInput().
+								Title("Base URL (optional override)").
+								Description("For OpenAI-compatible proxies or custom endpoints. Leave blank for provider defaults.").
+								Value(&providerURL))
+					}
+					if len(credFields) > 0 {
+						if err := runStep(huh.NewGroup(credFields...).Title("Provider credentials")); err != nil {
+							return err
+						}
+					}
+					if provider == "openrouter" {
+						if err := runStep(
+							huh.NewGroup(
+								huh.NewInput().Title("OpenRouter app/site name (optional)").Description("Used for request attribution.").Value(&openrouterSite),
+								huh.NewInput().Title("OpenRouter site URL (optional)").Description("e.g. https://ops.example.com").Value(&openrouterURL),
+							).Title("OpenRouter options"),
+						); err != nil {
+							return err
+						}
+					}
+					if provider == "azure_openai" {
+						if err := runStep(
+							huh.NewGroup(
+								huh.NewInput().Title("Azure API version (optional)").Description("e.g. 2024-06-01").Value(&azureAPIVer),
+							).Title("Azure OpenAI options"),
+						); err != nil {
+							return err
+						}
+					}
+					if provider == "bedrock" {
+						if err := runStep(
+							huh.NewGroup(
+								huh.NewInput().Title("Bedrock region (optional)").Description("e.g. us-east-1").Value(&bedrockRegion),
+								huh.NewInput().Title("Bedrock profile (optional)").Description("Named AWS profile.").Value(&bedrockProfile),
+								huh.NewInput().Title("AWS access key ID (optional)").Description("Only if not using profile/role auth.").Value(&accessKeyID),
+								huh.NewInput().Title("AWS secret access key (optional)").EchoMode(huh.EchoModePassword).Description("Only if not using profile/role auth.").Value(&secretKey),
+							).Title("AWS Bedrock options"),
+						); err != nil {
+							return err
+						}
+					}
+					if provider == "vertex" {
+						if err := runStep(
+							huh.NewGroup(
+								huh.NewInput().Title("Vertex project ID (optional)").Value(&vertexProject),
+								huh.NewInput().Title("Vertex location (optional)").Description("e.g. us-central1").Value(&vertexLocation),
+								huh.NewInput().Title("Vertex credentials file path (optional)").Description("Service-account JSON path").Value(&vertexCreds),
+							).Title("Vertex options"),
+						); err != nil {
+							return err
+						}
+					}
+				}
+				if err := runStep(
+					huh.NewGroup(
+						huh.NewMultiSelect[string]().
+							Title("Which integrations should we configure now?").
+							Description("Space to toggle · Enter to confirm · leave empty to skip all (configure later in YAML). Same pattern as AssistClaw channel pick.").
+							Options(
+								huh.NewOption("Slack (bot + app tokens)", "slack"),
+								huh.NewOption("GitHub (PAT or app token)", "github"),
+								huh.NewOption("GitLab", "gitlab"),
+								huh.NewOption("Jenkins", "jenkins"),
+								huh.NewOption("SonarQube", "sonar"),
+							).
+							Value(&integrationPicks),
+					).Title("Integrations"),
+				); err != nil {
+					return err
+				}
+				if onboardPickContains(integrationPicks, "slack") {
 					if err := runStep(
 						huh.NewGroup(
-							huh.NewInput().Title("OpenRouter app/site name (optional)").Description("Used for request attribution.").Value(&openrouterSite),
-							huh.NewInput().Title("OpenRouter site URL (optional)").Description("e.g. https://ops.example.com").Value(&openrouterURL),
-						).Title("OpenRouter options"),
+							huh.NewNote().Title("Slack").Description("Bot token (xoxb-…) and app-level token (xapp-…). Leave blank to clear."),
+							huh.NewInput().Title("Slack bot token").Value(&slackBotToken),
+							huh.NewInput().Title("Slack app token").Value(&slackAppToken),
+						).Title("Slack"),
 					); err != nil {
 						return err
 					}
 				}
-				if provider == "azure_openai" {
+				if onboardPickContains(integrationPicks, "github") {
 					if err := runStep(
 						huh.NewGroup(
-							huh.NewInput().Title("Azure API version (optional)").Description("e.g. 2024-06-01").Value(&azureAPIVer),
-						).Title("Azure OpenAI options"),
+							huh.NewNote().Title("GitHub").Description("PAT or App installation token with repo/read:org scope."),
+							huh.NewInput().Title("GitHub token").EchoMode(huh.EchoModePassword).Value(&githubToken),
+						).Title("GitHub"),
 					); err != nil {
 						return err
 					}
 				}
-				if provider == "bedrock" {
+				if onboardPickContains(integrationPicks, "gitlab") {
 					if err := runStep(
 						huh.NewGroup(
-							huh.NewInput().Title("Bedrock region (optional)").Description("e.g. us-east-1").Value(&bedrockRegion),
-							huh.NewInput().Title("Bedrock profile (optional)").Description("Named AWS profile.").Value(&bedrockProfile),
-							huh.NewInput().Title("AWS access key ID (optional)").Description("Only if not using profile/role auth.").Value(&accessKeyID),
-							huh.NewInput().Title("AWS secret access key (optional)").EchoMode(huh.EchoModePassword).Description("Only if not using profile/role auth.").Value(&secretKey),
-						).Title("AWS Bedrock options"),
+							huh.NewNote().Title("GitLab").Description("Base URL and personal/project access token."),
+							huh.NewInput().Title("GitLab base URL").Value(&gitlabURL),
+							huh.NewInput().Title("GitLab token").EchoMode(huh.EchoModePassword).Value(&gitlabToken),
+						).Title("GitLab"),
 					); err != nil {
 						return err
 					}
 				}
-				if provider == "vertex" {
+				if onboardPickContains(integrationPicks, "jenkins") {
 					if err := runStep(
 						huh.NewGroup(
-							huh.NewInput().Title("Vertex project ID (optional)").Value(&vertexProject),
-							huh.NewInput().Title("Vertex location (optional)").Description("e.g. us-central1").Value(&vertexLocation),
-							huh.NewInput().Title("Vertex credentials file path (optional)").Description("Service-account JSON path").Value(&vertexCreds),
-						).Title("Vertex options"),
+							huh.NewNote().Title("Jenkins").Description("Base URL plus user + API token for job status."),
+							huh.NewInput().Title("Jenkins base URL").Value(&jenkinsURL),
+							huh.NewInput().Title("Jenkins user").Value(&jenkinsUser),
+							huh.NewInput().Title("Jenkins API token").EchoMode(huh.EchoModePassword).Value(&jenkinsToken),
+						).Title("Jenkins"),
 					); err != nil {
 						return err
 					}
 				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewNote().Title("Slack (optional)").Description("Leave blank to skip. Bot token (xoxb-…) and app-level token (xapp-…)."),
-						huh.NewInput().Title("Slack bot token").Value(&slackBotToken),
-						huh.NewInput().Title("Slack app token").Value(&slackAppToken),
-					).Title("Slack"),
-				); err != nil {
-					return err
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewNote().Title("GitHub (optional)").Description("PAT or App installation token with repo/read:org scope."),
-						huh.NewInput().Title("GitHub token").EchoMode(huh.EchoModePassword).Value(&githubToken),
-					).Title("GitHub"),
-				); err != nil {
-					return err
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewNote().Title("GitLab (optional)").Description("Base URL and personal/project access token."),
-						huh.NewInput().Title("GitLab base URL").Value(&gitlabURL),
-						huh.NewInput().Title("GitLab token").EchoMode(huh.EchoModePassword).Value(&gitlabToken),
-					).Title("GitLab"),
-				); err != nil {
-					return err
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewNote().Title("Jenkins (optional)").Description("Base URL plus user + API token for job status."),
-						huh.NewInput().Title("Jenkins base URL").Value(&jenkinsURL),
-						huh.NewInput().Title("Jenkins user").Value(&jenkinsUser),
-						huh.NewInput().Title("Jenkins API token").EchoMode(huh.EchoModePassword).Value(&jenkinsToken),
-					).Title("Jenkins"),
-				); err != nil {
-					return err
-				}
-				if err := runStep(
-					huh.NewGroup(
-						huh.NewNote().Title("SonarQube (optional)").Description("Base URL and token for quality-gate + issues."),
-						huh.NewInput().Title("Sonar base URL").Value(&sonarURL),
-						huh.NewInput().Title("Sonar token").EchoMode(huh.EchoModePassword).Value(&sonarToken),
-					).Title("SonarQube"),
-				); err != nil {
-					return err
+				if onboardPickContains(integrationPicks, "sonar") {
+					if err := runStep(
+						huh.NewGroup(
+							huh.NewNote().Title("SonarQube").Description("Base URL and token for quality-gate + issues."),
+							huh.NewInput().Title("Sonar base URL").Value(&sonarURL),
+							huh.NewInput().Title("Sonar token").EchoMode(huh.EchoModePassword).Value(&sonarToken),
+						).Title("SonarQube"),
+					); err != nil {
+						return err
+					}
 				}
 				if err := runStep(
 					huh.NewGroup(
