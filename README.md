@@ -160,14 +160,15 @@ Common environment toggles:
 > `NO_SOURCE_FALLBACK=1` if you specifically want the old
 > binary-only behaviour (useful for airgapped mirrors).
 >
-> **Note on Gemma for local-intel.** `WITH_GEMMA=1 bash install.sh`
-> (or `opsintelligence local-intel setup`) downloads Gemma 4 E2B-IT
-> weights from public Hugging Face mirrors by default (Unsloth, then
-> bartowski), then tries the OpsIntelligence GitHub release asset when
-> present. The file is stored as `models/gemma-4-e2b-it.gguf` under your
-> state directory. Pin a single source with
-> `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL=...` or `--url` (disables the
-> fallback chain).
+> **Note on Gemma for local-intel.** Release CI attaches **`gemma-4-e2b-it.gguf`**
+> to each GitHub release by downloading from a public mirror (unless you set
+> repo variable **`GEMMA_GGUF_SKIP=true`**). Optional **`GEMMA_GGUF_SOURCE_URL`**
+> overrides that download source (e.g. your own URL if the file lives on S3 or
+> another release). A path under your local **AssistClaw** checkout is not
+> visible to GitHub Actions — publish a reachable HTTPS URL or let CI use the
+> default mirror. Clients try **`releases/latest/download/gemma-4-e2b-it.gguf`**
+> first, then Hugging Face fallbacks. Pin one URL with
+> **`OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL`** or **`--url`** to disable the chain.
 
 **Uninstall:**
 

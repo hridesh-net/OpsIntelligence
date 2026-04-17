@@ -14,24 +14,20 @@ import (
 	"time"
 )
 
-// DefaultGGUFURL is the primary model download used by onboarding and
-// `opsintelligence local-intel setup` when no explicit URL/env override is provided.
-//
-// GitHub release assets (gemma-4-e2b-it.gguf) are optional and only appear when CI
-// is configured with GEMMA_GGUF_SOURCE_URL, so the default chain starts with a
-// public Hugging Face mirror (same Gemma 4 E2B-IT family, Q4_K_M quant).
+// DefaultGGUFURL is the first URL tried for onboarding and `opsintelligence local-intel setup`
+// when no explicit URL/env override is provided. Prefer the first-party GitHub release asset
+// (attached by release CI — see .github/workflows/release.yml).
 //
 // Exposed as a var (not const) so tests can redirect the primary endpoint.
-var DefaultGGUFURL = "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"
+var DefaultGGUFURL = "https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf"
 
-// FallbackGGUFURLs is tried in order after DefaultGGUFURL when no explicit URL is set.
-// Second mirror (bartowski), then first-party GitHub when a release attaches the
-// canonical filename (see .github/workflows/release.yml).
+// FallbackGGUFURLs are tried when the GitHub asset is missing (old tags) or unreachable.
+// Same Gemma 4 E2B-IT family, Q4_K_M quant on Hugging Face.
 //
 // Override with --url / OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL to use a single source only.
 var FallbackGGUFURLs = []string{
+	"https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
 	"https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf",
-	"https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf",
 }
 
 // defaultGGUFURLChain returns the ordered list of URLs we will try when the
@@ -90,8 +86,8 @@ func BootstrapGGUF(ctx context.Context, opt BootstrapOptions) (BootstrapResult, 
 
 	// Build the ordered list of URLs to try. An explicit opt.URL or the
 	// OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL env var pins a single source
-	// and disables the fallback chain. Otherwise we try DefaultGGUFURL
-	// then FallbackGGUFURLs (HF mirrors, then optional GitHub release asset).
+	// and disables the fallback chain. Otherwise: GitHub release asset first,
+	// then public HF mirrors.
 	var urls []string
 	if u := strings.TrimSpace(opt.URL); u != "" {
 		urls = []string{u}

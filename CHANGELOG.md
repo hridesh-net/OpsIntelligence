@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Local Gemma GGUF bootstrap:** default download chain now uses public Hugging Face mirrors (Unsloth → bartowski Q4_K_M) because GitHub `releases/latest/download/gemma-4-e2b-it.gguf` is only present when `GEMMA_GGUF_SOURCE_URL` is configured in release CI; removed the broken AssistClaw GitHub fallback.
+- **Local Gemma GGUF bootstrap:** try OpsIntelligence **`releases/latest/download/gemma-4-e2b-it.gguf`** first, then Hugging Face mirrors (Unsloth → bartowski Q4_K_M). **Release CI** now downloads and attaches that GGUF on every tag by default (HF mirror unless **`GEMMA_GGUF_SOURCE_URL`** is set); set **`GEMMA_GGUF_SKIP=true`** to opt out.
 
 ### Added
 
