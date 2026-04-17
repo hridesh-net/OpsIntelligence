@@ -1,0 +1,14 @@
+id: pr-review
+name: Pull Request Review
+purpose: End-to-end PR/MR review (gather → analyze → critique → render).
+inputs:
+  - pr_url
+tags:
+  - devops
+  - github
+  - gitlab
+steps:
+  - pr-review/gather
+  - pr-review/analyze
+  - pr-review/critique
+  - pr-review/render

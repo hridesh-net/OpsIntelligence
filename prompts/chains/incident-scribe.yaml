@@ -1,0 +1,12 @@
+id: incident-scribe
+name: Incident Scribe
+purpose: Incident brief + status update + postmortem skeleton from shared evidence.
+inputs:
+  - evidence
+tags:
+  - devops
+  - incident
+steps:
+  - incident-scribe/summarize
+  - incident-scribe/update
+  - incident-scribe/postmortem

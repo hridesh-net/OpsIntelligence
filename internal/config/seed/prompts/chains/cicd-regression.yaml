@@ -1,0 +1,15 @@
+id: cicd-regression
+name: CI/CD Regression Triage
+purpose: Isolate a regressing change in a CI/CD pipeline (fetch → compare → report).
+inputs:
+  - platform
+  - target
+tags:
+  - devops
+  - github
+  - gitlab
+  - jenkins
+steps:
+  - cicd-regression/fetch
+  - cicd-regression/compare
+  - cicd-regression/report

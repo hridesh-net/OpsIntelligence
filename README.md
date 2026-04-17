@@ -1,0 +1,236 @@
+<h1 align="center">OpsIntelligence</h1>
+
+<p align="center">
+  <em>An autonomous DevOps agent you can trust in production.</em><br>
+  PR review · SonarQube triage · CI/CD monitoring · incident support · runbooks.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT">
+  <img src="https://img.shields.io/badge/Posture-read--only%20by%20default-6f42c1?style=for-the-badge" alt="Read-only by default">
+</p>
+
+---
+
+## What this is
+
+OpsIntelligence is an autonomous agent for **DevOps teams inside a
+company**. It plugs into the systems you already run — GitHub (Actions),
+GitLab (CI), Jenkins, SonarQube, Slack — and carries out the DevOps work
+that normally eats a senior engineer's week:
+
+- Review a pull/merge request against your team's policy.
+- Watch CI pipelines on `main`, flag real regressions, ignore flakes.
+- Read SonarQube quality gates and decide block vs. flag vs. ignore.
+- Help an on-call engineer triage a production incident and draft the
+  postmortem.
+- Execute a runbook one step at a time, with a human in the loop.
+
+It is **configurable per team**: drop a handful of Markdown policy files
+into `teams/<your-team>/` and the agent follows *your* rules rather than
+generic defaults.
+
+## What this is not
+
+- It is **not** an autonomous deployment bot. OpsIntelligence is
+  **read-only by default** on every surface. Merging a PR, retrying a
+  pipeline, rolling back, silencing a Sonar rule — all require explicit
+  human confirmation in the same turn.
+- It is **not** a general consumer assistant. Messaging runs through
+  **Slack** or the **REST/WebSocket gateway** only. Consumer channels
+  (Telegram, WhatsApp, Discord) have been removed from the core.
+
+## Relationship to AssistClaw
+
+OpsIntelligence is a hard fork of the
+[AssistClaw](https://github.com/hridesh-net/AssistClaw) runtime. It
+inherits AssistClaw's agent loop, 3-tier memory, lazy-loaded skill
+graph, tool catalog, MCP support, cron scheduler, webhooks, security
+guardrail, and extensions framework. Everything consumer-oriented has
+been stripped out, and a first-class `devops.*` tool surface plus
+team-aware rule system have been added in their place.
+
+---
+
+## Built-in integrations
+
+| Platform | Status | What it reads |
+|---|---|---|
+| **GitHub** (cloud & Enterprise) | first-class | PRs, diffs, Actions runs, combined status |
+| **GitLab** (cloud & self-hosted) | first-class | MRs, pipelines, jobs |
+| **Jenkins** | first-class | jobs, builds, queue status |
+| **SonarQube / SonarCloud** | first-class | quality gates, issues, hotspots |
+| **Slack** | first-class | inbound + outbound messaging |
+| **Everything else** (PagerDuty, Datadog, Sentry, Jira, Grafana, Azure DevOps, Bitbucket, Terraform Cloud, …) | via MCP | plug in any MCP server |
+
+Every integration is off until you give it a token, and each token lives
+in an environment variable via `token_env:` — never in the YAML file.
+
+---
+
+## Quick start
+
+```bash
+# 1. Clone and build
+git clone https://github.com/hridesh-net/OpsIntelligence.git
+cd OpsIntelligence
+make build    # -> ./bin/opsintelligence
+
+# 2. Onboard (writes ~/.opsintelligence/opsintelligence.yaml)
+./bin/opsintelligence onboard
+
+# 3. Seed your state directory with the example team
+./bin/opsintelligence init    # drops teams/example-team/ policy files
+
+# 4. Verify reachability before you run live
+./bin/opsintelligence doctor
+
+# 5. Start the daemon (Slack + gateway + cron + webhooks)
+./bin/opsintelligence start
+```
+
+The first onboarding run collects: one LLM provider API key, optional
+Slack tokens, optional GitHub / GitLab / Jenkins / SonarQube tokens,
+and the active team name. Anything advanced (memory tiers, MCP
+clients, cron, webhooks) is edited directly in
+`~/.opsintelligence/opsintelligence.yaml`.
+
+See [`.opsintelligence.yaml.example`](.opsintelligence.yaml.example)
+for the complete, commented reference — including copy-paste cron
+heartbeats and webhook presets for GitHub/GitLab/Jenkins.
+
+---
+
+## Configuring a team
+
+A **team** is a directory of Markdown files that tells OpsIntelligence
+how *your* team wants to run DevOps. On startup, every `*.md` under
+`teams/<active>/` is merged into the agent's system prompt.
+
+```
+~/.opsintelligence/teams/platform/
+├── README.md
+├── pr-review.md          # severity rubric, size limits, checks before ship
+├── sonar.md              # quality-gate thresholds, false-positive policy
+├── cicd.md               # required pipelines, flaky-test policy, rollback
+├── secrets-and-safety.md # PII handling, token hygiene, owner approvals
+└── runbooks/             # optional: runbook files the agent can execute
+```
+
+Start from the shipped [`teams/example-team/`](teams/example-team/)
+templates, rename to your team, and edit. The agent will quote back to
+you which policy a decision is grounded in.
+
+---
+
+## The DevOps skill graph
+
+OpsIntelligence ships with a built-in skill graph under
+[`skills/devops/`](skills/devops/) that the agent lazy-loads when it
+needs it:
+
+- [`SKILL.md`](skills/devops/SKILL.md) — the entry node / map of content.
+- [`pr-review.md`](skills/devops/pr-review.md) — end-to-end review workflow.
+- [`sonar.md`](skills/devops/sonar.md) — quality-gate & issue triage.
+- [`cicd.md`](skills/devops/cicd.md) — pipeline monitoring across platforms.
+- [`incidents.md`](skills/devops/incidents.md) — on-call triage support.
+- [`runbooks.md`](skills/devops/runbooks.md) — safe runbook execution & authoring.
+
+Copy the folder to `~/.opsintelligence/skills/devops/` (or point
+`agent.skills_dir` at the repo path during development). Each node
+is callable from the agent via `read_skill_node("devops", "<node>")`.
+
+Alongside the skill graph, OpsIntelligence ships the standalone
+[`gh-pr-review`](skills/gh-pr-review/SKILL.md) skill — the opinionated
+how-to for reviewing a GitHub PR end-to-end: `gh pr checkout` into a
+disposable worktree, run the repo's lint/test/build locally, post a
+review through the GitHub Reviews API with line-level comments and
+one-click ```suggestion``` blocks, and submit
+Approve / Request-changes / Comment. Pair it with the `pr-review`
+smart-prompt chain: the chain produces the verdict, `gh-pr-review`
+posts it back.
+
+---
+
+## Smart prompts & prompt chaining
+
+DevOps questions worth answering well rarely fit in one prompt. The
+agent ships a curated library of **smart prompts** wired into named
+**chains** the model can invoke via the `chain_run` tool — each chain
+is a bounded, self-critiquing pipeline (gather → analyze → critique →
+render). See [doc/smart-prompts.md](doc/smart-prompts.md) for the full
+reference.
+
+```
+opsintelligence prompts ls                                     # list chains + prompts
+opsintelligence prompts show pr-review                         # full chain spec
+opsintelligence prompts run pr-review --input pr_url=https://…  # execute locally
+```
+
+Shipped chains: `pr-review`, `sonar-triage`, `cicd-regression`,
+`incident-scribe`. Shipped meta prompts: `self-critique`,
+`evidence-extractor`, `plan-then-act`. Every prompt is a Markdown file
+you can override at `~/.opsintelligence/prompts/<id>.md`.
+
+---
+
+## Safety posture
+
+OpsIntelligence treats production-adjacent systems with caution:
+
+- **Read-only by default** on GitHub, GitLab, Jenkins, Sonar, and any
+  MCP-connected platform.
+- **Explicit-confirmation writes.** The agent may *prepare* a command
+  (e.g. produce the `gh workflow run` invocation or the Jenkins URL),
+  but a human types "yes, do it" in the same turn for the agent to
+  proceed.
+- **Owner-only paths.** `POLICIES.md`, `RULES.md`, and everything under
+  `policies/` in the state directory are written by a human operator on
+  disk. Any attempt by the agent to edit them via `write_file`, `edit`,
+  `apply_patch`, or `bash` is blocked.
+- **Secrets never in YAML.** Tokens live in environment variables
+  referenced via `token_env:`. The doctor command checks that every
+  referenced env var is set before the daemon starts.
+- **PII hygiene.** Logs fetched from CI/CD or monitoring may contain
+  user data. The agent summarizes, does not quote verbatim, and never
+  echoes secrets it happens to see in a diff.
+
+---
+
+## Commands
+
+```
+opsintelligence onboard     # Interactive setup (writes the YAML)
+opsintelligence init        # Create state_dir + seed templates
+opsintelligence doctor      # Validate config + reachability
+opsintelligence start       # Run daemon (Slack + gateway + cron + webhooks)
+opsintelligence run "..."   # One-shot agent turn from the CLI
+opsintelligence skills ls   # List installed skills
+opsintelligence tools ls    # List registered tools (including devops.*)
+opsintelligence prompts ls  # List smart-prompt chains & meta prompts
+opsintelligence prompts run <chain> --input key=value
+```
+
+Run `opsintelligence <cmd> --help` for the full option list.
+
+---
+
+## Development
+
+```bash
+make build    # go build -tags fts5 ./cmd/opsintelligence
+make test     # go test ./...
+make lint     # gofmt + go vet
+./bin/opsintelligence doctor --config .opsintelligence.yaml.example --skip-network
+```
+
+`go test ./internal/devops/...` exercises the GitHub, GitLab, Jenkins,
+and SonarQube client contracts against `httptest` fixtures — no live
+calls.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

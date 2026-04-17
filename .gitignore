@@ -1,0 +1,71 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Keep vendored libffi runtime blobs required by github.com/jupiterrider/ffi go:embed.
+!vendor/github.com/jupiterrider/ffi/assets/libffi/darwin_arm64/libffi.8.dylib
+!vendor/github.com/jupiterrider/ffi/assets/libffi/darwin_amd64/libffi.8.dylib
+!vendor/github.com/jupiterrider/ffi/assets/libffi/windows_amd64/libffi-8.dll
+bin/
+/opsintelligence
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+coverage.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment and Config files
+.env
+.env.*
+opsintelligence.yaml
+*.yaml.local
+
+# Optional Gemma 4 E2B GGUF for go:embed builds (-tags opsintelligence_embedlocalgemma)
+internal/localintel/embedded/gemma-4-e2b-it.gguf
+
+# Local data / DBs / State
+*.db
+*.sqlite
+*.sqlite3
+.opsintelligence/
+/memory/
+# Local model staging area (install-time GGUF drops)
+/models/
+# /skills/
+/tools/
+/bin/
+/dist/
+
+# Node.js (if any JS tooling exists)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Legacy / Reference
+sqlite3.h
+sqlite3ext.h
+dist/

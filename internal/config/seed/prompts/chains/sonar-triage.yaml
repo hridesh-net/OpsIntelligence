@@ -1,0 +1,12 @@
+id: sonar-triage
+name: Sonar Triage
+purpose: Triage SonarQube findings against team thresholds (fetch → classify → recommend).
+inputs:
+  - project_key
+tags:
+  - devops
+  - sonar
+steps:
+  - sonar-triage/fetch
+  - sonar-triage/classify
+  - sonar-triage/recommend

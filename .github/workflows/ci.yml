@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: test-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./... -count=1
+
+      - name: Build CLI binary
+        run: go build -mod=vendor -tags fts5,opsintelligence_localgemma ./cmd/opsintelligence
+
+      - name: Doctor (sample config)
+        run: ./opsintelligence doctor --config .opsintelligence.yaml.example --skip-network
+
+      - name: Doctor JSON (jq)
+        run: |
+          ./opsintelligence doctor --config .opsintelligence.yaml.example --skip-network --no-input --json | tee /tmp/doctor.json
+          jq -e '.schema_version >= 1 and (.checks | type == "array") and (.exit_code | type == "number")' /tmp/doctor.json
+          jq -e '[.checks[] | select(.id == "") or (.severity == "") or (.message == "")] | length == 0' /tmp/doctor.json
+
+  fresh-install:
+    name: fresh-install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fresh install smoke (install.sh + doctor)
+        env:
+          SKIP_NODE: "1"
+        run: ./scripts/ci-fresh-install.sh

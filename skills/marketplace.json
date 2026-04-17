@@ -1,0 +1,143 @@
+{
+    "version": "1",
+    "updated": "2026-04-16",
+    "repo": "hridesh-net/OpsIntelligence",
+    "skills": [
+        {
+            "name": "devops",
+            "description": "Primary skill graph: PR review, SonarQube triage, CI/CD monitoring, incident response, and runbooks. Entry point for all DevOps work.",
+            "emoji": "🛠️",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/devops",
+            "tags": [
+                "devops",
+                "core",
+                "pr-review",
+                "sonar",
+                "ci-cd",
+                "incidents",
+                "runbooks"
+            ]
+        },
+        {
+            "name": "gh-pr-review",
+            "description": "End-to-end GitHub PR review: gh pr checkout into disposable worktrees, run repo lint/test/build locally, post line-level comments + one-click suggestion blocks via the Reviews API.",
+            "emoji": "✅",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/gh-pr-review",
+            "tags": [
+                "devops",
+                "github",
+                "pr-review",
+                "code-review"
+            ]
+        },
+        {
+            "name": "github",
+            "description": "Generic gh CLI cheat-sheet: repos, issues, PRs, releases, workflows, and gh api shortcuts. Use for everything that isn't PR-review-specific.",
+            "emoji": "🐙",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/github",
+            "tags": [
+                "devops",
+                "github",
+                "cli",
+                "git"
+            ]
+        },
+        {
+            "name": "gh-issues",
+            "description": "Auto-triage and auto-fix flows for GitHub Issues: labels, assignees, milestones, and linking PRs.",
+            "emoji": "🏷️",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/gh-issues",
+            "tags": [
+                "devops",
+                "github",
+                "issues",
+                "triage"
+            ]
+        },
+        {
+            "name": "slack",
+            "description": "Send notifications, summaries, and incident updates to Slack channels and DMs via the bot token.",
+            "emoji": "💬",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/slack",
+            "tags": [
+                "devops",
+                "communication",
+                "notifications",
+                "slack"
+            ]
+        },
+        {
+            "name": "healthcheck",
+            "description": "Probe HTTP/TCP endpoints, synthesize uptime summaries, and emit alerts when SLOs are breached.",
+            "emoji": "🩺",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/healthcheck",
+            "tags": [
+                "devops",
+                "monitoring",
+                "sre"
+            ]
+        },
+        {
+            "name": "tmux",
+            "description": "Drive tmux sessions/windows/panes for long-running runbooks, log tails, and multi-step ops scripts.",
+            "emoji": "🖥️",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/tmux",
+            "tags": [
+                "devops",
+                "runbooks",
+                "terminal"
+            ]
+        },
+        {
+            "name": "xurl",
+            "description": "Composable HTTP client skill: structured requests, response parsing, and safe retry patterns for DevOps APIs.",
+            "emoji": "🌐",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/xurl",
+            "tags": [
+                "devops",
+                "http",
+                "api"
+            ]
+        },
+        {
+            "name": "summarize",
+            "description": "General-purpose text summarizer — distill PR diffs, logs, SonarQube reports, or incident timelines.",
+            "emoji": "📝",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/summarize",
+            "tags": [
+                "utility",
+                "summarization"
+            ]
+        },
+        {
+            "name": "skill-creator",
+            "description": "Meta-skill: scaffold a new OpsIntelligence skill (SKILL.md, wikilinks, tools, scripts) following the in-repo conventions.",
+            "emoji": "🛠️",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/skill-creator",
+            "tags": [
+                "meta",
+                "authoring"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,237 @@
+# OpsIntelligence Configuration Example
+#
+# Copy this file to ~/.opsintelligence/opsintelligence.yaml and customize.
+# OpsIntelligence is a DevOps-focused autonomous agent:
+# PR review, Sonar triage, CI/CD monitoring, incident support, runbooks.
+
+version: 1
+
+# Base directory for memory, tools, skills, and team rules.
+state_dir: "~/.opsintelligence"
+
+# Gateway settings (REST/WebSocket server — the only non-Slack surface).
+gateway:
+  host: "127.0.0.1"
+  port: 18789
+  token: "${OPSINTEL_GATEWAY_TOKEN}" # set in env, never commit a real token
+
+# Agent execution settings
+agent:
+  max_iterations: 64
+  system_prompt_ext: "" # Extra instructions appended to the global prompt
+  # Directory of lazy-loaded markdown skills (INDEX + nodes).
+  # Seed with `cp -R <repo>/skills ~/.opsintelligence/` after first install.
+  skills_dir: "~/.opsintelligence/skills"
+  tools_dir: "~/.opsintelligence/tools"
+
+# ─────────────────────────────────────────────
+# DevOps platform integrations (first-class)
+# ─────────────────────────────────────────────
+# Tokens live in env vars referenced by `token_env:`. Never paste real
+# secrets into this file.
+devops:
+  github:
+    enabled: true
+    base_url: "https://api.github.com" # override for GitHub Enterprise
+    token_env: "OPSINTEL_GITHUB_TOKEN"
+    default_org: "acme"
+  gitlab:
+    enabled: false
+    base_url: "https://gitlab.com"
+    token_env: "OPSINTEL_GITLAB_TOKEN"
+  jenkins:
+    enabled: false
+    base_url: "https://jenkins.example.com"
+    user: "opsintel-bot"
+    token_env: "OPSINTEL_JENKINS_TOKEN"
+  sonar:
+    enabled: false
+    base_url: "https://sonarqube.example.com"
+    token_env: "OPSINTEL_SONAR_TOKEN"
+    project_key_prefix: "acme_" # prepended to short project keys
+
+# ─────────────────────────────────────────────
+# Teams (company / squad-specific rules)
+# ─────────────────────────────────────────────
+# Every *.md file under teams.dir/<active>/ is merged into the system
+# prompt. Start from the shipped `teams/example-team/` template.
+teams:
+  active: "example-team"
+  dir: "~/.opsintelligence/teams"
+
+# ─────────────────────────────────────────────
+# Channels — enterprise only (Slack + REST/WS gateway)
+# ─────────────────────────────────────────────
+channels:
+  outbound:
+    max_attempts: 5
+    base_delay_ms: 250
+    max_delay_ms: 10000
+    jitter_percent: 0.2
+    breaker_threshold: 5
+    breaker_cooldown_s: 30
+    dlq_path: "~/.opsintelligence/channels/dlq.ndjson"
+  slack:
+    bot_token: "${OPSINTEL_SLACK_BOT_TOKEN}"
+    app_token: "${OPSINTEL_SLACK_APP_TOKEN}" # xapp-... for Socket Mode
+    dm_mode: "pairing"
+    allow_from: [] # Slack user IDs or handles; empty = any member of workspace
+
+# ─────────────────────────────────────────────
+# Cron — scheduled prompts (heartbeat sweep, SLA checks, etc.)
+# ─────────────────────────────────────────────
+# The agent reads HEARTBEAT.md from state_dir on each "heartbeat" tick.
+cron:
+  - id: "heartbeat-morning"
+    schedule: "0 9 * * 1-5" # 09:00 local, Mon-Fri
+    prompt: "heartbeat"
+  - id: "ci-sweep-hourly"
+    schedule: "0 * * * *"
+    prompt: "Check CI health across configured platforms (devops.github.workflow_runs, devops.gitlab.pipelines, devops.jenkins.job). If any required main-branch pipeline is red, post a concise summary to the #ops-alerts Slack channel. Otherwise respond HEARTBEAT_OK."
+  - id: "sonar-gate-daily"
+    schedule: "0 8 * * 1-5"
+    prompt: "Run devops.sonar.quality_gate for each project under devops.sonar.project_key_prefix. Report any flips OK → WARN/ERROR since yesterday. If all green, respond HEARTBEAT_OK."
+
+# ─────────────────────────────────────────────
+# Webhooks — incoming events from GitHub / GitLab / Jenkins
+# ─────────────────────────────────────────────
+# Expose the webhook endpoint via the gateway:
+#   https://<gateway-host>:<port>/api/webhook/<path>
+# Configure each platform to POST to the corresponding path with the
+# shared secret in X-OpsIntelligence-Token.
+webhooks:
+  enabled: true
+  token: "${OPSINTEL_WEBHOOK_TOKEN}"
+  # Webhook prompt templates support `{{.<key>}}` substitution of
+  # top-level keys from the JSON payload. Use the agent's devops.*
+  # tools to fetch anything deeper.
+  mappings:
+    # ── GitHub ────────────────────────────────────────────────────────
+    # Point GitHub repo/org webhook at /api/webhook/github with
+    # Content-Type: application/json and secret = OPSINTEL_WEBHOOK_TOKEN.
+    # GitHub payloads have top-level `action` and `number` on PR events.
+    - path: "github"
+      prompt_template: |
+        GitHub webhook fired: action={{.action}} number={{.number}}.
+
+        Rules:
+        - If this is a pull_request opened/reopened/synchronize event,
+          follow skills/devops → [[pr-review]] on this PR and post a
+          Ship/Hold verdict with evidence.
+        - If this is a workflow_run completed with conclusion=failure
+          on the default branch, follow [[cicd]] and post the first
+          failing step.
+        - Otherwise, acknowledge with a one-line status and stop.
+      deliver: true
+      channel: "slack"
+      to: "#ops-alerts"
+    # ── GitLab ────────────────────────────────────────────────────────
+    # GitLab payloads expose top-level `object_kind` (e.g.
+    # "merge_request", "pipeline").
+    - path: "gitlab"
+      prompt_template: |
+        GitLab webhook fired: object_kind={{.object_kind}}.
+
+        Rules:
+        - For object_kind=merge_request with action opened/update,
+          follow [[pr-review]] and post a verdict.
+        - For object_kind=pipeline with status=failed on the default
+          branch, follow [[cicd]] and post the first failing job.
+        - Otherwise, acknowledge with a one-line status.
+      deliver: true
+      channel: "slack"
+      to: "#ops-alerts"
+    # ── Jenkins ───────────────────────────────────────────────────────
+    # Configure the "Notification" plugin to POST build status JSON.
+    # Top-level keys typically include `name`, `url`, and nested `build`.
+    - path: "jenkins"
+      prompt_template: |
+        Jenkins notification fired for job {{.name}} ({{.url}}).
+
+        Rules:
+        - Call devops.jenkins.build for the latest build of this job.
+        - If the result is FAILURE or UNSTABLE on the default branch,
+          follow [[cicd]] and post the first failing step.
+        - Otherwise, acknowledge with a one-line status.
+      deliver: true
+      channel: "slack"
+      to: "#ops-alerts"
+
+# ─────────────────────────────────────────────
+# MCP — plug in observability / ticketing / extra platforms
+# ─────────────────────────────────────────────
+# Anything not first-class (PagerDuty, Datadog, Sentry, Jira, Grafana,
+# Azure DevOps, Bitbucket, Terraform Cloud, …) should come in via MCP.
+mcp:
+  server:
+    enabled: false
+  clients: []
+    # - name: sentry
+    #   transport: stdio
+    #   command: npx
+    #   args: ["-y", "@sentry/mcp-server"]
+
+# ─────────────────────────────────────────────
+# Multi-model routing
+# ─────────────────────────────────────────────
+routing:
+  default: "anthropic/claude-3-5-haiku-20241022"
+  fallback: "ollama/llama3.2"
+  rules:
+    - task: "code"
+      model: "anthropic/claude-3-7-sonnet-20250219"
+    - task: "review"
+      model: "anthropic/claude-3-7-sonnet-20250219"
+
+# ─────────────────────────────────────────────
+# Memory
+# ─────────────────────────────────────────────
+memory:
+  working_token_budget: 100000
+  semantic_backend: "sqlite_vec"
+  mining:
+    enabled: false
+    mode: "incremental"
+    include:
+      - "MEMORY.md"
+      - "memory/*.md"
+    exclude:
+      - "memory/archive/*"
+    chunk_size: 512
+    chunk_overlap: 64
+    max_file_size_kb: 512
+    max_files_per_run: 1000
+    state_path: "~/.opsintelligence/memory/mining_state.json"
+
+# ─────────────────────────────────────────────
+# Embeddings
+# ─────────────────────────────────────────────
+embeddings:
+  priority:
+    - "openai"
+    - "ollama"
+
+# ─────────────────────────────────────────────
+# Tracing (off by default)
+# ─────────────────────────────────────────────
+tracing:
+  enabled: false
+  otlp_endpoint: "localhost:4317"
+  service_name: "opsintelligence"
+  sample_ratio: 0.01
+
+# ─────────────────────────────────────────────
+# LLM providers
+# ─────────────────────────────────────────────
+providers:
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+  ollama:
+    base_url: "http://127.0.0.1:11434"
+    default_model: "llama3.2"
+  groq:
+    api_key: "${GROQ_API_KEY}"
+  openrouter:
+    api_key: "${OPENROUTER_API_KEY}"

@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      # Pre-release tags (e.g. v3.10.6-beta.1, v4.0.0-rc.1)
+      - 'v*.*.*-*'
+
+permissions:
+  contents: write
+
+env:
+  # Source URL for GGUF seed file used to publish first-party asset on each release.
+  # Set repository variable GEMMA_GGUF_SOURCE_URL (or job env) to enable.
+  GEMMA_GGUF_SOURCE_URL: ${{ vars.GEMMA_GGUF_SOURCE_URL }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - os: ubuntu-latest
+            target: linux-arm64
+            goos: linux
+            goarch: arm64
+            ext: ""
+          - os: macos-latest
+            target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+          - os: macos-latest
+            target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          
+      - name: Install MSYS2 (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Install Linux dependencies
+        if: matrix.target == 'linux-amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Setup Zig
+        if: matrix.target == 'linux-arm64'
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+          
+      - name: Build Binary (Native)
+        if: matrix.target != 'linux-arm64'
+        env:
+          CGO_ENABLED: 1
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.os == 'windows-latest' && 'gcc' || '' }}
+        run: |
+          mkdir -p dist
+          go build -mod=vendor -tags fts5,opsintelligence_localgemma -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
+
+      - name: Build Binary (Linux ARM64 Cross-Compile with Zig)
+        if: matrix.target == 'linux-arm64'
+        env:
+          CGO_ENABLED: 1
+          GOOS: linux
+          GOARCH: arm64
+          CC: zig cc -target aarch64-linux-musl
+          CXX: zig c++ -target aarch64-linux-musl
+        run: |
+          mkdir -p dist
+          # Keep dynamic linking for libffi/purego so local Gemma runtime can dlopen on ARM64.
+          go build -mod=vendor -tags fts5,opsintelligence_localgemma -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bin-archives
+          merge-multiple: true
+
+      - name: Download Gemma GGUF asset (first-party)
+        if: ${{ env.GEMMA_GGUF_SOURCE_URL != '' }}
+        run: |
+          mkdir -p dist
+          echo "Fetching GGUF from: ${GEMMA_GGUF_SOURCE_URL}"
+          curl -fL --retry 3 --retry-delay 2 --retry-all-errors \
+            -o dist/gemma-4-e2b-it.gguf "${GEMMA_GGUF_SOURCE_URL}"
+          sha256sum dist/gemma-4-e2b-it.gguf | awk '{print $1}' > dist/gemma-4-e2b-it.gguf.sha256
+          
+      - name: Create Release Notes
+        id: release_notes
+        run: |
+          cp bin-archives/* dist/ || true
+          echo "## OpsIntelligence ${GITHUB_REF_NAME}" > release_notes.md
+          if echo "${GITHUB_REF_NAME}" | grep -q '-'; then
+            echo "**Pre-release (beta / RC).** Not marked stable; expect changes before the final release." >> release_notes.md
+          else
+            echo "Stable release build." >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "Automated binaries below." >> release_notes.md
+          echo "" >> release_notes.md
+          echo "Included assets:" >> release_notes.md
+          echo "- opsintelligence binaries for supported targets" >> release_notes.md
+          if [ -f dist/gemma-4-e2b-it.gguf ]; then
+            echo "- gemma-4-e2b-it.gguf (for local-intel setup default URL)" >> release_notes.md
+            echo "- gemma-4-e2b-it.gguf.sha256" >> release_notes.md
+          else
+            echo "- gemma-4-e2b-it.gguf (not attached: set GEMMA_GGUF_SOURCE_URL variable to enable)" >> release_notes.md
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: release_notes.md
+          draft: false
+          # Tags like v1.2.3 are stable; v1.2.3-beta.1 / v1.2.3-rc.1 are pre-releases
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
