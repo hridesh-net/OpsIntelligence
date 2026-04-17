@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-04-17
+
+### Fixed
+
+- **GitHub Releases / Gemma:** GitHub caps each release asset at **2 GiB** ([REST API](https://docs.github.com/rest/releases/assets)); the default Q4_K_M GGUF is ~**3 GiB**, so attaching `gemma-4-e2b-it.gguf` fails. Release CI now ships **`gemma-4-e2b-it-MIRROR_MANIFEST.txt`** (HF URLs) instead of the binary. **`internal/localintel`** uses Hugging Face mirrors only.
+
 ## [0.3.3] — 2026-04-17
 
 ### Added
@@ -15,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Onboarding local Gemma:** no confirm/path prompts; auto-provisions from bundled `models/*.gguf` or public mirrors (no credentials). Copy/download errors print a warning and **do not** fail onboarding.
-- **Local Gemma GGUF bootstrap:** try OpsIntelligence **`releases/latest/download/gemma-4-e2b-it.gguf`** first, then Hugging Face mirrors (Unsloth → bartowski Q4_K_M). **Release CI** downloads and attaches **`gemma-4-e2b-it.gguf`** + **`.sha256`** on every tag by default, verifies size, and **fails the release job** if the asset is missing (unless **`GEMMA_GGUF_SKIP=true`**).
+- **Local Gemma GGUF bootstrap:** Hugging Face mirrors (Unsloth → bartowski Q4_K_M). *(v0.3.4: GitHub cannot host the GGUF; see release manifest.)*
 
 ## [0.3.2] — 2026-04-17
 

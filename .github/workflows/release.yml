@@ -10,11 +10,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # Optional override for where CI fetches weights before uploading gemma-4-e2b-it.gguf.
-  # When unset, the release job uses a public Hugging Face URL (see Download Gemma step).
-  GEMMA_GGUF_SOURCE_URL: ${{ vars.GEMMA_GGUF_SOURCE_URL }}
-
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -117,44 +112,8 @@ jobs:
           path: bin-archives
           merge-multiple: true
 
-      # Attach gemma-4-e2b-it.gguf to every release so releases/latest/download/… works.
-      # Source: GEMMA_GGUF_SOURCE_URL repo variable if set, else the same public HF URL
-      # as internal/localintel (Q4_K_M). Set repo variable GEMMA_GGUF_SKIP=true to skip
-      # (e.g. airgapped forks). A file on your laptop is not visible here — use a URL
-      # (HF, S3, raw release on another repo, etc.).
-      - name: Download Gemma GGUF asset (first-party)
-        env:
-          GEMMA_SKIP: ${{ vars.GEMMA_GGUF_SKIP }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${GEMMA_SKIP}" == "1" || "${GEMMA_SKIP}" == "true" ]]; then
-            echo "Skipping Gemma GGUF (GEMMA_GGUF_SKIP is set)."
-            exit 0
-          fi
-          DEFAULT_URL='https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf'
-          SRC="${GEMMA_GGUF_SOURCE_URL:-}"
-          if [[ -z "${SRC}" ]]; then
-            SRC="${DEFAULT_URL}"
-          fi
-          mkdir -p dist
-          out="dist/gemma-4-e2b-it.gguf"
-          echo "Fetching GGUF from: ${SRC}"
-          curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
-            -A "OpsIntelligence-release-ci (+https://github.com/hridesh-net/OpsIntelligence)" \
-            -o "${out}" "${SRC}"
-          sz=$(stat -c%s "${out}" 2>/dev/null || stat -f%z "${out}")
-          # Reject Git LFS pointers / HTML error pages (real Q4_K_M GGUF is ~3GB).
-          if [[ "${sz}" -lt 104857600 ]]; then
-            echo "::error::Downloaded file is only ${sz} bytes (expected hundreds of MB+). Check URL or network."
-            head -c 400 "${out}" || true
-            exit 1
-          fi
-          sha256sum "${out}" | awk '{print $1}' > dist/gemma-4-e2b-it.gguf.sha256
-          echo "Gemma GGUF OK: ${sz} bytes, sha256 written."
-
-      # dist/ must exist before copying binaries. Gemma step mkdir -p dist above;
-      # Stage binaries always merges build artifacts into dist/.
+      # GitHub REST API rejects release assets > 2 GiB. Default Gemma Q4_K_M GGUF is ~3 GiB,
+      # so we do not upload the binary here — only a small mirror manifest (see release/).
       - name: Stage binaries for release
         shell: bash
         run: |
@@ -170,25 +129,9 @@ jobs:
             exit 1
           fi
 
-      # Fail the workflow before publishing if Gemma was supposed to ship but dist is wrong.
-      - name: Verify Gemma attached for release
-        if: ${{ vars.GEMMA_GGUF_SKIP != 'true' && vars.GEMMA_GGUF_SKIP != '1' }}
-        shell: bash
+      - name: Add Gemma mirror manifest to release
         run: |
-          set -euo pipefail
-          f="dist/gemma-4-e2b-it.gguf"
-          if [[ ! -f "${f}" ]]; then
-            echo "::error::${f} missing — Gemma download step must succeed for releases (set repo variable GEMMA_GGUF_SKIP=true to opt out)."
-            ls -la dist/ || true
-            exit 1
-          fi
-          sz=$(stat -c%s "${f}" 2>/dev/null || stat -f%z "${f}")
-          if [[ "${sz}" -lt 104857600 ]]; then
-            echo "::error::${f} too small (${sz} b) — refusing to publish."
-            exit 1
-          fi
-          test -f dist/gemma-4-e2b-it.gguf.sha256
-          echo "Release will include Gemma asset (${sz} bytes) + checksum sidecar."
+          cp release/gemma-4-e2b-it-MIRROR_MANIFEST.txt dist/
 
       - name: Create Release Notes
         id: release_notes
@@ -204,12 +147,7 @@ jobs:
           echo "" >> release_notes.md
           echo "Included assets:" >> release_notes.md
           echo "- opsintelligence binaries for supported targets" >> release_notes.md
-          if [ -f dist/gemma-4-e2b-it.gguf ]; then
-            echo "- gemma-4-e2b-it.gguf (for local-intel setup default URL)" >> release_notes.md
-            echo "- gemma-4-e2b-it.gguf.sha256" >> release_notes.md
-          else
-            echo "- gemma-4-e2b-it.gguf (not attached: download step failed or GEMMA_GGUF_SKIP set)" >> release_notes.md
-          fi
+          echo "- gemma-4-e2b-it-MIRROR_MANIFEST.txt (GGUF download URLs — GitHub asset limit 2 GiB; weights ~3 GiB)" >> release_notes.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

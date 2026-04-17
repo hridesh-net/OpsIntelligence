@@ -39,7 +39,7 @@ func localIntelSetupCmd(gf *globalFlags, stateDir *string) *cobra.Command {
 		Long: `Downloads a Gemma-compatible GGUF into a managed path and prints a config snippet.
 
 Default output path: <state_dir>/models/gemma-4-e2b-it.gguf
-Default: OpsIntelligence GitHub release asset (localintel.DefaultGGUFURL), then public HF mirrors; override with --url or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL.
+Default: public Hugging Face mirrors (localintel.DefaultGGUFURL + fallbacks); GitHub Releases cannot host the ~3 GiB GGUF (2 GiB API cap). Override with --url or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL.
 Optional integrity check: --sha256 or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := mempalaceLoadCfg(gf, *stateDir)
@@ -100,7 +100,7 @@ Optional integrity check: --sha256 or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&url, "url", "", "GGUF URL (default: OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL or OpsIntelligence release asset)")
+	cmd.Flags().StringVar(&url, "url", "", "GGUF URL (default: OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL or Hugging Face mirrors)")
 	cmd.Flags().StringVar(&ggufPath, "gguf-path", "", "Destination GGUF path (default: <state_dir>/models/gemma-4-e2b-it.gguf)")
 	cmd.Flags().StringVar(&sha256, "sha256", "", "Optional SHA-256 hex digest to verify download")
 	cmd.Flags().BoolVar(&force, "force", false, "Force re-download even if destination file exists")

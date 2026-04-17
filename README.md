@@ -81,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/in
 **Pin a specific version:**
 
 ```bash
-OPSINTELLIGENCE_VERSION=v0.3.3 bash install.sh
+OPSINTELLIGENCE_VERSION=v0.3.4 bash install.sh
 ```
 
 **Build from source (requires Go matching `go.mod`, currently 1.26+):**
@@ -109,7 +109,7 @@ downloaded or compiled.
    `opsintelligence-<os>-<arch>` for their platform (see
    [Releases](https://github.com/hridesh-net/OpsIntelligence/releases)).
    Pin the version explicitly:
-   `OPSINTELLIGENCE_VERSION=v0.3.3 bash install.sh` (adjust tag as
+   `OPSINTELLIGENCE_VERSION=v0.3.4 bash install.sh` (adjust tag as
    needed).
 2. **Avoid surprise downloads.** On restricted networks, the default
    installer may try to **clone the repo**, **pull Go from go.dev**, or
@@ -160,15 +160,12 @@ Common environment toggles:
 > `NO_SOURCE_FALLBACK=1` if you specifically want the old
 > binary-only behaviour (useful for airgapped mirrors).
 >
-> **Note on Gemma for local-intel.** Release CI attaches **`gemma-4-e2b-it.gguf`**
-> (and **`gemma-4-e2b-it.gguf.sha256`**) to each GitHub release by downloading from a public mirror (unless you set
-> repo variable **`GEMMA_GGUF_SKIP=true`**). The workflow **fails before publish** if that asset is missing or implausibly small, so **`releases/latest/download/gemma-4-e2b-it.gguf`** stays valid. Optional **`GEMMA_GGUF_SOURCE_URL`**
-> overrides that download source (e.g. your own URL if the file lives on S3 or
-> another release). A path under your local **AssistClaw** checkout is not
-> visible to GitHub Actions — publish a reachable HTTPS URL or let CI use the
-> default mirror. Clients try **`releases/latest/download/gemma-4-e2b-it.gguf`**
-> first, then Hugging Face fallbacks. Pin one URL with
-> **`OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL`** or **`--url`** to disable the chain.
+> **Note on Gemma for local-intel.** GitHub Releases **cannot** include the default
+> Q4_K_M GGUF as a single asset: the [REST API limits each file to 2 GiB](https://docs.github.com/rest/releases/assets)
+> and the model is ~3 GiB. Each release therefore ships **`gemma-4-e2b-it-MIRROR_MANIFEST.txt`**
+> (canonical Hugging Face URLs). **`opsintelligence onboard`** / **`local-intel setup`**
+> download from those mirrors (no GitHub login). Pin your own mirror with
+> **`OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL`** or **`--url`**.
 
 **Uninstall:**
 
