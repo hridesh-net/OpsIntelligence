@@ -117,6 +117,12 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							).
 							Value(&provider),
 						huh.NewInput().
+							Title("Default model (optional)").
+							Description("Examples: gpt-5, claude-sonnet-4-5, grok-4, llama-3.3-70b.").
+							Value(&defaultModel),
+					).Title("Provider selection"),
+					huh.NewGroup(
+						huh.NewInput().
 							Title("Provider API key (optional for local providers)").
 							EchoMode(huh.EchoModePassword).
 							Value(&apiKey),
@@ -124,25 +130,27 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							Title("Provider base URL (optional override)").
 							Description("For OpenAI-compatible/local providers. Leave blank to use provider defaults.").
 							Value(&providerURL),
-						huh.NewInput().
-							Title("Default model (optional)").
-							Description("Examples: gpt-5, claude-sonnet-4-5, grok-4, llama-3.3-70b.").
-							Value(&defaultModel),
+					).Title("Provider credentials"),
+					huh.NewGroup(
 						huh.NewInput().
 							Title("OpenRouter app/site name (optional)").
-							Description("Only used when provider=openrouter for better request attribution.").
+							Description("Used for provider=openrouter request attribution.").
 							Value(&openrouterSite),
 						huh.NewInput().
 							Title("OpenRouter site URL (optional)").
-							Description("Only used when provider=openrouter (e.g. https://ops.example.com).").
+							Description("e.g. https://ops.example.com").
 							Value(&openrouterURL),
+					).Title("OpenRouter options").WithHideFunc(func() bool { return provider != "openrouter" }),
+					huh.NewGroup(
 						huh.NewInput().
 							Title("Azure API version (optional)").
-							Description("Only used when provider=azure_openai (e.g. 2024-06-01).").
+							Description("e.g. 2024-06-01").
 							Value(&azureAPIVer),
+					).Title("Azure OpenAI options").WithHideFunc(func() bool { return provider != "azure_openai" }),
+					huh.NewGroup(
 						huh.NewInput().
 							Title("Bedrock region (optional)").
-							Description("Only used when provider=bedrock (e.g. us-east-1).").
+							Description("e.g. us-east-1").
 							Value(&bedrockRegion),
 						huh.NewInput().
 							Title("Bedrock profile (optional)").
@@ -150,46 +158,52 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							Value(&bedrockProfile),
 						huh.NewInput().
 							Title("AWS access key ID (optional)").
-							Description("Only used when provider=bedrock and not using profile/role auth.").
+							Description("Only if not using profile/role auth.").
 							Value(&accessKeyID),
 						huh.NewInput().
 							Title("AWS secret access key (optional)").
 							EchoMode(huh.EchoModePassword).
-							Description("Only used when provider=bedrock and not using profile/role auth.").
+							Description("Only if not using profile/role auth.").
 							Value(&secretKey),
+					).Title("AWS Bedrock options").WithHideFunc(func() bool { return provider != "bedrock" }),
+					huh.NewGroup(
 						huh.NewInput().
 							Title("Vertex project ID (optional)").
-							Description("Only used when provider=vertex.").
 							Value(&vertexProject),
 						huh.NewInput().
 							Title("Vertex location (optional)").
-							Description("Only used when provider=vertex (e.g. us-central1).").
+							Description("e.g. us-central1").
 							Value(&vertexLocation),
 						huh.NewInput().
 							Title("Vertex credentials file path (optional)").
-							Description("Only used when provider=vertex (service-account JSON path).").
+							Description("Service-account JSON path").
 							Value(&vertexCreds),
-					),
+					).Title("Vertex options").WithHideFunc(func() bool { return provider != "vertex" }),
 					huh.NewGroup(
 						huh.NewNote().
 							Title("Slack (optional)").
 							Description("Leave blank to skip. Bot token (xoxb-…) and app-level token (xapp-…)."),
 						huh.NewInput().Title("Slack bot token").Value(&slackBotToken),
 						huh.NewInput().Title("Slack app token").Value(&slackAppToken),
-					),
+					).Title("Slack"),
+					huh.NewGroup(
+						huh.NewNote().
+							Title("DevOps integrations").
+							Description("Configure GitHub, GitLab, Jenkins, Sonar tokens/URLs."),
+					).Title("Integrations overview"),
 					huh.NewGroup(
 						huh.NewNote().
 							Title("GitHub (optional)").
 							Description("Personal access token or App installation token with repo/read:org scope."),
 						huh.NewInput().Title("GitHub token").EchoMode(huh.EchoModePassword).Value(&githubToken),
-					),
+					).Title("GitHub"),
 					huh.NewGroup(
 						huh.NewNote().
 							Title("GitLab (optional)").
 							Description("Base URL (e.g. https://gitlab.example.com) and a personal/project access token."),
 						huh.NewInput().Title("GitLab base URL").Value(&gitlabURL),
 						huh.NewInput().Title("GitLab token").EchoMode(huh.EchoModePassword).Value(&gitlabToken),
-					),
+					).Title("GitLab"),
 					huh.NewGroup(
 						huh.NewNote().
 							Title("Jenkins (optional)").
@@ -197,21 +211,21 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 						huh.NewInput().Title("Jenkins base URL").Value(&jenkinsURL),
 						huh.NewInput().Title("Jenkins user").Value(&jenkinsUser),
 						huh.NewInput().Title("Jenkins API token").EchoMode(huh.EchoModePassword).Value(&jenkinsToken),
-					),
+					).Title("Jenkins"),
 					huh.NewGroup(
 						huh.NewNote().
 							Title("SonarQube (optional)").
 							Description("Base URL and user/project token for quality-gate + issues endpoints."),
 						huh.NewInput().Title("Sonar base URL").Value(&sonarURL),
 						huh.NewInput().Title("Sonar token").EchoMode(huh.EchoModePassword).Value(&sonarToken),
-					),
+					).Title("SonarQube"),
 					huh.NewGroup(
 						huh.NewInput().
 							Title("Active team name").
 							Description("Directory under ~/.opsintelligence/teams/<name> whose *.md files the agent must follow.").
 							Value(&activeTeam),
-					),
-				)
+					).Title("Team policy"),
+				).WithShowHelp(true).WithShowErrors(true)
 				// Use alternate screen so onboarding feels like a single isolated TUI
 				// and does not visually bleed with terminal scrollback.
 				form.WithProgramOptions(tea.WithAltScreen())

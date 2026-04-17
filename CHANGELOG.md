@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-04-17
+
+### Fixed
+
+- **Onboarding TUI now behaves as true step-by-step pages instead of one dense mixed surface.**
+  The provider and integration wizard was technically in alt-screen, but it still felt visually
+  cluttered because all provider-specific fields were part of a giant single flow.
+  Onboarding now uses titled, paged groups with conditional visibility:
+  - Provider selection
+  - Provider credentials
+  - OpenRouter options (only when provider is `openrouter`)
+  - Azure OpenAI options (only for `azure_openai`)
+  - AWS Bedrock options (only for `bedrock`)
+  - Vertex options (only for `vertex`)
+  - Slack
+  - Integrations overview + per-integration pages
+  - Team policy
+
+  This resolves the “I can see next interfaces with first one” experience and makes
+  the flow read like one clean interface at a time.
+
 ## [0.2.3] — 2026-04-17
 
 ### Fixed
