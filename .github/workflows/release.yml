@@ -125,7 +125,9 @@ jobs:
       - name: Download Gemma GGUF asset (first-party)
         env:
           GEMMA_SKIP: ${{ vars.GEMMA_GGUF_SKIP }}
+        shell: bash
         run: |
+          set -euo pipefail
           if [[ "${GEMMA_SKIP}" == "1" || "${GEMMA_SKIP}" == "true" ]]; then
             echo "Skipping Gemma GGUF (GEMMA_GGUF_SKIP is set)."
             exit 0
@@ -136,10 +138,20 @@ jobs:
             SRC="${DEFAULT_URL}"
           fi
           mkdir -p dist
+          out="dist/gemma-4-e2b-it.gguf"
           echo "Fetching GGUF from: ${SRC}"
-          curl -fL --retry 3 --retry-delay 2 --retry-all-errors \
-            -o dist/gemma-4-e2b-it.gguf "${SRC}"
-          sha256sum dist/gemma-4-e2b-it.gguf | awk '{print $1}' > dist/gemma-4-e2b-it.gguf.sha256
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+            -A "OpsIntelligence-release-ci (+https://github.com/hridesh-net/OpsIntelligence)" \
+            -o "${out}" "${SRC}"
+          sz=$(stat -c%s "${out}" 2>/dev/null || stat -f%z "${out}")
+          # Reject Git LFS pointers / HTML error pages (real Q4_K_M GGUF is ~3GB).
+          if [[ "${sz}" -lt 104857600 ]]; then
+            echo "::error::Downloaded file is only ${sz} bytes (expected hundreds of MB+). Check URL or network."
+            head -c 400 "${out}" || true
+            exit 1
+          fi
+          sha256sum "${out}" | awk '{print $1}' > dist/gemma-4-e2b-it.gguf.sha256
+          echo "Gemma GGUF OK: ${sz} bytes, sha256 written."
 
       # dist/ must exist before copying binaries. Gemma step mkdir -p dist above;
       # Stage binaries always merges build artifacts into dist/.
@@ -157,6 +169,26 @@ jobs:
             ls -la bin-archives/ || true
             exit 1
           fi
+
+      # Fail the workflow before publishing if Gemma was supposed to ship but dist is wrong.
+      - name: Verify Gemma attached for release
+        if: ${{ vars.GEMMA_GGUF_SKIP != 'true' && vars.GEMMA_GGUF_SKIP != '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="dist/gemma-4-e2b-it.gguf"
+          if [[ ! -f "${f}" ]]; then
+            echo "::error::${f} missing — Gemma download step must succeed for releases (set repo variable GEMMA_GGUF_SKIP=true to opt out)."
+            ls -la dist/ || true
+            exit 1
+          fi
+          sz=$(stat -c%s "${f}" 2>/dev/null || stat -f%z "${f}")
+          if [[ "${sz}" -lt 104857600 ]]; then
+            echo "::error::${f} too small (${sz} b) — refusing to publish."
+            exit 1
+          fi
+          test -f dist/gemma-4-e2b-it.gguf.sha256
+          echo "Release will include Gemma asset (${sz} bytes) + checksum sidecar."
 
       - name: Create Release Notes
         id: release_notes

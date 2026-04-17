@@ -161,8 +161,8 @@ Common environment toggles:
 > binary-only behaviour (useful for airgapped mirrors).
 >
 > **Note on Gemma for local-intel.** Release CI attaches **`gemma-4-e2b-it.gguf`**
-> to each GitHub release by downloading from a public mirror (unless you set
-> repo variable **`GEMMA_GGUF_SKIP=true`**). Optional **`GEMMA_GGUF_SOURCE_URL`**
+> (and **`gemma-4-e2b-it.gguf.sha256`**) to each GitHub release by downloading from a public mirror (unless you set
+> repo variable **`GEMMA_GGUF_SKIP=true`**). The workflow **fails before publish** if that asset is missing or implausibly small, so **`releases/latest/download/gemma-4-e2b-it.gguf`** stays valid. Optional **`GEMMA_GGUF_SOURCE_URL`**
 > overrides that download source (e.g. your own URL if the file lives on S3 or
 > another release). A path under your local **AssistClaw** checkout is not
 > visible to GitHub Actions — publish a reachable HTTPS URL or let CI use the
