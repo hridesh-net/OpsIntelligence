@@ -8,7 +8,7 @@ import (
 
 func TestCapabilitiesFor_Builtins(t *testing.T) {
 	t.Helper()
-	channels := []string{"slack"}
+	channels := []string{"telegram", "discord", "slack", "whatsapp"}
 	for _, name := range channels {
 		c, ok := CapabilitiesFor(name)
 		if !ok {

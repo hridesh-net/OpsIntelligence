@@ -6,6 +6,28 @@ import (
 )
 
 var capabilityRegistry = map[string]ChannelCapabilities{
+	"telegram": {
+		Threading:        true,
+		Attachments:      true,
+		DirectMessages:   true,
+		GroupMessages:    true,
+		Mentions:         true,
+		Voice:            false,
+		Reactions:        true,
+		Edits:            true,
+		MaxMessageLength: 4096,
+	},
+	"discord": {
+		Threading:        true,
+		Attachments:      true,
+		DirectMessages:   true,
+		GroupMessages:    true,
+		Mentions:         true,
+		Voice:            true,
+		Reactions:        true,
+		Edits:            true,
+		MaxMessageLength: 2000,
+	},
 	"slack": {
 		Threading:        true,
 		Attachments:      true,
@@ -16,6 +38,17 @@ var capabilityRegistry = map[string]ChannelCapabilities{
 		Reactions:        true,
 		Edits:            true,
 		MaxMessageLength: 40000,
+	},
+	"whatsapp": {
+		Threading:        false,
+		Attachments:      true,
+		DirectMessages:   true,
+		GroupMessages:    true,
+		Mentions:         true,
+		Voice:            true,
+		Reactions:        true,
+		Edits:            false,
+		MaxMessageLength: 4000,
 	},
 }
 

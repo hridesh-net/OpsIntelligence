@@ -71,11 +71,26 @@ channels:
     breaker_threshold: 5
     breaker_cooldown_s: 30
     dlq_path: "~/.opsintelligence/channels/dlq.ndjson"
+  # Same channel adapters as AssistClaw — enable any subset:
+  # telegram:
+  #   bot_token: "${OPSINTEL_TELEGRAM_BOT_TOKEN}"
+  #   dm_mode: "pairing"
+  #   require_mention: true
+  #   allow_from: []
+  # discord:
+  #   bot_token: "${OPSINTEL_DISCORD_BOT_TOKEN}"
+  #   dm_mode: "pairing"
+  #   require_mention: true
+  #   allow_from: []
   slack:
     bot_token: "${OPSINTEL_SLACK_BOT_TOKEN}"
     app_token: "${OPSINTEL_SLACK_APP_TOKEN}" # xapp-... for Socket Mode
     dm_mode: "pairing"
     allow_from: [] # Slack user IDs or handles; empty = any member of workspace
+  # whatsapp:
+  #   session_id: "personal"
+  #   dm_mode: "pairing"
+  #   allow_from: []
 
 # ─────────────────────────────────────────────
 # Cron — scheduled prompts (heartbeat sweep, SLA checks, etc.)

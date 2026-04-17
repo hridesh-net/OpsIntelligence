@@ -6,7 +6,7 @@
 //     Perplexity, xAI, HuggingFace, Ollama, vLLM, LM Studio, Azure OpenAI,
 //     Bedrock, Vertex, Voyage)
 //   - provider API key/base-url/model fields needed for the chosen provider
-//   - Slack bot/app tokens (optional)
+//   - Messaging channels (Telegram, Discord, Slack, WhatsApp) — optional, AssistClaw-style
 //   - DevOps integration tokens (GitHub, GitLab, Jenkins, SonarQube) — optional
 //   - an active team name
 //
@@ -59,6 +59,21 @@ func onboardPickContains(picks []string, want string) bool {
 	return false
 }
 
+func onboardSplitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // runOnboarding is invoked by `loadConfig` when no config file exists. It runs
 // the non-interactive skeleton path so fresh installs get a usable YAML before
 // the daemon starts. Users can re-run `opsintelligence onboard` later for the
@@ -86,9 +101,9 @@ func onboardCmd(flags *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Interactive setup: write a starter opsintelligence.yaml",
-		Long: `Runs a minimal wizard that collects LLM provider credentials, Slack tokens (optional),
-DevOps integration tokens (GitHub/GitLab/Jenkins/SonarQube — optional), and an active team name,
-then writes ~/.opsintelligence/opsintelligence.yaml.
+		Long: `Runs a minimal wizard that collects LLM provider credentials, messaging channels
+(Telegram, Discord, Slack, WhatsApp — optional, same flow as AssistClaw), DevOps tokens
+(GitHub/GitLab/Jenkins/SonarQube — optional), and an active team name, then writes ~/.opsintelligence/opsintelligence.yaml.
 
 Advanced configuration (memory tiers, MCP clients, cron, webhooks, extensions) is best edited
 directly in YAML — see .opsintelligence.yaml.example in the repository.`,
@@ -119,9 +134,23 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				sonarURL       string
 				sonarToken     string
 				activeTeam     = "platform"
-				// AssistClaw-style opt-in: configure provider creds and pick which integrations to set up.
+				// AssistClaw-style opt-in: configure provider creds, messaging channels, DevOps integrations.
 				configureProvider = true
 				integrationPicks  []string
+				channelPicks      []string
+				tgBotToken        string
+				tgDMMode          = "pairing"
+				tgAllowFromRaw    string
+				tgReqMention      = true
+				dcBotToken        string
+				dcDMMode          = "pairing"
+				dcAllowFromRaw    string
+				dcReqMention      = true
+				slackDMMode       = "pairing"
+				slackAllowFromRaw string
+				waSessionID       string
+				waDMMode          = "pairing"
+				waAllowFromRaw    string
 			)
 
 			if !nonInteractive {
@@ -261,30 +290,91 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				if err := runStep(
 					huh.NewGroup(
 						huh.NewMultiSelect[string]().
-							Title("Which integrations should we configure now?").
-							Description("Space to toggle · Enter to confirm · leave empty to skip all (configure later in YAML). Same pattern as AssistClaw channel pick.").
+							Title("Messaging channels").
+							Description("AssistClaw-style: pick chat apps to configure now. Space toggles; leave empty to skip.").
 							Options(
-								huh.NewOption("Slack (bot + app tokens)", "slack"),
+								huh.NewOption("Telegram", "telegram"),
+								huh.NewOption("Discord", "discord"),
+								huh.NewOption("Slack (Socket Mode)", "slack"),
+								huh.NewOption("WhatsApp", "whatsapp"),
+							).
+							Value(&channelPicks),
+					).Title("Messaging channels"),
+				); err != nil {
+					return err
+				}
+				dmModeOpts := []huh.Option[string]{
+					huh.NewOption("Pairing (recommended)", "pairing"),
+					huh.NewOption("Allowlist only", "allowlist"),
+					huh.NewOption("Open (public)", "open"),
+					huh.NewOption("Disabled", "disabled"),
+				}
+				if onboardPickContains(channelPicks, "telegram") {
+					if err := runStep(
+						huh.NewGroup(
+							huh.NewInput().Title("Telegram bot token").Value(&tgBotToken),
+							huh.NewSelect[string]().Title("Telegram security mode").Options(dmModeOpts...).Value(&tgDMMode),
+							huh.NewInput().Title("Whitelisted Telegram IDs").Description("Comma-separated numeric IDs or @usernames (allowlist mode).").Value(&tgAllowFromRaw),
+							huh.NewConfirm().Title("Require @bot mention in groups?").Value(&tgReqMention),
+						).Title("Telegram"),
+					); err != nil {
+						return err
+					}
+				}
+				if onboardPickContains(channelPicks, "discord") {
+					if err := runStep(
+						huh.NewGroup(
+							huh.NewInput().Title("Discord bot token").Value(&dcBotToken),
+							huh.NewSelect[string]().Title("Discord security mode").Options(dmModeOpts...).Value(&dcDMMode),
+							huh.NewInput().Title("Whitelisted Discord user IDs").Description("Comma-separated (allowlist mode).").Value(&dcAllowFromRaw),
+							huh.NewConfirm().Title("Require @bot mention in server channels?").Description("Recommended for busy servers.").Value(&dcReqMention),
+						).Title("Discord"),
+					); err != nil {
+						return err
+					}
+				}
+				if onboardPickContains(channelPicks, "slack") {
+					if err := runStep(
+						huh.NewGroup(
+							huh.NewInput().Title("Slack bot token").Description("xoxb-…").Value(&slackBotToken),
+							huh.NewInput().Title("Slack app token").Description("xapp-… (Socket Mode).").Value(&slackAppToken),
+							huh.NewSelect[string]().Title("Slack security mode").Options(dmModeOpts...).Value(&slackDMMode),
+							huh.NewInput().Title("Whitelisted Slack user IDs").Description("Comma-separated (allowlist mode).").Value(&slackAllowFromRaw),
+						).Title("Slack"),
+					); err != nil {
+						return err
+					}
+				}
+				if onboardPickContains(channelPicks, "whatsapp") {
+					if strings.TrimSpace(waSessionID) == "" {
+						waSessionID = "personal"
+					}
+					if err := runStep(
+						huh.NewGroup(
+							huh.NewNote().Title("WhatsApp").Description("Links via QR on first start; session DB lives under your state directory."),
+							huh.NewInput().Title("WhatsApp session ID").Description("e.g. personal").Value(&waSessionID),
+							huh.NewSelect[string]().Title("WhatsApp security mode").Options(dmModeOpts...).Value(&waDMMode),
+							huh.NewInput().Title("Whitelisted numbers").Description("Comma-separated E.164 (allowlist mode).").Value(&waAllowFromRaw),
+						).Title("WhatsApp"),
+					); err != nil {
+						return err
+					}
+				}
+				if err := runStep(
+					huh.NewGroup(
+						huh.NewMultiSelect[string]().
+							Title("Which DevOps integrations should we configure now?").
+							Description("Space to toggle · Enter to confirm · leave empty to skip all (configure later in YAML).").
+							Options(
 								huh.NewOption("GitHub (PAT or app token)", "github"),
 								huh.NewOption("GitLab", "gitlab"),
 								huh.NewOption("Jenkins", "jenkins"),
 								huh.NewOption("SonarQube", "sonar"),
 							).
 							Value(&integrationPicks),
-					).Title("Integrations"),
+					).Title("DevOps integrations"),
 				); err != nil {
 					return err
-				}
-				if onboardPickContains(integrationPicks, "slack") {
-					if err := runStep(
-						huh.NewGroup(
-							huh.NewNote().Title("Slack").Description("Bot token (xoxb-…) and app-level token (xapp-…). Leave blank to clear."),
-							huh.NewInput().Title("Slack bot token").Value(&slackBotToken),
-							huh.NewInput().Title("Slack app token").Value(&slackAppToken),
-						).Title("Slack"),
-					); err != nil {
-						return err
-					}
 				}
 				if onboardPickContains(integrationPicks, "github") {
 					if err := runStep(
@@ -347,31 +437,45 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 			}
 			content := renderOnboardYAML(onboardValues{
-				Provider:       provider,
-				APIKey:         apiKey,
-				ProviderURL:    providerURL,
-				DefaultModel:   defaultModel,
-				OpenRouterURL:  openrouterURL,
-				OpenRouterApp:  openrouterSite,
-				AzureAPIVer:    azureAPIVer,
-				BedrockRegion:  bedrockRegion,
-				BedrockProfile: bedrockProfile,
-				AccessKeyID:    accessKeyID,
-				SecretKey:      secretKey,
-				VertexProject:  vertexProject,
-				VertexLocation: vertexLocation,
-				VertexCreds:    vertexCreds,
-				SlackBot:       slackBotToken,
-				SlackApp:       slackAppToken,
-				GitHubToken:    githubToken,
-				GitLabURL:      gitlabURL,
-				GitLabToken:    gitlabToken,
-				JenkinsURL:     jenkinsURL,
-				JenkinsUser:    jenkinsUser,
-				JenkinsToken:   jenkinsToken,
-				SonarURL:       sonarURL,
-				SonarToken:     sonarToken,
-				ActiveTeam:     activeTeam,
+				Provider:           provider,
+				APIKey:             apiKey,
+				ProviderURL:        providerURL,
+				DefaultModel:       defaultModel,
+				OpenRouterURL:      openrouterURL,
+				OpenRouterApp:      openrouterSite,
+				AzureAPIVer:        azureAPIVer,
+				BedrockRegion:      bedrockRegion,
+				BedrockProfile:     bedrockProfile,
+				AccessKeyID:        accessKeyID,
+				SecretKey:          secretKey,
+				VertexProject:      vertexProject,
+				VertexLocation:     vertexLocation,
+				VertexCreds:        vertexCreds,
+				TelegramBot:        tgBotToken,
+				TelegramDMMode:     tgDMMode,
+				TelegramAllow:      tgAllowFromRaw,
+				TelegramReqMention: tgReqMention,
+				DiscordBot:         dcBotToken,
+				DiscordDMMode:      dcDMMode,
+				DiscordAllow:       dcAllowFromRaw,
+				DiscordReqMention:  dcReqMention,
+				SlackBot:           slackBotToken,
+				SlackApp:           slackAppToken,
+				SlackDMMode:        slackDMMode,
+				SlackAllow:         slackAllowFromRaw,
+				WhatsAppEnabled:    onboardPickContains(channelPicks, "whatsapp"),
+				WaSession:          waSessionID,
+				WaDMMode:           waDMMode,
+				WaAllow:            waAllowFromRaw,
+				GitHubToken:        githubToken,
+				GitLabURL:          gitlabURL,
+				GitLabToken:        gitlabToken,
+				JenkinsURL:         jenkinsURL,
+				JenkinsUser:        jenkinsUser,
+				JenkinsToken:       jenkinsToken,
+				SonarURL:           sonarURL,
+				SonarToken:         sonarToken,
+				ActiveTeam:         activeTeam,
 			})
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				return fmt.Errorf("write %s: %w", path, err)
@@ -396,7 +500,21 @@ type onboardValues struct {
 	AccessKeyID, SecretKey                string
 	VertexProject, VertexLocation         string
 	VertexCreds                           string
+	TelegramBot                           string
+	TelegramDMMode                        string
+	TelegramAllow                         string
+	TelegramReqMention                    bool
+	DiscordBot                            string
+	DiscordDMMode                         string
+	DiscordAllow                          string
+	DiscordReqMention                     bool
 	SlackBot, SlackApp                    string
+	SlackDMMode                           string
+	SlackAllow                            string
+	WhatsAppEnabled                       bool
+	WaSession                             string
+	WaDMMode                              string
+	WaAllow                               string
 	GitHubToken                           string
 	GitLabURL, GitLabToken                string
 	JenkinsURL, JenkinsUser, JenkinsToken string
@@ -570,10 +688,72 @@ func renderOnboardYAML(v onboardValues) string {
 	b.WriteString("    max_attempts: 5\n    base_delay_ms: 250\n    max_delay_ms: 10000\n")
 	b.WriteString("    jitter_percent: 0.2\n    breaker_threshold: 5\n    breaker_cooldown_s: 30\n")
 	b.WriteString("    dlq_path: \"~/.opsintelligence/channels/dlq.ndjson\"\n")
+	if strings.TrimSpace(v.TelegramBot) != "" {
+		b.WriteString("  telegram:\n")
+		b.WriteString("    bot_token: \"" + v.TelegramBot + "\"\n")
+		if v.TelegramDMMode != "" {
+			b.WriteString("    dm_mode: \"" + v.TelegramDMMode + "\"\n")
+		}
+		if v.TelegramReqMention {
+			b.WriteString("    require_mention: true\n")
+		} else {
+			b.WriteString("    require_mention: false\n")
+		}
+		if ids := onboardSplitCSV(v.TelegramAllow); len(ids) > 0 {
+			b.WriteString("    allow_from:\n")
+			for _, id := range ids {
+				b.WriteString("      - \"" + id + "\"\n")
+			}
+		}
+	}
+	if strings.TrimSpace(v.DiscordBot) != "" {
+		b.WriteString("  discord:\n")
+		b.WriteString("    bot_token: \"" + v.DiscordBot + "\"\n")
+		if v.DiscordDMMode != "" {
+			b.WriteString("    dm_mode: \"" + v.DiscordDMMode + "\"\n")
+		}
+		if v.DiscordReqMention {
+			b.WriteString("    require_mention: true\n")
+		} else {
+			b.WriteString("    require_mention: false\n")
+		}
+		if ids := onboardSplitCSV(v.DiscordAllow); len(ids) > 0 {
+			b.WriteString("    allow_from:\n")
+			for _, id := range ids {
+				b.WriteString("      - \"" + id + "\"\n")
+			}
+		}
+	}
 	if v.SlackBot != "" || v.SlackApp != "" {
 		b.WriteString("  slack:\n")
 		b.WriteString("    bot_token: \"" + v.SlackBot + "\"\n")
 		b.WriteString("    app_token: \"" + v.SlackApp + "\"\n")
+		if v.SlackDMMode != "" {
+			b.WriteString("    dm_mode: \"" + v.SlackDMMode + "\"\n")
+		}
+		if ids := onboardSplitCSV(v.SlackAllow); len(ids) > 0 {
+			b.WriteString("    allow_from:\n")
+			for _, id := range ids {
+				b.WriteString("      - \"" + id + "\"\n")
+			}
+		}
+	}
+	if v.WhatsAppEnabled {
+		sid := strings.TrimSpace(v.WaSession)
+		if sid == "" {
+			sid = "personal"
+		}
+		b.WriteString("  whatsapp:\n")
+		b.WriteString("    session_id: \"" + sid + "\"\n")
+		if v.WaDMMode != "" {
+			b.WriteString("    dm_mode: \"" + v.WaDMMode + "\"\n")
+		}
+		if ids := onboardSplitCSV(v.WaAllow); len(ids) > 0 {
+			b.WriteString("    allow_from:\n")
+			for _, id := range ids {
+				b.WriteString("      - \"" + id + "\"\n")
+			}
+		}
 	}
 	b.WriteString("\n")
 

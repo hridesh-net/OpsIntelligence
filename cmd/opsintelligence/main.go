@@ -27,7 +27,10 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/automation"
 	"github.com/opsintelligence/opsintelligence/internal/autotool"
+	"github.com/opsintelligence/opsintelligence/internal/channels/discord"
 	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
+	"github.com/opsintelligence/opsintelligence/internal/channels/telegram"
+	"github.com/opsintelligence/opsintelligence/internal/channels/whatsapp"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/cron"
 	"github.com/opsintelligence/opsintelligence/internal/embeddings"
@@ -81,7 +84,7 @@ func (s reliableToolSender) SendText(ctx context.Context, sessionID, text string
 const defaultHeartbeatPrompt = `Read HEARTBEAT.md if it exists in your workspace (state directory). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
 
 // runHeartbeatLoop issues periodic synthetic user turns on a dedicated session (logs only;
-// use cron + channels if you need scheduled output delivered to Slack).
+// use cron + channels if you need scheduled output delivered to Telegram/Slack/etc.).
 func runHeartbeatLoop(ctx context.Context, base *agent.Runner, interval time.Duration, sessionID, prompt string, log *zap.Logger) {
 	if interval < time.Minute {
 		interval = time.Minute
@@ -178,7 +181,8 @@ func rootCmd() *cobra.Command {
   • Policy-driven team overrides under teams/<team>/ and
     <state_dir>/policies/ (owner-only, read-only by default)
   • 15+ LLM providers, embeddings, three-tier memory (Working / Episodic /
-    Semantic), MCP clients, cron, webhooks, and Slack notifications`,
+    Semantic), MCP clients, cron, webhooks, and messaging channels (Telegram,
+    Discord, Slack, WhatsApp — same adapters as AssistClaw)`,
 		Version:      version,
 		SilenceUsage: true,
 	}
@@ -355,8 +359,17 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 			}
 
 			var channels []string
+			if cfg.Channels.Telegram != nil {
+				channels = append(channels, "Telegram")
+			}
+			if cfg.Channels.Discord != nil {
+				channels = append(channels, "Discord")
+			}
 			if cfg.Channels.Slack != nil {
 				channels = append(channels, "Slack")
+			}
+			if cfg.Channels.WhatsApp != nil {
+				channels = append(channels, "WhatsApp")
 			}
 
 			// MCP transport
@@ -823,8 +836,17 @@ Extend behavior via skills, MCP, channels, or prompt_files as needed.`,
 
 			fmt.Println(prim.Render("Channels (in-process, not npm plugins)"))
 			var ch []string
+			if cfg.Channels.Telegram != nil {
+				ch = append(ch, "telegram")
+			}
+			if cfg.Channels.Discord != nil {
+				ch = append(ch, "discord")
+			}
 			if cfg.Channels.Slack != nil {
 				ch = append(ch, "slack")
+			}
+			if cfg.Channels.WhatsApp != nil {
+				ch = append(ch, "whatsapp")
 			}
 			if len(ch) == 0 {
 				fmt.Println(dim.Render("  (none configured)"))
@@ -1723,7 +1745,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	if cfg.Voice.Enabled {
 		voiceClient = voice.NewClient(cfg.Voice)
 	}
-	_ = voiceClient
 
 	// Start Messaging Channels
 	activeChannels := 0
@@ -1740,6 +1761,51 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		},
 		DLQPath: cfg.Channels.Outbound.DLQPath,
 	}
+	if cfg.Channels.Telegram != nil {
+		requireMention := true
+		if cfg.Channels.Telegram.RequireMention != nil {
+			requireMention = *cfg.Channels.Telegram.RequireMention
+		}
+		tg, err := telegram.New(
+			cfg.Channels.Telegram.BotToken,
+			cfg.Channels.Telegram.DMMode,
+			cfg.Channels.Telegram.AllowFrom,
+			requireMention,
+		)
+		if err == nil {
+			tgRS := chadapter.NewReliableSender("telegram", tg, reliabilityCfg)
+			tg.WithReliableOutbound(tgRS)
+			go tg.Start(ctx, runner.HandleChannelMessage)
+			channelSenders["telegram"] = reliableToolSender{
+				rs: tgRS,
+			}
+			log.Info("Telegram channel active")
+			activeChannels++
+		}
+	}
+	if cfg.Channels.Discord != nil {
+		discordRequireMention := true
+		if cfg.Channels.Discord.RequireMention != nil {
+			discordRequireMention = *cfg.Channels.Discord.RequireMention
+		}
+		dc, err := discord.New(
+			cfg.Channels.Discord.BotToken,
+			cfg.Channels.Discord.DMMode,
+			cfg.Channels.Discord.AllowFrom,
+			discordRequireMention,
+			voiceClient,
+		)
+		if err == nil {
+			dcRS := chadapter.NewReliableSender("discord", dc, reliabilityCfg)
+			dc.WithReliableOutbound(dcRS)
+			go dc.Start(ctx, runner.HandleChannelMessage)
+			channelSenders["discord"] = reliableToolSender{
+				rs: dcRS,
+			}
+			log.Info("Discord channel active")
+			activeChannels++
+		}
+	}
 	if cfg.Channels.Slack != nil {
 		sl, err := slack.New(cfg.Channels.Slack.BotToken, cfg.Channels.Slack.AppToken, cfg.Channels.Slack.DMMode, cfg.Channels.Slack.AllowFrom)
 		if err == nil {
@@ -1750,6 +1816,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				rs: slRS,
 			}
 			log.Info("Slack channel active")
+			activeChannels++
+		}
+	}
+	if cfg.Channels.WhatsApp != nil {
+		wa, err := whatsapp.New(filepath.Join(cfg.StateDir, "whatsapp.db"), cfg.Channels.WhatsApp.SessionID, cfg.Channels.WhatsApp.DMMode, cfg.Channels.WhatsApp.AllowFrom, gf.logLevel, voiceClient)
+		if err == nil {
+			go wa.Start(ctx, runner.HandleChannelMessage)
+			log.Info("WhatsApp channel active")
 			activeChannels++
 		}
 	}

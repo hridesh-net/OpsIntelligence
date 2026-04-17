@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **AssistClaw-equivalent messaging channels.** Telegram, Discord, Slack, and WhatsApp adapters are
+  wired into the daemon (reliable outbound for Telegram/Discord/Slack; WhatsApp session DB under
+  `state_dir`). Configuration matches AssistClaw (`channels.telegram`, `channels.discord`,
+  `channels.slack`, `channels.whatsapp`). Onboarding includes an AssistClaw-style **Messaging
+  channels** multi-select and per-channel forms; DevOps API integrations are a separate step.
+
 ## [0.2.6] — 2026-04-17
 
 ### Fixed

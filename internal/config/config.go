@@ -421,8 +421,8 @@ type WebhookMapping struct {
 // are router-level settings (see webhooks.router).
 type GitHubWebhookConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Secret  string `yaml:"secret"`               // HMAC secret for X-Hub-Signature-256 (required when Enabled)
-	Path    string `yaml:"path,omitempty"`       // URL suffix, default "github" (→ /api/webhook/github)
+	Secret  string `yaml:"secret"`         // HMAC secret for X-Hub-Signature-256 (required when Enabled)
+	Path    string `yaml:"path,omitempty"` // URL suffix, default "github" (→ /api/webhook/github)
 	Default string `yaml:"default_prompt,omitempty"`
 	// Events maps a GitHub event name (from the X-GitHub-Event header, e.g.
 	// "pull_request", "workflow_run") to the allowlist of payload actions
@@ -793,11 +793,34 @@ type SecurityConfig struct {
 	OwnerOnlyPaths *[]string `yaml:"owner_only_paths"`
 }
 
-// ChannelsConfig configures messaging channels. OpsIntelligence ships with
-// enterprise channels only (Slack + REST/WS gateway).
+// ChannelsConfig configures messaging channels (Telegram, Discord, Slack, WhatsApp),
+// matching AssistClaw so the same YAML and adapters work across products.
 type ChannelsConfig struct {
 	Outbound OutboundReliabilityConfig `yaml:"outbound"`
+	Telegram *TelegramConfig           `yaml:"telegram"`
+	Discord  *DiscordConfig            `yaml:"discord"`
 	Slack    *SlackConfig              `yaml:"slack"`
+	WhatsApp *WhatsAppConfig           `yaml:"whatsapp"`
+}
+
+type WhatsAppConfig struct {
+	SessionID string   `yaml:"session_id"`
+	DMMode    string   `yaml:"dm_mode"`    // open, pairing, allowlist, disabled
+	AllowFrom []string `yaml:"allow_from"` // Whitelisted numbers
+}
+
+type TelegramConfig struct {
+	BotToken       string   `yaml:"bot_token"`
+	DMMode         string   `yaml:"dm_mode"`         // open, pairing, allowlist, disabled
+	AllowFrom      []string `yaml:"allow_from"`      // Whitelisted IDs/Usernames
+	RequireMention *bool    `yaml:"require_mention"` // Group chats require @bot mention when true (default)
+}
+
+type DiscordConfig struct {
+	BotToken       string   `yaml:"bot_token"`
+	DMMode         string   `yaml:"dm_mode"`         // open, pairing, allowlist, disabled
+	AllowFrom      []string `yaml:"allow_from"`      // Whitelisted IDs/Usernames
+	RequireMention *bool    `yaml:"require_mention"` // Guild channels require bot mention when true (default)
 }
 
 // OutboundReliabilityConfig configures shared retry/circuit-breaker/DLQ behavior

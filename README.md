@@ -37,9 +37,10 @@ generic defaults.
   **read-only by default** on every surface. Merging a PR, retrying a
   pipeline, rolling back, silencing a Sonar rule — all require explicit
   human confirmation in the same turn.
-- It is **not** a general consumer assistant. Messaging runs through
-  **Slack** or the **REST/WebSocket gateway** only. Consumer channels
-  (Telegram, WhatsApp, Discord) have been removed from the core.
+- It is **not** a general consumer assistant. OpsIntelligence focuses on
+  DevOps workflows; messaging uses the same **in-process channel adapters as
+  AssistClaw** (Telegram, Discord, Slack, WhatsApp) plus the **REST/WebSocket
+  gateway**, configured under `channels.*` in `opsintelligence.yaml`.
 
 ## Relationship to AssistClaw
 
