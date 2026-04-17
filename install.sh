@@ -15,9 +15,14 @@
 #   STATE_DIR            Config/state/datastore root (default: ~/.opsintelligence)
 #   FORCE_BUILD=1        Build from source even if a pre-built binary is available.
 #                        (Source build is also used automatically when the release
-#                        asset is missing / 404s, as long as Go 1.24+ is installed.)
+#                        asset is missing / 404s.)
 #   NO_SOURCE_FALLBACK=1 Disable the auto source-build fallback. With this set, a
 #                        missing release binary fails hard the same way it used to.
+#   OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1  When a source build is needed but no system
+#                        'go' is on PATH, do not download the official Go tarball from
+#                        go.dev — fail immediately (airgapped / policy installs).
+#   OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION  Go version to download for bootstrap (default
+#                        matches go.mod; e.g. 1.26.2). Override if go.dev layout changes.
 #   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). CI sets fts5,opsintelligence_localgemma
 #   SKIP_VENV=1          Skip Python venv creation
 #   SKIP_NODE=1          Skip Node/pnpm/TypeScript install (CI fresh-install smoke)
@@ -48,6 +53,8 @@ set -eo pipefail
 OPSINTELLIGENCE_VERSION="${OPSINTELLIGENCE_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 STATE_DIR="${STATE_DIR:-$HOME/.opsintelligence}"
+# Must satisfy go.mod "go" directive when bootstrapping (no system Go on PATH).
+OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION="${OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION:-1.26.2}"
 VENV_DIR="$STATE_DIR/venv"
 REPO_OWNER_REPO="${OPSINTELLIGENCE_REPO:-hridesh-net/OpsIntelligence}"
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
@@ -132,6 +139,87 @@ curl_get() {
     -o "$out" "$url"
 }
 
+# Remove temporary Go toolchain downloaded by bootstrap_go_toolchain.
+cleanup_bootstrap_go() {
+  if [[ -z "${OPSINTELLIGENCE_BOOTSTRAP_TMP:-}" ]]; then
+    return 0
+  fi
+  log "Removing temporary Go bootstrap toolchain..."
+  rm -rf "${OPSINTELLIGENCE_BOOTSTRAP_TMP}"
+  export PATH="${PATH_BEFORE_BOOTSTRAP:-$PATH}"
+  unset GOROOT PATH_BEFORE_BOOTSTRAP OPSINTELLIGENCE_BOOTSTRAP_TMP
+}
+
+# Download official Go from go.dev into a temp dir and prepend to PATH.
+# Used when the GitHub release binary 404s and the machine has no system Go.
+bootstrap_go_toolchain() {
+  local ver="$OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION"
+  local tmpdir goos goarch name url
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/opsintelligence-go.XXXXXX")"
+  case "$PLATFORM" in
+    darwin-arm64) goos=darwin; goarch=arm64 ;;
+    darwin-amd64) goos=darwin; goarch=amd64 ;;
+    linux-amd64)  goos=linux; goarch=amd64 ;;
+    linux-arm64)  goos=linux; goarch=arm64 ;;
+    windows-amd64) goos=windows; goarch=amd64 ;;
+    *)
+      rm -rf "$tmpdir"
+      warn "Automatic Go bootstrap is not implemented for $PLATFORM; install Go from https://go.dev/dl/"
+      return 1
+      ;;
+  esac
+
+  if [[ "$goos" == "windows" ]]; then
+    name="go${ver}.${goos}-${goarch}.zip"
+  else
+    name="go${ver}.${goos}-${goarch}.tar.gz"
+  fi
+  url="https://go.dev/dl/${name}"
+
+  log "No system Go on PATH — downloading Go ${ver} for one-time bootstrap (~60MB) from go.dev ..."
+  if ! curl_get "$tmpdir/$name" "$url"; then
+    rm -rf "$tmpdir"
+    warn "Failed to download $url — try setting OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION to a published version from https://go.dev/dl/"
+    return 1
+  fi
+
+  export PATH_BEFORE_BOOTSTRAP="${PATH:-}"
+  if [[ "$goos" == "windows" ]]; then
+    command -v unzip >/dev/null 2>&1 || {
+      rm -rf "$tmpdir"
+      warn "unzip is required to extract the Go Windows bundle"
+      return 1
+    }
+    unzip -q "$tmpdir/$name" -d "$tmpdir"
+  else
+    tar -xzf "$tmpdir/$name" -C "$tmpdir"
+  fi
+  rm -f "$tmpdir/$name"
+
+  export GOROOT="$tmpdir/go"
+  export PATH="$GOROOT/bin:$PATH"
+  export OPSINTELLIGENCE_BOOTSTRAP_TMP="$tmpdir"
+
+  if ! command -v go >/dev/null 2>&1; then
+    rm -rf "$tmpdir"
+    unset GOROOT OPSINTELLIGENCE_BOOTSTRAP_TMP PATH_BEFORE_BOOTSTRAP
+    return 1
+  fi
+  ok "Go bootstrap ready ($(go version | tr -d '\n'))"
+  return 0
+}
+
+# Ensure `go` is available: use system install or download official toolchain.
+ensure_go_for_build() {
+  if command -v go >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "${OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP:-0}" == "1" ]]; then
+    return 1
+  fi
+  bootstrap_go_toolchain
+}
+
 # ─────────────────────────────────────────────
 # Go binary: download pre-built or fallback to source
 # ─────────────────────────────────────────────
@@ -178,20 +266,22 @@ install_binary() {
   if [[ "${NO_SOURCE_FALLBACK:-0}" == "1" ]]; then
     err "Failed to download pre-built binary from $download_url. NO_SOURCE_FALLBACK=1 is set; retry later, pin OPSINTELLIGENCE_VERSION to a release with assets, or unset NO_SOURCE_FALLBACK to let the installer build from source."
   fi
-  if ! command -v go >/dev/null 2>&1; then
-    err "Failed to download pre-built binary from $download_url and Go 1.24+ is not installed for a source-build fallback. Install Go (https://go.dev/dl/) then re-run this script, or pin OPSINTELLIGENCE_VERSION to a release that ships a $PLATFORM asset."
-  fi
   warn "Release asset not found ($download_url)."
-  warn "Falling back to source build — set NO_SOURCE_FALLBACK=1 to disable this."
+  warn "Falling back to source build (will download Go from go.dev if needed) — set NO_SOURCE_FALLBACK=1 to disable."
   build_binary_from_source
 }
 
 build_binary_from_source() {
-  command -v go >/dev/null 2>&1 || err "Go 1.24+ not found. Install Go or use a release download (unset FORCE_BUILD)."
+  if ! ensure_go_for_build; then
+    err "Cannot build from source: no 'go' on PATH and Go bootstrap was skipped or failed. Options: (1) Install Go from https://go.dev/dl/ — version must satisfy go.mod; (2) unset OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP if you set it; (3) pin OPSINTELLIGENCE_VERSION to a GitHub release that ships opsintelligence-$PLATFORM."
+  fi
   local build_root="$REPO_ROOT"
   local tmp_src=""
   if [[ ! -f "$build_root/cmd/opsintelligence/main.go" ]]; then
-    command -v git >/dev/null 2>&1 || err "git is required for source fallback when installer is run via curl|bash"
+    command -v git >/dev/null 2>&1 || {
+      cleanup_bootstrap_go
+      err "git is required for source fallback when installer is run via curl|bash"
+    }
     tmp_src="$(mktemp -d "${TMPDIR:-/tmp}/opsintelligence-src.XXXXXX")"
     local ref="${OPSINTELLIGENCE_VERSION}"
     if [[ -z "$ref" || "$ref" == "latest" ]]; then
@@ -200,7 +290,10 @@ build_binary_from_source() {
     log "Source fallback: cloning ${REPO_OWNER_REPO}@${ref}..."
     if ! git clone --depth 1 --branch "$ref" "https://github.com/${REPO_OWNER_REPO}.git" "$tmp_src" >/dev/null 2>&1; then
       warn "Failed to clone ref $ref, falling back to main"
-      git clone --depth 1 --branch "main" "https://github.com/${REPO_OWNER_REPO}.git" "$tmp_src" >/dev/null 2>&1 || err "unable to clone source repo for fallback build"
+      if ! git clone --depth 1 --branch "main" "https://github.com/${REPO_OWNER_REPO}.git" "$tmp_src" >/dev/null 2>&1; then
+        cleanup_bootstrap_go
+        err "unable to clone source repo for fallback build"
+      fi
     fi
     build_root="$tmp_src"
   fi
@@ -218,12 +311,19 @@ build_binary_from_source() {
   local tmp_build
   tmp_build="$(mktemp "${TMPDIR:-/tmp}/opsintelligence-build.XXXXXX")"
   local go_tags="${OPSINTELLIGENCE_INSTALL_GO_TAGS:-fts5}"
-  (cd "$build_root" && CGO_ENABLED="${CGO_ENABLED:-1}" go build -mod=vendor -tags "$go_tags" -ldflags "-s -w ${ver_ldflags}" -o "$tmp_build" ./cmd/opsintelligence)
+  if ! (cd "$build_root" && CGO_ENABLED="${CGO_ENABLED:-1}" go build -mod=vendor -tags "$go_tags" -ldflags "-s -w ${ver_ldflags}" -o "$tmp_build" ./cmd/opsintelligence); then
+    cleanup_bootstrap_go
+    if [[ "$PLATFORM" == darwin-* ]]; then
+      warn "If you saw a C compiler / cgo error, install Xcode Command Line Tools: xcode-select --install"
+    fi
+    err "go build failed — see messages above"
+  fi
   install -m 0755 "$tmp_build" "$INSTALL_DIR/opsintelligence"
   rm -f "$tmp_build"
   if [[ -n "$tmp_src" ]]; then
     rm -rf "$tmp_src"
   fi
+  cleanup_bootstrap_go
   ok "Binary compiled and installed: $INSTALL_DIR/opsintelligence"
   copy_skills_dir
 }

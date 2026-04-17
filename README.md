@@ -106,6 +106,8 @@ Common environment toggles:
 | `STATE_DIR` | `~/.opsintelligence` | Config + datastore root |
 | `FORCE_BUILD=1` | — | Build from source even when a release binary exists |
 | `NO_SOURCE_FALLBACK=1` | — | Disable the automatic source-build fallback that kicks in when the release asset 404s |
+| `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1` | — | When a source build is needed but no system `go` exists, do not download the official Go tarball from go.dev (fail instead; for airgapped installs) |
+| `OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION` | `1.26.2` | Go version to download for bootstrap (must satisfy `go.mod`); override if go.dev layout changes |
 | `SKIP_VENV=1` | — | Skip Python venv for the tool sandbox |
 | `SKIP_SERVICE=1` | — | Skip launchd/systemd registration |
 | `WITH_MEMPALACE=1` | — | Bootstrap managed MemPalace after install |
@@ -115,8 +117,12 @@ Common environment toggles:
 > young fork, not every platform/version combination has a pre-built
 > release asset yet. If the installer gets a `404` from
 > `github.com/hridesh-net/OpsIntelligence/releases/...`, it will
-> **automatically fall back to a source build** as long as Go 1.24+
-> is installed locally — no need to pass `FORCE_BUILD=1`. Set
+> **automatically fall back to a source build** — no need to pass
+> `FORCE_BUILD=1`. If you do not have Go installed, the installer
+> **downloads the official Go toolchain tarball from go.dev** into a
+> temp directory, builds once, then deletes the toolchain. Set
+> `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1` to disable that (e.g. airgapped
+> installs where you must supply a pre-installed Go). Set
 > `NO_SOURCE_FALLBACK=1` if you specifically want the old
 > binary-only behaviour (useful for airgapped mirrors).
 >

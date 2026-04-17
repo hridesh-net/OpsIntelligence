@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` bootstraps Go from go.dev when neither a release
+  binary nor a system `go` is available.** The v0.2.0 behaviour
+  still required a pre-installed Go for the automatic source-build
+  fallback after a GitHub `404`, which blocked machines that only
+  had `curl` + `git`. The installer now downloads the official Go
+  tarball for the detected OS/arch (same layout as go.dev/dl),
+  extracts it to a temp dir, runs `go build`, then removes the
+  toolchain. Opt out with `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1`.
+  Override the version with `OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION`
+  (default tracks `go.mod`, currently 1.26.2). macOS builds that
+  fail with cgo errors still point at `xcode-select --install`.
+
 ## [0.2.0] — 2026-04-17
 
 Phase 3d (users, roles, API keys over `/api/v1` + dashboard management
