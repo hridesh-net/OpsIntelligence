@@ -1,6 +1,6 @@
 {
     "version": "1",
-    "updated": "2026-04-16",
+    "updated": "2026-04-17",
     "repo": "hridesh-net/OpsIntelligence",
     "skills": [
         {
@@ -113,6 +113,20 @@
                 "devops",
                 "http",
                 "api"
+            ]
+        },
+        {
+            "name": "mastering-aws-cli",
+            "description": "AWS CLI v2 quick-reference: compute, storage, networking, IAM, SSO, assume-role, cross-account, and GitHub Actions OIDC.",
+            "emoji": "☁️",
+            "bundled": true,
+            "repo": "hridesh-net/OpsIntelligence",
+            "path": "skills/aws-cli-main",
+            "tags": [
+                "devops",
+                "aws",
+                "cli",
+                "cloud"
             ]
         },
         {

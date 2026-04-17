@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bundled skill `mastering-aws-cli`:** AWS CLI v2 quick-reference (`skills/aws-cli-main`) listed in `skills/marketplace.json`.
+
 ## [0.3.2] — 2026-04-17
 
 ### Fixed
