@@ -3,7 +3,8 @@
 // This is a deliberately practical wizard for the DevOps fork. It collects:
 //   - a default LLM provider from a broad provider list (OpenAI, Anthropic,
 //     Groq, Mistral, Together, OpenRouter, NVIDIA, Cohere, DeepSeek,
-//     Perplexity, xAI, HuggingFace, Ollama, vLLM, LM Studio)
+//     Perplexity, xAI, HuggingFace, Ollama, vLLM, LM Studio, Azure OpenAI,
+//     Bedrock, Vertex, Voyage)
 //   - provider API key/base-url/model fields needed for the chosen provider
 //   - Slack bot/app tokens (optional)
 //   - DevOps integration tokens (GitHub, GitLab, Jenkins, SonarQube) — optional
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
@@ -66,6 +68,14 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				defaultModel   string
 				openrouterSite string
 				openrouterURL  string
+				azureAPIVer    string
+				bedrockRegion  string
+				bedrockProfile string
+				accessKeyID    string
+				secretKey      string
+				vertexProject  string
+				vertexLocation string
+				vertexCreds    string
 				slackBotToken  string
 				slackAppToken  string
 				githubToken    string
@@ -100,6 +110,10 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 								huh.NewOption("Ollama (local)", "ollama"),
 								huh.NewOption("vLLM (OpenAI-compatible)", "vllm"),
 								huh.NewOption("LM Studio (local)", "lm_studio"),
+								huh.NewOption("Azure OpenAI", "azure_openai"),
+								huh.NewOption("AWS Bedrock", "bedrock"),
+								huh.NewOption("Google Vertex AI", "vertex"),
+								huh.NewOption("Voyage", "voyage"),
 							).
 							Value(&provider),
 						huh.NewInput().
@@ -122,6 +136,39 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							Title("OpenRouter site URL (optional)").
 							Description("Only used when provider=openrouter (e.g. https://ops.example.com).").
 							Value(&openrouterURL),
+						huh.NewInput().
+							Title("Azure API version (optional)").
+							Description("Only used when provider=azure_openai (e.g. 2024-06-01).").
+							Value(&azureAPIVer),
+						huh.NewInput().
+							Title("Bedrock region (optional)").
+							Description("Only used when provider=bedrock (e.g. us-east-1).").
+							Value(&bedrockRegion),
+						huh.NewInput().
+							Title("Bedrock profile (optional)").
+							Description("Named AWS profile for provider=bedrock.").
+							Value(&bedrockProfile),
+						huh.NewInput().
+							Title("AWS access key ID (optional)").
+							Description("Only used when provider=bedrock and not using profile/role auth.").
+							Value(&accessKeyID),
+						huh.NewInput().
+							Title("AWS secret access key (optional)").
+							EchoMode(huh.EchoModePassword).
+							Description("Only used when provider=bedrock and not using profile/role auth.").
+							Value(&secretKey),
+						huh.NewInput().
+							Title("Vertex project ID (optional)").
+							Description("Only used when provider=vertex.").
+							Value(&vertexProject),
+						huh.NewInput().
+							Title("Vertex location (optional)").
+							Description("Only used when provider=vertex (e.g. us-central1).").
+							Value(&vertexLocation),
+						huh.NewInput().
+							Title("Vertex credentials file path (optional)").
+							Description("Only used when provider=vertex (service-account JSON path).").
+							Value(&vertexCreds),
 					),
 					huh.NewGroup(
 						huh.NewNote().
@@ -165,6 +212,9 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							Value(&activeTeam),
 					),
 				)
+				// Use alternate screen so onboarding feels like a single isolated TUI
+				// and does not visually bleed with terminal scrollback.
+				form.WithProgramOptions(tea.WithAltScreen())
 				if err := form.Run(); err != nil {
 					return err
 				}
@@ -175,23 +225,31 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 				return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 			}
 			content := renderOnboardYAML(onboardValues{
-				Provider:      provider,
-				APIKey:        apiKey,
-				ProviderURL:   providerURL,
-				DefaultModel:  defaultModel,
-				OpenRouterURL: openrouterURL,
-				OpenRouterApp: openrouterSite,
-				SlackBot:      slackBotToken,
-				SlackApp:      slackAppToken,
-				GitHubToken:   githubToken,
-				GitLabURL:     gitlabURL,
-				GitLabToken:   gitlabToken,
-				JenkinsURL:    jenkinsURL,
-				JenkinsUser:   jenkinsUser,
-				JenkinsToken:  jenkinsToken,
-				SonarURL:      sonarURL,
-				SonarToken:    sonarToken,
-				ActiveTeam:    activeTeam,
+				Provider:       provider,
+				APIKey:         apiKey,
+				ProviderURL:    providerURL,
+				DefaultModel:   defaultModel,
+				OpenRouterURL:  openrouterURL,
+				OpenRouterApp:  openrouterSite,
+				AzureAPIVer:    azureAPIVer,
+				BedrockRegion:  bedrockRegion,
+				BedrockProfile: bedrockProfile,
+				AccessKeyID:    accessKeyID,
+				SecretKey:      secretKey,
+				VertexProject:  vertexProject,
+				VertexLocation: vertexLocation,
+				VertexCreds:    vertexCreds,
+				SlackBot:       slackBotToken,
+				SlackApp:       slackAppToken,
+				GitHubToken:    githubToken,
+				GitLabURL:      gitlabURL,
+				GitLabToken:    gitlabToken,
+				JenkinsURL:     jenkinsURL,
+				JenkinsUser:    jenkinsUser,
+				JenkinsToken:   jenkinsToken,
+				SonarURL:       sonarURL,
+				SonarToken:     sonarToken,
+				ActiveTeam:     activeTeam,
 			})
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				return fmt.Errorf("write %s: %w", path, err)
@@ -211,6 +269,11 @@ type onboardValues struct {
 	ProviderURL                           string
 	DefaultModel                          string
 	OpenRouterURL, OpenRouterApp          string
+	AzureAPIVer                           string
+	BedrockRegion, BedrockProfile         string
+	AccessKeyID, SecretKey                string
+	VertexProject, VertexLocation         string
+	VertexCreds                           string
 	SlackBot, SlackApp                    string
 	GitHubToken                           string
 	GitLabURL, GitLabToken                string
@@ -238,6 +301,69 @@ func renderOnboardYAML(v onboardValues) string {
 
 	b.WriteString("providers:\n")
 	switch v.Provider {
+	case "azure_openai":
+		b.WriteString("  azure_openai:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		}
+		if v.AzureAPIVer != "" {
+			b.WriteString("    api_version: \"" + v.AzureAPIVer + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "bedrock":
+		b.WriteString("  bedrock:\n")
+		if v.BedrockRegion != "" {
+			b.WriteString("    region: \"" + v.BedrockRegion + "\"\n")
+		}
+		if v.BedrockProfile != "" {
+			b.WriteString("    profile: \"" + v.BedrockProfile + "\"\n")
+		}
+		if v.AccessKeyID != "" {
+			b.WriteString("    access_key_id: \"" + v.AccessKeyID + "\"\n")
+		}
+		if v.SecretKey != "" {
+			b.WriteString("    secret_access_key: \"" + v.SecretKey + "\"\n")
+		}
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "vertex":
+		b.WriteString("  vertex:\n")
+		if v.VertexProject != "" {
+			b.WriteString("    project_id: \"" + v.VertexProject + "\"\n")
+		}
+		if v.VertexLocation != "" {
+			b.WriteString("    location: \"" + v.VertexLocation + "\"\n")
+		}
+		if v.VertexCreds != "" {
+			b.WriteString("    credentials: \"" + v.VertexCreds + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "voyage":
+		b.WriteString("  voyage:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
 	case "anthropic":
 		b.WriteString("  anthropic:\n")
 		if v.APIKey != "" {

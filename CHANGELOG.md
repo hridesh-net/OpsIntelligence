@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-04-17
+
+### Fixed
+
+- **Onboarding TUI now uses an isolated alternate screen.** `opsintelligence onboard`
+  now runs the `huh` form with `tea.WithAltScreen()`, preventing visual bleed with
+  regular terminal scrollback and fixing the “previous interface still visible”
+  behaviour while navigating or scrolling.
+
+### Added
+
+- **Missing provider options restored in onboarding.** The interactive wizard now
+  includes `azure_openai`, `bedrock`, `vertex`, and `voyage` in addition to the
+  previously-added providers. Provider-specific optional fields were added so the
+  generated YAML can capture real-world enterprise configs:
+  - Azure OpenAI: `api_version`
+  - Bedrock: `region`, `profile`, `access_key_id`, `secret_access_key`
+  - Vertex: `project_id`, `location`, `credentials`
+  - Voyage: `api_key`, optional `base_url`, `default_model`
+
 ## [0.2.2] — 2026-04-17
 
 ### Added
