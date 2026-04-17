@@ -1,16 +1,20 @@
-// Package dashboard embeds the OpsIntelligence ops-plane dashboard
-// shell — a minimal SPA that lets an operator sign in, see who they
-// are, and render a placeholder Settings frame.
+// Package dashboard embeds the OpsIntelligence ops-plane dashboard:
+// login + first-run owner bootstrap, an app shell with hash-based
+// routing, and full Settings pages wired to the configsvc HTTP API
+// (/api/v1/config/*).
 //
-// The real settings / users / tasks / logs UIs land in phase 3c once
-// /api/v1/configsvc is in place. This package only ships enough
-// markup and JS to verify the phase-2c auth pipeline end-to-end in a
-// browser:
+// Phase 3c surface:
 //
-//   - unauthenticated hit on / redirects to the login page
-//   - login POSTs to /api/v1/auth/login, receives a session cookie
-//   - the dashboard frame renders with the user's name + roles
-//   - logout POSTs to /api/v1/auth/logout and clears the session
+//   - GET  /dashboard/login          → password / OIDC sign-in form
+//   - GET  /dashboard/app#/overview  → signed-in dashboard
+//   - GET  /dashboard/app#/settings/<section>
+//                                   → live editor backed by
+//                                     /api/v1/config/<section>
+//
+// The dashboard talks to the gateway only over the public auth/config
+// JSON APIs — no privileged direct access. Session cookies, CSRF and
+// optimistic concurrency (If-Match) are all enforced server-side, so
+// the JS stays small and unprivileged.
 //
 // Assets are embedded via //go:embed so the binary stays single-file.
 package dashboard

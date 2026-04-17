@@ -16,10 +16,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
-	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
+	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -34,8 +34,6 @@ import (
 	embedproviders "github.com/opsintelligence/opsintelligence/internal/embeddings/providers"
 	"github.com/opsintelligence/opsintelligence/internal/extensions"
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
-	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
-	ghadapter "github.com/opsintelligence/opsintelligence/internal/webhookadapter/github"
 	"github.com/opsintelligence/opsintelligence/internal/graph"
 	"github.com/opsintelligence/opsintelligence/internal/mcp"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
@@ -57,6 +55,8 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/system"
 	"github.com/opsintelligence/opsintelligence/internal/tools"
 	"github.com/opsintelligence/opsintelligence/internal/voice"
+	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
+	ghadapter "github.com/opsintelligence/opsintelligence/internal/webhookadapter/github"
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
@@ -972,7 +972,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 			}
 
 			authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			storeCloser, err := attachAuthToGateway(authCtx, cfg, log, srv)
+			storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv)
 			authCancel()
 			if err != nil {
 				return err
@@ -1807,7 +1807,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 
 		authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		storeCloser, err := attachAuthToGateway(authCtx, cfg, log, srv)
+		storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv)
 		authCancel()
 		if err != nil {
 			return err

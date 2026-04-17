@@ -8,6 +8,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 3c: Settings UI wired to the configsvc HTTP API.** The
+  dashboard shipped in phase 2c now ships a real Settings surface
+  instead of a placeholder card. Every section listed in
+  `internal/gateway/config_api.go`'s `putConfigSection` is editable
+  in the browser, against the same `configsvc` the CLI calls.
+  - **`internal/webui/dashboard`** — promoted from "minimal shell"
+    to a hash-routed SPA:
+    - Hash-based router: `#/overview`, `#/tasks`, `#/users`,
+      `#/apikeys`, `#/settings/<section>`. Direct linking + back/
+      forward work; no server-side reload.
+    - Schema-driven Settings renderer. `CONFIG_SCHEMA` declares the
+      fields per section (text / password / number / checkbox /
+      tri-state checkbox / select / textarea / duration / tags /
+      kv-tags / kv-textarea / nested objects / nullable objects).
+      Adding a new section is "add a schema entry + a sub-nav link";
+      no new render/save code needed for the common cases.
+    - Settings panels for `gateway`, `auth`, `datastore`, `agent`,
+      `channels`, `webhooks` (including the typed GitHub adapter
+      sub-form), and `devops` (GitHub / GitLab / Jenkins / Sonar).
+    - Custom Settings panels for `providers` (cloud + Azure +
+      OpenRouter + HuggingFace + Bedrock + Vertex + local Ollama /
+      vLLM / LM Studio, each independently nullable with a
+      "Configured" toggle and provider-specific fields) and `mcp`
+      (built-in server + dynamic Add/Remove client list mirroring
+      `opsintelligence mcp add/remove`).
+    - Optimistic-concurrency save flow. Each section caches the
+      revision token returned by `GET /api/v1/config/<section>`,
+      sends it back as `If-Match` on `PUT`, and surfaces 409
+      conflicts as a non-destructive "Saved by someone else, reload"
+      toast.
+    - Sensitive-field handling. Password / token / DSN inputs render
+      empty with a `(leave blank to keep current value)` placeholder;
+      the serializer re-sends the original (server-redacted) value
+      when the field is left blank, so saving a form never
+      accidentally clears a stored secret.
+    - CSRF-correct writes — every state-changing fetch picks up the
+      `opi_csrf` cookie and forwards it as `X-CSRF-Token`, matching
+      the gateway's double-submit middleware (`ProtectCSRF`).
+    - Toast component for save success / warning / error and a
+      reload button on every form for explicit refresh.
+  - **`internal/webui/dashboard/dashboard_test.go`** — smoke tests
+    that run the embedded `Handler()` through `httptest` and assert
+    the SPA bundle still ships the entry points the new UI depends
+    on (`CONFIG_SCHEMA`, `loadSettingsSection`, `If-Match`,
+    `renderProvidersSection`, `renderMCPSection`), the settings
+    sub-nav is present in `app.html`, the dashboard styles ship
+    `.settings-shell` / `.toast`, and the `/dashboard/` redirect
+    still lands on `/dashboard/app` (regression check for the
+    phase-2c upstream-host bug).
+
+- **Phase 3a kickoff: shared `internal/configsvc` for CLI/UI config parity.**
+  - Added `internal/configsvc` with atomic config writes, revision tokens,
+    and optimistic-concurrency support (`UpdateWithRevision` +
+    `ErrRevisionConflict`) so upcoming dashboard APIs can avoid blind
+    last-write-wins behavior.
+  - Added typed config operations for key surfaces (`gateway`, `auth`,
+    `datastore`, `providers`, `channels`, `webhooks`, `mcp`, `agent`,
+    `devops`) plus targeted helpers for `skills` and MCP clients.
+  - Migrated CLI config mutations to `configsvc` for:
+    - `opsintelligence mcp add`
+    - `opsintelligence mcp remove`
+    - `opsintelligence skills enable`
+    - `opsintelligence skills disable`
+    - Any command path that toggles enabled skills via
+      `toggleSkillInConfig` (including `skills add/install/remove`).
+  - Added `doc/configsvc.md` describing the service contract used by
+    both CLI and the upcoming phase-3b HTTP handlers.
+
 - **Gateway auth endpoints + dashboard shell (phase 2c of the
   cloud-dashboard + RBAC rollout).** The phase-2b primitives are now
   actually reachable from a browser: start the gateway and a minimal

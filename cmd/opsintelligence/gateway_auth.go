@@ -25,7 +25,7 @@ import (
 //
 // Errors are fatal for gateway boot — if auth was requested, failing
 // to wire it loudly is safer than silently serving without RBAC.
-func attachAuthToGateway(ctx context.Context, cfg *config.Config, log *zap.Logger, srv *gateway.Server) (func() error, error) {
+func attachAuthToGateway(ctx context.Context, cfg *config.Config, configPath string, log *zap.Logger, srv *gateway.Server) (func() error, error) {
 	if cfg == nil || srv == nil {
 		return nil, nil
 	}
@@ -53,6 +53,7 @@ func attachAuthToGateway(ctx context.Context, cfg *config.Config, log *zap.Logge
 		_ = store.Close()
 		return nil, fmt.Errorf("gateway auth: build auth service: %w", err)
 	}
+	svc.ConfigPath = configPath
 	srv.AuthService = svc
 
 	log.Info("gateway auth wired",

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/datastore/drivers"
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
+	"gopkg.in/yaml.v3"
 )
 
 // newTestAuthService brings up a scratch sqlite ops-plane and returns
@@ -43,11 +45,23 @@ func newTestAuthService(t *testing.T, cfg *config.Config) (*gateway.AuthService,
 	if cfg == nil {
 		cfg = config.LoadFromEnv()
 	}
+	if cfg.Providers.Ollama == nil {
+		cfg.Providers.Ollama = &config.LocalCreds{BaseURL: "http://127.0.0.1:11434"}
+	}
+	cfgPath := filepath.Join(dir, "opsintelligence.yaml")
+	cfgBytes, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal cfg: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
 
 	svc, err := gateway.BuildAuthService(context.Background(), cfg, store, nil)
 	if err != nil {
 		t.Fatalf("build auth service: %v", err)
 	}
+	svc.ConfigPath = cfgPath
 
 	mux := http.NewServeMux()
 	svc.Mount(mux)
@@ -76,6 +90,30 @@ func seedUser(t *testing.T, svc *gateway.AuthService, username, password string)
 		t.Fatalf("create user: %v", err)
 	}
 	if err := svc.Store.Roles().AssignToUser(ctx, "user-"+username, "role-owner"); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+}
+
+func seedUserWithRole(t *testing.T, svc *gateway.AuthService, username, password, roleID string) {
+	t.Helper()
+	ctx := context.Background()
+	hash, err := auth.HashPassword(password, nil)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if _, _, err := rbac.SeedBuiltInRoles(ctx, svc.Store); err != nil {
+		t.Fatalf("seed roles: %v", err)
+	}
+	if err := svc.Store.Users().Create(ctx, &datastore.User{
+		ID:           "user-" + username,
+		Username:     username,
+		Email:        username + "@example.test",
+		PasswordHash: hash,
+		Status:       datastore.UserActive,
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := svc.Store.Roles().AssignToUser(ctx, "user-"+username, roleID); err != nil {
 		t.Fatalf("assign role: %v", err)
 	}
 }
@@ -339,6 +377,150 @@ func TestLogout_WithoutCSRF_ReturnsForbidden(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("logout without csrf: expected 200 under Protect semantics, got %d", rr.Code)
+	}
+}
+
+func TestConfigGet_RedactsSecretsWithoutSecretsRead(t *testing.T) {
+	svc, mux := newTestAuthService(t, nil)
+	seedUserWithRole(t, svc, "viewer1", "viewer-password-long", "role-developer")
+
+	login := postJSON(t, mux, "/api/v1/auth/login", map[string]string{
+		"username": "viewer1",
+		"password": "viewer-password-long",
+	}, nil)
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login failed: %d", login.StatusCode)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	for _, c := range login.Cookies() {
+		req.AddCookie(c)
+	}
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("config get status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "legacy-shared-token") || strings.Contains(body, "api_key") {
+		t.Fatalf("expected redacted secrets in response, got: %s", body)
+	}
+}
+
+func TestConfigPut_DeniedWithoutSettingsWrite(t *testing.T) {
+	svc, mux := newTestAuthService(t, nil)
+	seedUserWithRole(t, svc, "viewer2", "viewer-password-long", "role-viewer")
+	login := postJSON(t, mux, "/api/v1/auth/login", map[string]string{
+		"username": "viewer2",
+		"password": "viewer-password-long",
+	}, nil)
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login failed: %d", login.StatusCode)
+	}
+
+	reqBody := bytes.NewBufferString(`{"host":"127.0.0.1","port":19999}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/gateway", reqBody)
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range login.Cookies() {
+		req.AddCookie(c)
+	}
+	req.Header.Set("X-CSRF-Token", svc.Sessions.CSRFTokenFrom(req))
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConfigPut_WithRevisionConflictReturns409(t *testing.T) {
+	svc, mux := newTestAuthService(t, nil)
+	seedUser(t, svc, "ownercfg", "owner-password-long")
+	login := postJSON(t, mux, "/api/v1/auth/login", map[string]string{
+		"username": "ownercfg",
+		"password": "owner-password-long",
+	}, nil)
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login failed: %d", login.StatusCode)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/config/gateway", nil)
+	for _, c := range login.Cookies() {
+		getReq.AddCookie(c)
+	}
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get status=%d", getRR.Code)
+	}
+	var snap struct {
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// First update with revision succeeds.
+	req1 := httptest.NewRequest(http.MethodPut, "/api/v1/config/gateway", bytes.NewBufferString(`{"host":"127.0.0.1","port":20001}`))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("If-Match", snap.Revision)
+	for _, c := range login.Cookies() {
+		req1.AddCookie(c)
+	}
+	req1.Header.Set("X-CSRF-Token", svc.Sessions.CSRFTokenFrom(req1))
+	rr1 := httptest.NewRecorder()
+	mux.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first update status=%d body=%s", rr1.Code, rr1.Body.String())
+	}
+
+	// Reusing stale revision must conflict.
+	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/config/gateway", bytes.NewBufferString(`{"host":"127.0.0.1","port":20002}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("If-Match", snap.Revision)
+	for _, c := range login.Cookies() {
+		req2.AddCookie(c)
+	}
+	req2.Header.Set("X-CSRF-Token", svc.Sessions.CSRFTokenFrom(req2))
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", rr2.Code, rr2.Body.String())
+	}
+}
+
+func TestConfigPut_WritesAuditEntry(t *testing.T) {
+	svc, mux := newTestAuthService(t, nil)
+	seedUser(t, svc, "owneraudit", "owner-password-long")
+	login := postJSON(t, mux, "/api/v1/auth/login", map[string]string{
+		"username": "owneraudit",
+		"password": "owner-password-long",
+	}, nil)
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login failed: %d", login.StatusCode)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/gateway", bytes.NewBufferString(`{"host":"127.0.0.1","port":21001}`))
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range login.Cookies() {
+		req.AddCookie(c)
+	}
+	req.Header.Set("X-CSRF-Token", svc.Sessions.CSRFTokenFrom(req))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	entries, err := svc.Store.Audit().List(context.Background(), datastore.AuditFilter{
+		Action: "config.",
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("audit list: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected at least one config audit entry")
 	}
 }
 

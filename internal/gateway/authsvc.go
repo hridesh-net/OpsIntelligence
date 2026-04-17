@@ -13,6 +13,7 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 )
@@ -50,6 +51,10 @@ type AuthService struct {
 	// users table has any row — the /api/v1/auth/bootstrap handler
 	// refuses further anonymous writes after the first owner exists.
 	AllowAnonymousBootstrap bool
+
+	// ConfigPath points to opsintelligence.yaml and is used by the
+	// phase-3 configsvc-backed settings API.
+	ConfigPath string
 
 	Log *zap.Logger
 }
@@ -146,6 +151,10 @@ func (s *AuthService) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	mux.Handle("/api/v1/auth/logout", s.Protect(http.HandlerFunc(s.handleLogout)))
 	mux.Handle("/api/v1/whoami", s.Protect(http.HandlerFunc(s.handleWhoami)))
+
+	// Phase 3b: configsvc-backed settings API.
+	mux.Handle("/api/v1/config", s.Protect(http.HandlerFunc(s.handleConfigRoot)))
+	mux.Handle("/api/v1/config/", s.ProtectCSRF(http.HandlerFunc(s.handleConfigSections)))
 }
 
 // Protect is the handler-wrapping shorthand that phase-3b handlers
@@ -454,6 +463,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *AuthService) cfgSvc() *configsvc.Service {
+	return configsvc.New(s.ConfigPath)
 }
 
 // jsonAuthError is the ErrorHandler passed into auth.Authenticator so

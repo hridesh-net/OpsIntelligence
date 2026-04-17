@@ -11,10 +11,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func skillsCmd(gf *globalFlags) *cobra.Command {
@@ -473,64 +472,10 @@ func skillsMarketplaceCmd(gf *globalFlags) *cobra.Command {
 // Helpers
 // ─────────────────────────────────────────────
 
-// toggleSkillInConfig adds or removes a skill name from enabled_skills in the YAML config.
+// toggleSkillInConfig adds or removes a skill name from enabled_skills.
+// Backed by internal/configsvc so CLI and dashboard APIs share write logic.
 func toggleSkillInConfig(cfgPath string, skillName string, enable bool) error {
-	if cfgPath == "" {
-		cfgPath = config.DefaultConfigPath()
-	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return err
-	}
-
-	var root map[string]any
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return err
-	}
-
-	agentRaw, _ := root["agent"]
-	agentMap, ok := agentRaw.(map[string]any)
-	if !ok {
-		agentMap = make(map[string]any)
-	}
-
-	rawList, _ := agentMap["enabled_skills"].([]any)
-	var enabled []string
-	for _, v := range rawList {
-		if s, ok := v.(string); ok {
-			enabled = append(enabled, s)
-		}
-	}
-
-	if enable {
-		// Add if not present
-		found := false
-		for _, s := range enabled {
-			if s == skillName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			enabled = append(enabled, skillName)
-		}
-	} else {
-		// Remove
-		var filtered []string
-		for _, s := range enabled {
-			if s != skillName {
-				filtered = append(filtered, s)
-			}
-		}
-		enabled = filtered
-	}
-
-	agentMap["enabled_skills"] = enabled
-	root["agent"] = agentMap
-
-	out, err := yaml.Marshal(root)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(cfgPath, out, 0o644)
+	svc := configsvc.New(cfgPath)
+	_, err := svc.SetSkillEnabled(context.Background(), skillName, enable)
+	return err
 }

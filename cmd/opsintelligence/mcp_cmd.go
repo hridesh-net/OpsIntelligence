@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/mcp"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func mcpCmd(gf *globalFlags) *cobra.Command {
@@ -266,15 +266,14 @@ func mcpAddCmd(gf *globalFlags) *cobra.Command {
 				}
 			}
 
-			cfg.MCP.Clients = append(cfg.MCP.Clients, config.MCPClientConfig{
+			svc := configsvc.New(gf.configPath)
+			if _, err := svc.AddMCPClient(cmd.Context(), config.MCPClientConfig{
 				Name:      name,
 				Transport: transport,
 				Command:   mcpCommand,
 				URL:       url,
 				AuthToken: authToken,
-			})
-
-			if err := saveConfig(gf.configPath, cfg); err != nil {
+			}); err != nil {
 				return err
 			}
 
@@ -302,26 +301,8 @@ func mcpRemoveCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			log := buildLogger(gf.logLevel)
-			cfg, err := loadConfig(gf.configPath, log)
-			if err != nil {
-				return err
-			}
-
-			var remaining []config.MCPClientConfig
-			found := false
-			for _, c := range cfg.MCP.Clients {
-				if c.Name == name {
-					found = true
-				} else {
-					remaining = append(remaining, c)
-				}
-			}
-			if !found {
-				return fmt.Errorf("MCP server %q not found", name)
-			}
-			cfg.MCP.Clients = remaining
-			if err := saveConfig(gf.configPath, cfg); err != nil {
+			svc := configsvc.New(gf.configPath)
+			if _, err := svc.RemoveMCPClient(cmd.Context(), name); err != nil {
 				return err
 			}
 			fmt.Printf("✔ MCP server %q removed.\n", name)
@@ -381,18 +362,6 @@ func mcpTestCmd(gf *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// saveConfig marshals the config to YAML and writes it to path.
-func saveConfig(path string, cfg *config.Config) error {
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("config marshal: %w", err)
-	}
-	return os.WriteFile(path, data, 0o600)
 }
 
 // getHomeDir returns the user's home directory.
