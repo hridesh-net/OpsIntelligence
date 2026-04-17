@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Onboarding local Gemma:** no confirm/path prompts; auto-provisions from bundled `models/*.gguf` or public mirrors (no credentials). Copy/download errors print a warning and **do not** fail onboarding.
 - **Local Gemma GGUF bootstrap:** try OpsIntelligence **`releases/latest/download/gemma-4-e2b-it.gguf`** first, then Hugging Face mirrors (Unsloth → bartowski Q4_K_M). **Release CI** now downloads and attaches that GGUF on every tag by default (HF mirror unless **`GEMMA_GGUF_SOURCE_URL`** is set); set **`GEMMA_GGUF_SKIP=true`** to opt out.
 
 ### Added

@@ -1149,52 +1149,55 @@ func runOnboarding(configPath string) (bool, error) {
 
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).
-		Render("  On-device Gemma (optional)"))
+		Render("  On-device Gemma (automatic)"))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("  A small Gemma 4 E2B model can run locally and attach a short advisory before your cloud model acts. Onboard will automatically use a packaged models/*.gguf first, then your release asset if needed. Official release binaries include local Gemma support by default.\n"))
+		Render("  No prompts or logins: if you have no GGUF path yet, onboard tries a packaged models/*.gguf, then a public download. Failures are skipped so setup always continues.\n"))
 
-	formLocalIntel := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Enable on-device Gemma (agent.local_intel)?").
-				Description("Adds a local pre-pass for routing hints; the main LLM stays your cloud provider. Onboard will auto-provision the GGUF.").
-				Value(&localIntelEnabled),
-			huh.NewInput().
-				Title("Path to Gemma 4 E2B .gguf (optional)").
-				Description("Saved as agent.local_intel.gguf_path. Leave empty to use OPSINTELLIGENCE_LOCAL_GEMMA_GGUF or an embedded-weights build later.").
-				Value(&localIntelGGUF),
-		),
-	).WithTheme(theme)
-	if err := formLocalIntel.Run(); err != nil {
-		return false, fmt.Errorf("onboarding interrupted")
+	// Best-effort local Gemma: never block onboarding on copy/download errors.
+	if strings.TrimSpace(localIntelGGUF) == "" {
+		if p := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_LOCAL_GEMMA_GGUF")); p != "" {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				localIntelGGUF = p
+				localIntelEnabled = true
+			}
+		}
 	}
-	if localIntelEnabled && strings.TrimSpace(localIntelGGUF) == "" {
+	if strings.TrimSpace(localIntelGGUF) == "" {
 		stateDir := filepath.Dir(configPath)
 		dst := localintel.DefaultGGUFPath(stateDir)
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).
-			Render("  Preparing Local Gemma model"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-			Render("  Using packaged models/*.gguf if present; otherwise downloading from OpsIntelligence release assets."))
+		warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+		okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
+		fmt.Println(dim.Render("  Provisioning local Gemma (bundled copy or public mirrors, no credentials)…"))
 		if src, ok := discoverBundledGGUF(dst); ok {
 			if err := copyFileAtomic(src, dst); err != nil {
-				return false, fmt.Errorf("local Gemma setup failed: copy bundled model: %w", err)
+				fmt.Println(warnStyle.Render("  ⚠ Bundled Gemma copy failed: " + err.Error()))
+				fmt.Println(dim.Render("  You can run: opsintelligence local-intel setup"))
+				localIntelEnabled, localIntelGGUF = false, ""
+			} else {
+				localIntelGGUF = dst
+				localIntelEnabled = true
+				fmt.Println(okStyle.Render("  ✔ Local Gemma prepared from packaged model"))
 			}
-			localIntelGGUF = dst
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Local Gemma prepared from packaged model"))
 		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-				Render("  Downloading GGUF with progress..."))
-			res, err := localintel.BootstrapGGUF(context.Background(), localintel.BootstrapOptions{
+			fmt.Println(dim.Render("  Downloading Gemma GGUF (may take several minutes; progress below)…"))
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+			defer cancel()
+			res, err := localintel.BootstrapGGUF(ctx, localintel.BootstrapOptions{
 				StateDir: stateDir,
 				GGUFPath: dst,
 				Progress: os.Stderr,
 			})
 			if err != nil {
-				return false, fmt.Errorf("local Gemma setup failed: %w", err)
+				fmt.Println(warnStyle.Render("  ⚠ Local Gemma download skipped: " + err.Error()))
+				fmt.Println(dim.Render("  Run later: opsintelligence local-intel setup"))
+				localIntelEnabled, localIntelGGUF = false, ""
+			} else {
+				localIntelGGUF = res.Path
+				localIntelEnabled = true
+				fmt.Println(okStyle.Render("  ✔ Local Gemma downloaded and prepared"))
 			}
-			localIntelGGUF = res.Path
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Local Gemma downloaded and prepared"))
 		}
 	}
 
