@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-17
+
 ### Fixed
 
 - **GitHub Actions release workflow published empty assets.** The
@@ -18,17 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before copying, lists `dist/`, and **fails the job** if no
   `dist/opsintelligence*` files exist.
 
-### Documentation
-
-- **README — "Installing on a client or locked-down machine".** Step-by-
-  step guidance for deployments where the host is not the operator's
-  own workstation: prefer pinned GitHub release binaries, optional
-  `NO_SOURCE_FALLBACK=1` + `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1` for
-  strict binary-only policy, prerequisites when IT allows a source
-  build, and manual copy-the-binary as an alternative to `install.sh`.
-
-### Fixed
-
 - **`install.sh` bootstraps Go from go.dev when neither a release
   binary nor a system `go` is available.** The v0.2.0 behaviour
   still required a pre-installed Go for the automatic source-build
@@ -40,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Override the version with `OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION`
   (default tracks `go.mod`, currently 1.26.2). macOS builds that
   fail with cgo errors still point at `xcode-select --install`.
+
+### Documentation
+
+- **README — "Installing on a client or locked-down machine".** Step-by-
+  step guidance for deployments where the host is not the operator's
+  own workstation: prefer pinned GitHub release binaries, optional
+  `NO_SOURCE_FALLBACK=1` + `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1` for
+  strict binary-only policy, prerequisites when IT allows a source
+  build, and manual copy-the-binary as an alternative to `install.sh`.
 
 ## [0.2.0] — 2026-04-17
 
