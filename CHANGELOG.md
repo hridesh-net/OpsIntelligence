@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-04-17
+
+### Fixed
+
+- **Onboarding TUI matches AssistClaw-style sequential screens.** Each onboarding step now runs as
+  its own `huh.NewForm` (`Run()` per group) with alt-screen, instead of one form containing every
+  group. Provider-specific pages (OpenRouter, Azure OpenAI, Bedrock, Vertex) appear only when
+  relevant. This removes any sense of stacked or overlapping steps.
+
 ## [0.2.4] — 2026-04-17
 
 ### Fixed
