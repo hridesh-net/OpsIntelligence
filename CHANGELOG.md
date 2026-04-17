@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **README — "Installing on a client or locked-down machine".** Step-by-
+  step guidance for deployments where the host is not the operator's
+  own workstation: prefer pinned GitHub release binaries, optional
+  `NO_SOURCE_FALLBACK=1` + `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1` for
+  strict binary-only policy, prerequisites when IT allows a source
+  build, and manual copy-the-binary as an alternative to `install.sh`.
+
 ### Fixed
 
 - **`install.sh` bootstraps Go from go.dev when neither a release

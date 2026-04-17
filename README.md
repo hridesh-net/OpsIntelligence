@@ -83,7 +83,7 @@ curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/in
 OPSINTELLIGENCE_VERSION=v0.2.0 bash install.sh
 ```
 
-**Build from source (requires Go 1.24+):**
+**Build from source (requires Go matching `go.mod`, currently 1.26+):**
 
 ```bash
 git clone https://github.com/hridesh-net/OpsIntelligence.git
@@ -96,6 +96,39 @@ binary under `/usr/local/bin` (falls back to `~/.local/bin` if not
 writable), scaffolds `~/.opsintelligence/` (state + datastore), and
 optionally registers a login service so the gateway starts on sign-in.
 Pass `SKIP_SERVICE=1` if you don't want that.
+
+### Installing on a client or locked-down machine
+
+Use this when **you are not on your own dev box** — e.g. a customer VM,
+corporate laptop, or host where security policy limits what may be
+downloaded or compiled.
+
+1. **Prefer a pre-built binary only.** Have the client install from a
+   **tagged GitHub release** that includes
+   `opsintelligence-<os>-<arch>` for their platform (see
+   [Releases](https://github.com/hridesh-net/OpsIntelligence/releases)).
+   Pin the version explicitly:
+   `OPSINTELLIGENCE_VERSION=v0.2.0 bash install.sh` (adjust tag as
+   needed).
+2. **Avoid surprise downloads.** On restricted networks, the default
+   installer may try to **clone the repo**, **pull Go from go.dev**, or
+   **fetch a GGUF** — any of which can be blocked by policy or proxy.
+   If you must enforce “binary-only, no extra fetches,” set:
+   `NO_SOURCE_FALLBACK=1` and `OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1`
+   before running the script. Then either the release asset installs
+   cleanly, or the install fails fast with a clear message (you supply
+   the binary or an IT-approved toolchain yourself).
+3. **If a source build is allowed**, install **Go** (same major version
+   as `go.mod`), **git**, and on macOS **Xcode Command Line Tools**
+   (`xcode-select --install`) **before** running the installer, then
+   use `FORCE_BUILD=1` or let the 404 fallback build; no go.dev
+   bootstrap is needed if `go` is already on `PATH`.
+4. **Copy the binary yourself.** Alternative: download the release
+   artifact on a machine that *can* reach GitHub, copy
+   `opsintelligence` (and optionally bundled `skills/`) to the client,
+   place it in `INSTALL_DIR`, run `chmod +x`, and scaffold config with
+   `STATE_DIR` or the CLI — the installer is optional if you only need
+   the binary + state directory layout.
 
 Common environment toggles:
 

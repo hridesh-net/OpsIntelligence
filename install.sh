@@ -20,7 +20,10 @@
 #                        missing release binary fails hard the same way it used to.
 #   OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1  When a source build is needed but no system
 #                        'go' is on PATH, do not download the official Go tarball from
-#                        go.dev — fail immediately (airgapped / policy installs).
+#                        go.dev — fail immediately (airgapped / client locked-down installs).
+#   For client machines: pin OPSINTELLIGENCE_VERSION, prefer release binaries; combine
+#                        NO_SOURCE_FALLBACK=1 + OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1 for
+#                        strict binary-only policy (see README "Installing on a client").
 #   OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION  Go version to download for bootstrap (default
 #                        matches go.mod; e.g. 1.26.2). Override if go.dev layout changes.
 #   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). CI sets fts5,opsintelligence_localgemma
