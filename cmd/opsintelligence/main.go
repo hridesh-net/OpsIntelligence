@@ -971,6 +971,20 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 				srv.WebhookAdapters = waReg
 			}
 
+			authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			storeCloser, err := attachAuthToGateway(authCtx, cfg, log, srv)
+			authCancel()
+			if err != nil {
+				return err
+			}
+			if storeCloser != nil {
+				defer func() {
+					if err := storeCloser(); err != nil {
+						log.Warn("gateway datastore close", zap.Error(err))
+					}
+				}()
+			}
+
 			if cfg.Gmail.Enabled {
 				srv.Gmail = automation.NewGmailWatcher(cfg.Gmail, log)
 			}
@@ -1790,6 +1804,20 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			return err
 		} else if waReg != nil {
 			srv.WebhookAdapters = waReg
+		}
+
+		authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		storeCloser, err := attachAuthToGateway(authCtx, cfg, log, srv)
+		authCancel()
+		if err != nil {
+			return err
+		}
+		if storeCloser != nil {
+			defer func() {
+				if err := storeCloser(); err != nil {
+					log.Warn("gateway datastore close", zap.Error(err))
+				}
+			}()
 		}
 
 		// Determine public-facing address for the web UI

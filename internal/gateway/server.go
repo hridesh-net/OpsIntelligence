@@ -27,6 +27,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
+	"github.com/opsintelligence/opsintelligence/internal/webui/dashboard"
 )
 
 var upgrader = websocket.Upgrader{
@@ -66,6 +67,12 @@ type Server struct {
 	// driving s.Runner directly (one master run per delivery). Callers
 	// that want to fan-out via sub-agents can supply their own.
 	WebhookRunner webhookadapter.RunnerFn
+
+	// AuthService, when non-nil, enables phase 2 identity endpoints
+	// (/api/v1/auth/*, /api/v1/whoami) and the dashboard shell under
+	// /dashboard/. Zero value keeps the legacy shared-Bearer-token
+	// behaviour intact so existing deployments keep working.
+	AuthService *AuthService
 }
 
 // NewServer initializes a new Gateway server on the specified port.
@@ -146,6 +153,20 @@ func (s *Server) Start() error {
 		}
 	}
 
+
+	// ── Phase-2 auth endpoints + dashboard shell ─────────────────────────────
+	// When an AuthService is wired the gateway exposes:
+	//   GET  /api/v1/auth/status
+	//   POST /api/v1/auth/{login,logout,bootstrap}
+	//   GET  /api/v1/whoami
+	//   GET  /dashboard/* (login page + app frame + static assets)
+	// These are served outside the legacy Bearer auth wrapper because
+	// the phase-2 AuthService manages its own credential chain
+	// (cookie session → API key → legacy shared token).
+	if s.AuthService != nil {
+		s.AuthService.Mount(mux)
+		mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", dashboard.Handler()))
+	}
 
 	// ── Static web UI ─────────────────────────────────────────────────────────
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(webui.Assets()))))

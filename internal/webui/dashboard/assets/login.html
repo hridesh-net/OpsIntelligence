@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpsIntelligence · Sign in</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-card">
+      <header class="auth-header">
+        <div class="brand">
+          <span class="brand-mark">◆</span>
+          <span class="brand-name">OpsIntelligence</span>
+        </div>
+        <h1 id="auth-heading">Sign in</h1>
+        <p id="auth-subheading" class="auth-sub">Use your operator credentials.</p>
+      </header>
+
+      <form id="login-form" class="auth-form" hidden>
+        <label>
+          Username
+          <input name="username" autocomplete="username" required autofocus />
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="primary">Sign in</button>
+      </form>
+
+      <form id="bootstrap-form" class="auth-form" hidden>
+        <p class="auth-hint">
+          No users exist yet. Create the initial <strong>owner</strong> account —
+          this account gets every permission and can invite more users from the
+          dashboard.
+        </p>
+        <label>
+          Username
+          <input name="username" autocomplete="username" required autofocus />
+        </label>
+        <label>
+          Email <span class="optional">(optional)</span>
+          <input name="email" type="email" autocomplete="email" />
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" autocomplete="new-password" required />
+        </label>
+        <label>
+          Confirm password
+          <input name="confirm" type="password" autocomplete="new-password" required />
+        </label>
+        <button type="submit" class="primary">Create owner &amp; sign in</button>
+      </form>
+
+      <div id="auth-error" class="auth-error" hidden></div>
+
+      <footer class="auth-footer">
+        <a href="https://github.com/opsintelligence/opsintelligence" target="_blank" rel="noopener">docs</a>
+        <span>·</span>
+        <a href="/dashboard/app">dashboard</a>
+      </footer>
+    </main>
+    <script src="app.js" defer></script>
+  </body>
+</html>

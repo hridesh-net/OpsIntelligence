@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpsIntelligence · Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  </head>
+  <body class="app-page">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">OpsIntelligence</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-section="overview">Overview</button>
+        <button class="nav-item" data-section="tasks">Tasks</button>
+        <button class="nav-item" data-section="users">Users &amp; Roles</button>
+        <button class="nav-item" data-section="apikeys">API keys</button>
+        <button class="nav-item" data-section="settings">Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="whoami" class="whoami">
+          <div class="whoami-name" id="whoami-name">…</div>
+          <div class="whoami-roles" id="whoami-roles"></div>
+        </div>
+        <button id="logout" class="ghost">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="content-header">
+        <h1 id="section-title">Overview</h1>
+        <p id="section-sub" class="content-sub">
+          A quick look at the ops plane. Phase 3 will fill the rest of these panels.
+        </p>
+      </header>
+
+      <section class="panel" data-section="overview">
+        <div class="card">
+          <h2>Signed in as</h2>
+          <p id="card-user">—</p>
+        </div>
+        <div class="card">
+          <h2>Driver</h2>
+          <p>Local dashboard shell · phase 2c</p>
+        </div>
+        <div class="card">
+          <h2>Coming in phase 3</h2>
+          <ul class="bullet">
+            <li>Users &amp; roles management (CLI parity)</li>
+            <li>API-key issuance + revocation</li>
+            <li>Live task board</li>
+            <li>Settings for every CLI surface</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="panel hidden" data-section="tasks">
+        <div class="placeholder">
+          <h2>Live tasks</h2>
+          <p>Coming in phase 3c — this will stream <code>subagents.TaskManager</code> events.</p>
+        </div>
+      </section>
+
+      <section class="panel hidden" data-section="users">
+        <div class="placeholder">
+          <h2>Users &amp; roles</h2>
+          <p>Coming in phase 3c — CLI-parity user/role management will live here.</p>
+          <p class="note">
+            For now, use <code>opsintelligence admin user</code> and
+            <code>opsintelligence admin role</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel hidden" data-section="apikeys">
+        <div class="placeholder">
+          <h2>API keys</h2>
+          <p>Coming in phase 3c — issue and revoke <code>opi_*</code> keys from here.</p>
+          <p class="note">For now, use <code>opsintelligence admin apikey</code>.</p>
+        </div>
+      </section>
+
+      <section class="panel hidden" data-section="settings">
+        <div class="placeholder">
+          <h2>Settings</h2>
+          <p>
+            Coming in phase 3c — <strong>every</strong> CLI configuration surface
+            (deployment, auth, providers, skills, MCP, channels, webhooks,
+            integrations, runtime) will be editable here, backed by the same
+            <code>configsvc</code> the CLI calls.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

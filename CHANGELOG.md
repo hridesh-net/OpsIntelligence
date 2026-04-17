@@ -8,6 +8,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gateway auth endpoints + dashboard shell (phase 2c of the
+  cloud-dashboard + RBAC rollout).** The phase-2b primitives are now
+  actually reachable from a browser: start the gateway and a minimal
+  login → owner-bootstrap → dashboard frame → logout flow is live on
+  `/dashboard/` and `/api/v1/auth/*`.
+  - **`internal/gateway/authsvc.go`** — new `AuthService` that wires
+    `auth.Authenticator`, `auth.SessionManager`, and `rbac.Resolver`
+    together from `config.AuthConfig`, then mounts the phase-2 HTTP
+    surface on an `http.ServeMux`. Handlers:
+    - `GET  /api/v1/auth/status`    — public; tells the SPA whether
+      the owner has been bootstrapped, which credential flows are
+      enabled, and the min-password policy. No auth required.
+    - `POST /api/v1/auth/bootstrap` — first-run only. Anonymous until
+      the users table has one row; refuses further anonymous writes
+      afterwards. Creates the `owner` principal, grants `role-owner`,
+      mints a session + CSRF cookie, returns the principal JSON.
+    - `POST /api/v1/auth/login`     — public. Argon2id verify with
+      opportunistic bcrypt-→-argon2id rehash on success; sets the
+      session + CSRF cookies; returns principal + `expires_at`.
+    - `POST /api/v1/auth/logout`    — authenticated. Revokes the
+      session row server-side and expires both cookies.
+    - `GET  /api/v1/whoami`         — authenticated. Returns the
+      caller's principal DTO (`type`, `user_id`, `username`, `roles`,
+      …) suitable for the dashboard's side-panel.
+    - `AuthService.Protect` / `AuthService.ProtectCSRF` — handler-
+      wrapping helpers used by future phase-3b endpoints to require a
+      non-anonymous principal (optionally with double-submit CSRF).
+  - **`internal/webui/dashboard`** — tiny embedded SPA served under
+    `/dashboard/`. `login.html` auto-switches between "Sign in" and
+    "First-run setup" based on `/api/v1/auth/status`; `app.html` is
+    the post-login shell with a nav sidebar, a live whoami card, and
+    four placeholder panels (Tasks / Users & Roles / API keys /
+    Settings) that will get filled in phase 3c. `app.js` mirrors the
+    `opi_csrf` cookie into `X-CSRF-Token` for mutating calls. All
+    assets are `//go:embed`-bundled so the binary stays single-file.
+  - **`internal/gateway/server.go`** — new `Server.AuthService` field.
+    When non-nil, the gateway auto-mounts the phase-2 auth surface
+    AND the dashboard at `/dashboard/`. The legacy `Bearer <token>`
+    path on `/api/status`, `/api/chat`, `/api/webhook/`, etc. is
+    untouched for backwards compatibility; the same shared token is
+    also accepted by the new `Authenticator` chain as a synthetic
+    `system:legacy-shared-token` principal.
+  - **`cmd/opsintelligence/gateway_auth.go`** — `attachAuthToGateway`
+    opens the ops-plane datastore with `Migrations: "auto"`,
+    `SeedBuiltInRoles`-es on every boot, constructs the
+    `AuthService`, and attaches it to the gateway. Wired into both
+    `opsintelligence gateway serve` (foreground) and
+    `opsintelligence gateway start` (background daemon). Auth is
+    disabled cleanly when `datastore.driver == "none"`, leaving the
+    gateway in its legacy Bearer-only mode.
+  - **`internal/gateway/authsvc_test.go`** — unit tests over the
+    full surface against a fresh in-memory sqlite: fresh-store
+    status, login happy-path/wrong-password/missing-fields, whoami
+    with/without session, bootstrap creates owner + rejects
+    double-bootstrap + enforces min-password, logout clears cookie
+    and subsequent whoami 401s.
+  - End-to-end smoke passed against the real binary (sqlite backend,
+    `gateway serve`): `GET /status` → `bootstrap_needed: true` →
+    `POST /bootstrap` → 201 + session → `GET /whoami` → owner →
+    `POST /logout` (with CSRF) → `GET /whoami` → 401 → `POST /login`
+    → 200 → `GET /whoami` → owner again. `/dashboard/` redirects to
+    `/dashboard/app`; `app.js`/`style.css`/`login.html` served from
+    the embedded FS. Legacy bearer token continues to authenticate
+    both `/api/status` and `/api/v1/whoami`.
+
 - **Auth primitives + Authenticator middleware + admin CLI (phase 2b
   of the cloud-dashboard + RBAC rollout).** Everything the HTTP
   gateway and dashboard need to turn a request into a `*auth.Principal`
