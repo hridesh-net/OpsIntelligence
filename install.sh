@@ -13,7 +13,11 @@
 #   OPSINTELLIGENCE_VERSION   Git tag or "latest" (default: latest)
 #   INSTALL_DIR          Binary destination (default: /usr/local/bin or ~/.local/bin if not writable)
 #   STATE_DIR            Config/state/datastore root (default: ~/.opsintelligence)
-#   FORCE_BUILD=1        Build from source instead of downloading release
+#   FORCE_BUILD=1        Build from source even if a pre-built binary is available.
+#                        (Source build is also used automatically when the release
+#                        asset is missing / 404s, as long as Go 1.24+ is installed.)
+#   NO_SOURCE_FALLBACK=1 Disable the auto source-build fallback. With this set, a
+#                        missing release binary fails hard the same way it used to.
 #   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). CI sets fts5,opsintelligence_localgemma
 #   SKIP_VENV=1          Skip Python venv creation
 #   SKIP_NODE=1          Skip Node/pnpm/TypeScript install (CI fresh-install smoke)
@@ -162,10 +166,24 @@ install_binary() {
     mv -f "$tmp_bin" "$INSTALL_DIR/opsintelligence"
     ok "Binary installed: $INSTALL_DIR/opsintelligence"
     copy_skills_dir
-  else
-    rm -f "$tmp_bin"
-    err "Failed to download pre-built binary from $download_url. This installer is binary-first; retry later, pin OPSINTELLIGENCE_VERSION to a release with assets, or set FORCE_BUILD=1 if you explicitly want a source build."
+    return
   fi
+  rm -f "$tmp_bin"
+
+  # Release asset missing (404) or unreachable. OpsIntelligence is a young
+  # fork and doesn't always ship pre-built binaries for every platform/
+  # version combination, so by default we transparently fall back to a
+  # source build (same code path as FORCE_BUILD=1). Operators who want
+  # the old binary-first behaviour can opt out with NO_SOURCE_FALLBACK=1.
+  if [[ "${NO_SOURCE_FALLBACK:-0}" == "1" ]]; then
+    err "Failed to download pre-built binary from $download_url. NO_SOURCE_FALLBACK=1 is set; retry later, pin OPSINTELLIGENCE_VERSION to a release with assets, or unset NO_SOURCE_FALLBACK to let the installer build from source."
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    err "Failed to download pre-built binary from $download_url and Go 1.24+ is not installed for a source-build fallback. Install Go (https://go.dev/dl/) then re-run this script, or pin OPSINTELLIGENCE_VERSION to a release that ships a $PLATFORM asset."
+  fi
+  warn "Release asset not found ($download_url)."
+  warn "Falling back to source build — set NO_SOURCE_FALLBACK=1 to disable this."
+  build_binary_from_source
 }
 
 build_binary_from_source() {

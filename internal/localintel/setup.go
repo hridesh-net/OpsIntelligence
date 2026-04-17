@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,9 +14,32 @@ import (
 	"time"
 )
 
-// DefaultGGUFURL is the default model download used by `opsintelligence local-intel setup`
-// when no explicit URL/env override is provided. It points to OpsIntelligence's own release assets.
-const DefaultGGUFURL = "https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf"
+// DefaultGGUFURL is the primary model download used by `opsintelligence local-intel setup`
+// when no explicit URL/env override is provided. It points to OpsIntelligence's own
+// release assets once those ship. Exposed as a var (not const) so integration tests
+// can temporarily redirect the primary endpoint without touching opt.URL (opt.URL
+// intentionally disables the whole fallback chain).
+var DefaultGGUFURL = "https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf"
+
+// FallbackGGUFURLs is the ordered list of default URLs tried after DefaultGGUFURL
+// when no explicit URL is configured. The AssistClaw release asset is identical in
+// content (same Gemma 4 E2B-IT GGUF) and is kept as a public mirror so brand-new
+// OpsIntelligence forks — which may not yet have published their own release —
+// can still bootstrap `local-intel` without extra environment variables.
+//
+// Override with --url / OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL to disable the chain.
+var FallbackGGUFURLs = []string{
+	"https://github.com/hridesh-net/AssistClaw/releases/latest/download/gemma-4-e2b-it.gguf",
+}
+
+// defaultGGUFURLChain returns the ordered list of URLs we will try when the
+// caller hasn't pinned one explicitly.
+func defaultGGUFURLChain() []string {
+	out := make([]string, 0, 1+len(FallbackGGUFURLs))
+	out = append(out, DefaultGGUFURL)
+	out = append(out, FallbackGGUFURLs...)
+	return out
+}
 
 // DefaultGGUFPath returns the managed filesystem path used for downloaded GGUF weights.
 func DefaultGGUFPath(stateDir string) string {
@@ -62,13 +86,21 @@ func BootstrapGGUF(ctx context.Context, opt BootstrapOptions) (BootstrapResult, 
 		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: mkdir for %q: %w", dst, err)
 	}
 
-	url := strings.TrimSpace(opt.URL)
-	if url == "" {
-		url = strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL"))
+	// Build the ordered list of URLs to try. An explicit opt.URL or the
+	// OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL env var pins a single source
+	// and disables the fallback chain. Otherwise we try DefaultGGUFURL
+	// followed by FallbackGGUFURLs so a fresh OpsIntelligence install
+	// can still pull a GGUF even if the repo hasn't tagged a release
+	// with the asset yet (the AssistClaw mirror ships the same file).
+	var urls []string
+	if u := strings.TrimSpace(opt.URL); u != "" {
+		urls = []string{u}
+	} else if u := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL")); u != "" {
+		urls = []string{u}
+	} else {
+		urls = defaultGGUFURLChain()
 	}
-	if url == "" {
-		url = DefaultGGUFURL
-	}
+
 	sha := strings.ToLower(strings.TrimSpace(opt.SHA256))
 	if sha == "" {
 		sha = strings.ToLower(strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256")))
@@ -78,33 +110,74 @@ func BootstrapGGUF(ctx context.Context, opt BootstrapOptions) (BootstrapResult, 
 	if client == nil {
 		client = &http.Client{}
 	}
+
+	var (
+		lastErr error
+		n       int64
+		used    string
+	)
+	for i, url := range urls {
+		attempt, err := downloadGGUF(ctx, client, url, dst, sha, opt.Progress)
+		if err == nil {
+			n = attempt
+			used = url
+			break
+		}
+		lastErr = err
+		// Only retry with the next URL if this one looks like a missing
+		// asset (transport error or non-2xx). SHA-256 mismatch on a
+		// byte-for-byte pinned download is a real corruption/attack
+		// signal and MUST NOT be silently swallowed by trying another
+		// mirror.
+		if errors.Is(err, errSHAMismatch) {
+			return BootstrapResult{}, err
+		}
+		if i < len(urls)-1 && opt.Progress != nil {
+			fmt.Fprintf(opt.Progress, "localintel bootstrap: %v — trying next mirror\n", err)
+		}
+	}
+	if used == "" {
+		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: all sources failed (last error: %w)", lastErr)
+	}
+	return BootstrapResult{Path: dst, Downloaded: true, Bytes: n}, nil
+}
+
+// errSHAMismatch flags integrity-check failures so the URL chain doesn't
+// mask them by silently moving on to the next mirror.
+var errSHAMismatch = errors.New("localintel bootstrap: sha256 mismatch")
+
+// downloadGGUF fetches a single URL into dst (via a temp file), enforcing
+// sha (when non-empty) and emitting progress to progressW (when non-nil).
+// On any non-integrity failure it cleans up the temp file so the caller
+// can retry the next URL in the chain.
+func downloadGGUF(ctx context.Context, client *http.Client, url, dst, sha string, progressW io.Writer) (int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: request: %w", err)
+		return 0, fmt.Errorf("localintel bootstrap: request: %w", err)
 	}
 	if tok := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_TOKEN")); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: GET %s: %w", url, err)
+		return 0, fmt.Errorf("localintel bootstrap: GET %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: GET %s: status %s", url, resp.Status)
+		return 0, fmt.Errorf("localintel bootstrap: GET %s: status %s", url, resp.Status)
 	}
 
 	tmp := dst + ".download"
 	out, err := os.Create(tmp)
 	if err != nil {
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: create temp: %w", err)
+		return 0, fmt.Errorf("localintel bootstrap: create temp: %w", err)
 	}
 
 	hasher := sha256.New()
 	src := io.TeeReader(resp.Body, hasher)
 	var progress *downloadProgress
-	if opt.Progress != nil {
-		progress = newDownloadProgress(opt.Progress, resp.ContentLength)
+	if progressW != nil {
+		progress = newDownloadProgress(progressW, resp.ContentLength)
 		src = io.TeeReader(src, progress)
 	}
 	n, copyErr := io.Copy(out, src)
@@ -114,24 +187,24 @@ func BootstrapGGUF(ctx context.Context, opt BootstrapOptions) (BootstrapResult, 
 	closeErr := out.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp)
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: download/write: %w", copyErr)
+		return 0, fmt.Errorf("localintel bootstrap: download/write: %w", copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp)
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: close temp: %w", closeErr)
+		return 0, fmt.Errorf("localintel bootstrap: close temp: %w", closeErr)
 	}
 
 	gotSHA := strings.ToLower(hex.EncodeToString(hasher.Sum(nil)))
 	if sha != "" && gotSHA != sha {
 		_ = os.Remove(tmp)
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: sha256 mismatch: got %s want %s", gotSHA, sha)
+		return 0, fmt.Errorf("%w: got %s want %s", errSHAMismatch, gotSHA, sha)
 	}
 
 	if err := os.Rename(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
-		return BootstrapResult{}, fmt.Errorf("localintel bootstrap: move into place: %w", err)
+		return 0, fmt.Errorf("localintel bootstrap: move into place: %w", err)
 	}
-	return BootstrapResult{Path: dst, Downloaded: true, Bytes: n}, nil
+	return n, nil
 }
 
 type downloadProgress struct {

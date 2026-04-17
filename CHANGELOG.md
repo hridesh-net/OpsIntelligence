@@ -6,6 +6,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installer no longer hard-errors on a missing release binary.**
+  The `install.sh` shipped with v0.1.0 was binary-first and bailed
+  out with a `[✗] Failed to download pre-built binary ... 404`
+  whenever the target platform/version combination didn't have an
+  asset uploaded yet. Since OpsIntelligence is still a young fork,
+  that's the common case.
+  - `install_binary()` now treats a 404 (or any curl failure) as a
+    soft signal: if Go 1.24+ is installed locally, it transparently
+    falls back to `build_binary_from_source` — same code path as
+    `FORCE_BUILD=1`, just triggered automatically.
+  - Operators who want the old strict behaviour can opt out with
+    the new `NO_SOURCE_FALLBACK=1` env var (useful for airgapped
+    mirrors that must only ship signed binaries).
+  - Hard error paths are preserved for the truly unrecoverable
+    case: release missing **and** Go not installed. The message now
+    links to https://go.dev/dl/ so the operator knows what to do.
+  - Install script header, README install table, and
+    `--help` output document the new behaviour.
+
+- **Gemma GGUF download now has a fallback mirror chain.**
+  `WITH_GEMMA=1 bash install.sh` (and `opsintelligence local-intel
+  setup`) used to point at a single URL:
+  `github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf`
+  — which 404s until we cut a release that bundles the GGUF.
+  - `internal/localintel.BootstrapGGUF` now tries
+    `DefaultGGUFURL` first and, on 404/transport failure, walks
+    through `FallbackGGUFURLs` (which defaults to the AssistClaw
+    release — byte-for-byte the same Gemma 4 E2B-IT GGUF). This
+    matches AssistClaw's out-of-the-box behaviour and means brand
+    new installs get Gemma without extra env vars.
+  - The fallback chain is **only** used when the caller has not
+    pinned a URL explicitly via `--url` or
+    `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL`. Pinning disables the
+    chain on purpose — if you point us at an internal mirror, a
+    silent fallthrough to a public URL would be a compliance
+    footgun.
+  - SHA-256 mismatches short-circuit the chain immediately — we do
+    not try to find a mirror whose bytes satisfy a broken integrity
+    pin.
+  - New tests cover the happy fallthrough
+    (`TestBootstrapGGUF_FallbackURL_SkipsFailedPrimary`), the pinned
+    case (`TestBootstrapGGUF_ExplicitURL_DoesNotFallBack`), and the
+    integrity guard (`TestBootstrapGGUF_SHA256Mismatch_AbortsChain`).
+
 ### Added
 
 - **Phase 3d: Users, Roles & API Keys management.** The dashboard's

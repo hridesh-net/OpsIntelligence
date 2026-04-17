@@ -104,11 +104,32 @@ Common environment toggles:
 | `OPSINTELLIGENCE_VERSION` | `latest` | Release tag to install |
 | `INSTALL_DIR` | `/usr/local/bin` | Where the binary lands |
 | `STATE_DIR` | `~/.opsintelligence` | Config + datastore root |
-| `FORCE_BUILD=1` | — | Build from source instead of downloading |
+| `FORCE_BUILD=1` | — | Build from source even when a release binary exists |
+| `NO_SOURCE_FALLBACK=1` | — | Disable the automatic source-build fallback that kicks in when the release asset 404s |
 | `SKIP_VENV=1` | — | Skip Python venv for the tool sandbox |
 | `SKIP_SERVICE=1` | — | Skip launchd/systemd registration |
 | `WITH_MEMPALACE=1` | — | Bootstrap managed MemPalace after install |
 | `WITH_GEMMA=1` | — | Download the default Gemma GGUF for local-intel |
+
+> **Note on pre-built binaries.** While OpsIntelligence is still a
+> young fork, not every platform/version combination has a pre-built
+> release asset yet. If the installer gets a `404` from
+> `github.com/hridesh-net/OpsIntelligence/releases/...`, it will
+> **automatically fall back to a source build** as long as Go 1.24+
+> is installed locally — no need to pass `FORCE_BUILD=1`. Set
+> `NO_SOURCE_FALLBACK=1` if you specifically want the old
+> binary-only behaviour (useful for airgapped mirrors).
+>
+> **Note on Gemma for local-intel.** `WITH_GEMMA=1 bash install.sh`
+> (or `opsintelligence local-intel setup`) tries the OpsIntelligence
+> release asset first, then transparently falls back to the
+> AssistClaw release which ships the same `gemma-4-e2b-it.gguf`.
+> That way `local-intel` works out of the box on a brand-new
+> OpsIntelligence install even before our own release carries the
+> GGUF. Override the URL explicitly via
+> `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL=...` or `--url` to pin a
+> specific source (e.g. an internal mirror) — doing so disables the
+> fallback chain.
 
 **Uninstall:**
 
