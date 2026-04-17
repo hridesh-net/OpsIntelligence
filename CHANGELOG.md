@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-17
+
+### Added
+
+- **Onboarding now exposes the full provider surface instead of only
+  OpenAI/Anthropic.** `opsintelligence onboard` now offers the same
+  rich provider choices already supported by the runtime registry:
+  OpenAI, Anthropic, Groq, Mistral, Together, OpenRouter, NVIDIA,
+  Cohere, DeepSeek, Perplexity, xAI, HuggingFace, Ollama, vLLM,
+  and LM Studio. The wizard also captures optional `base_url`,
+  `default_model`, and OpenRouter attribution fields so users can
+  configure modern provider stacks without editing YAML by hand.
+
+### Changed
+
+- **PR review output style now matches rich inline-review formatting.**
+  The PR-review render prompt and `gh-pr-review` comment templates now
+  emit structured findings in the style:
+  `⚠️ Potential issue | Critical/High/Low` + `Impact:` +
+  `Suggested fix:` (with GitHub `suggestion` blocks when present).
+  This aligns OpsIntelligence review comments with the visual and
+  triage-friendly format used in your reference screenshot.
+
 ## [0.2.1] — 2026-04-17
 
 ### Fixed

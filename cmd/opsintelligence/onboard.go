@@ -1,7 +1,10 @@
 // Package main — OpsIntelligence onboarding.
 //
-// This is a deliberately minimal wizard for the DevOps fork. It collects:
-//   - a single LLM provider API key (OpenAI or Anthropic)
+// This is a deliberately practical wizard for the DevOps fork. It collects:
+//   - a default LLM provider from a broad provider list (OpenAI, Anthropic,
+//     Groq, Mistral, Together, OpenRouter, NVIDIA, Cohere, DeepSeek,
+//     Perplexity, xAI, HuggingFace, Ollama, vLLM, LM Studio)
+//   - provider API key/base-url/model fields needed for the chosen provider
 //   - Slack bot/app tokens (optional)
 //   - DevOps integration tokens (GitHub, GitLab, Jenkins, SonarQube) — optional
 //   - an active team name
@@ -59,6 +62,10 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 			var (
 				provider       = "openai"
 				apiKey         string
+				providerURL    string
+				defaultModel   string
+				openrouterSite string
+				openrouterURL  string
 				slackBotToken  string
 				slackAppToken  string
 				githubToken    string
@@ -80,12 +87,41 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 							Options(
 								huh.NewOption("OpenAI", "openai"),
 								huh.NewOption("Anthropic", "anthropic"),
+								huh.NewOption("Groq", "groq"),
+								huh.NewOption("Mistral", "mistral"),
+								huh.NewOption("Together AI", "together"),
+								huh.NewOption("OpenRouter", "openrouter"),
+								huh.NewOption("NVIDIA NIM", "nvidia"),
+								huh.NewOption("Cohere", "cohere"),
+								huh.NewOption("DeepSeek", "deepseek"),
+								huh.NewOption("Perplexity", "perplexity"),
+								huh.NewOption("xAI (Grok)", "xai"),
+								huh.NewOption("HuggingFace Inference", "huggingface"),
+								huh.NewOption("Ollama (local)", "ollama"),
+								huh.NewOption("vLLM (OpenAI-compatible)", "vllm"),
+								huh.NewOption("LM Studio (local)", "lm_studio"),
 							).
 							Value(&provider),
 						huh.NewInput().
-							Title("Provider API key").
+							Title("Provider API key (optional for local providers)").
 							EchoMode(huh.EchoModePassword).
 							Value(&apiKey),
+						huh.NewInput().
+							Title("Provider base URL (optional override)").
+							Description("For OpenAI-compatible/local providers. Leave blank to use provider defaults.").
+							Value(&providerURL),
+						huh.NewInput().
+							Title("Default model (optional)").
+							Description("Examples: gpt-5, claude-sonnet-4-5, grok-4, llama-3.3-70b.").
+							Value(&defaultModel),
+						huh.NewInput().
+							Title("OpenRouter app/site name (optional)").
+							Description("Only used when provider=openrouter for better request attribution.").
+							Value(&openrouterSite),
+						huh.NewInput().
+							Title("OpenRouter site URL (optional)").
+							Description("Only used when provider=openrouter (e.g. https://ops.example.com).").
+							Value(&openrouterURL),
 					),
 					huh.NewGroup(
 						huh.NewNote().
@@ -141,6 +177,10 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 			content := renderOnboardYAML(onboardValues{
 				Provider:      provider,
 				APIKey:        apiKey,
+				ProviderURL:   providerURL,
+				DefaultModel:  defaultModel,
+				OpenRouterURL: openrouterURL,
+				OpenRouterApp: openrouterSite,
 				SlackBot:      slackBotToken,
 				SlackApp:      slackAppToken,
 				GitHubToken:   githubToken,
@@ -166,14 +206,17 @@ directly in YAML — see .opsintelligence.yaml.example in the repository.`,
 }
 
 type onboardValues struct {
-	Provider                                string
-	APIKey                                  string
-	SlackBot, SlackApp                      string
-	GitHubToken                             string
-	GitLabURL, GitLabToken                  string
-	JenkinsURL, JenkinsUser, JenkinsToken   string
-	SonarURL, SonarToken                    string
-	ActiveTeam                              string
+	Provider                              string
+	APIKey                                string
+	ProviderURL                           string
+	DefaultModel                          string
+	OpenRouterURL, OpenRouterApp          string
+	SlackBot, SlackApp                    string
+	GitHubToken                           string
+	GitLabURL, GitLabToken                string
+	JenkinsURL, JenkinsUser, JenkinsToken string
+	SonarURL, SonarToken                  string
+	ActiveTeam                            string
 }
 
 func renderOnboardYAML(v onboardValues) string {
@@ -196,9 +239,82 @@ func renderOnboardYAML(v onboardValues) string {
 	b.WriteString("providers:\n")
 	switch v.Provider {
 	case "anthropic":
-		b.WriteString("  anthropic:\n    api_key: \"" + v.APIKey + "\"\n\n")
+		b.WriteString("  anthropic:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "groq", "mistral", "together", "nvidia", "cohere", "deepseek", "perplexity", "xai":
+		b.WriteString("  " + v.Provider + ":\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "openrouter":
+		b.WriteString("  openrouter:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		if v.OpenRouterApp != "" {
+			b.WriteString("    site_name: \"" + v.OpenRouterApp + "\"\n")
+		}
+		if v.OpenRouterURL != "" {
+			b.WriteString("    site_url: \"" + v.OpenRouterURL + "\"\n")
+		}
+		b.WriteString("\n")
+	case "huggingface":
+		b.WriteString("  huggingface:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+			b.WriteString("    model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
+	case "ollama", "vllm", "lm_studio":
+		b.WriteString("  " + v.Provider + ":\n")
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		} else if v.Provider == "ollama" {
+			b.WriteString("    base_url: \"http://127.0.0.1:11434\"\n")
+		} else {
+			b.WriteString("    base_url: \"http://127.0.0.1:8000\"\n")
+		}
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
 	default:
-		b.WriteString("  openai:\n    api_key: \"" + v.APIKey + "\"\n\n")
+		b.WriteString("  openai:\n")
+		if v.APIKey != "" {
+			b.WriteString("    api_key: \"" + v.APIKey + "\"\n")
+		}
+		if v.ProviderURL != "" {
+			b.WriteString("    base_url: \"" + v.ProviderURL + "\"\n")
+		}
+		if v.DefaultModel != "" {
+			b.WriteString("    default_model: \"" + v.DefaultModel + "\"\n")
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString("channels:\n")

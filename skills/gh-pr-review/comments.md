@@ -305,7 +305,14 @@ jq -n \
     body: $body,
     comments: ($f[0] | map({
       path, line, side: "RIGHT",
-      body: ("**" + (.severity | ascii_upcase) + "** — " + .message + (if .suggestion then "\n\n```suggestion\n" + .suggestion + "\n```" else "" end))
+      body: (
+        "⚠️ Potential issue | "
+        + (if .severity=="blocker" then "Critical" elif .severity=="must-fix" then "High" else "Low" end)
+        + "\n\n"
+        + .message
+        + (if .impact then "\n\nImpact: " + .impact else "" end)
+        + (if .suggestion then "\n\nSuggested fix:\n```suggestion\n" + .suggestion + "\n```" else "" end)
+      )
     }))
   }' > /tmp/review.json
 
