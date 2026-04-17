@@ -34,6 +34,8 @@ import (
 	embedproviders "github.com/opsintelligence/opsintelligence/internal/embeddings/providers"
 	"github.com/opsintelligence/opsintelligence/internal/extensions"
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
+	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
+	ghadapter "github.com/opsintelligence/opsintelligence/internal/webhookadapter/github"
 	"github.com/opsintelligence/opsintelligence/internal/graph"
 	"github.com/opsintelligence/opsintelligence/internal/mcp"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
@@ -700,6 +702,20 @@ func toolsCmd(gf *globalFlags) *cobra.Command {
 				{"cron", "Schedule / list / cancel recurring agent jobs"},
 				{"chain_run", "Run a named smart-prompt chain (pr-review, sonar-triage, cicd-regression, incident-scribe) or a single meta prompt"},
 				{"chain_list", "List available smart-prompt chains + meta prompts"},
+				{"subagent_create", "Register a named specialist sub-agent (workspace + SOUL.md)"},
+				{"subagent_list", "List registered sub-agents"},
+				{"subagent_run", "Run a blocking task on a sub-agent; returns its final text"},
+				{"subagent_run_async", "Dispatch a sub-agent task in the background; returns a task_id"},
+				{"subagent_run_parallel", "Fan out N sub-agent tasks concurrently and wait for all"},
+				{"subagent_status", "Return status/result of an async sub-agent task"},
+				{"subagent_wait", "Block until listed async task_ids are terminal (with timeout)"},
+				{"subagent_tasks", "List recent async sub-agent tasks (status + elapsed)"},
+				{"subagent_cancel", "Cancel a pending or running async sub-agent task"},
+				{"subagent_intervene", "Push authoritative guidance into a running sub-agent (applied on its next turn)"},
+				{"subagent_stream", "Drain the progress-event stream for a task (or all active tasks)"},
+				{"subagent_share_context", "Record an explicit context-share note in a sub-agent task's audit log"},
+				{"subagent_read_context", "Read back the shared-context audit trail for a task"},
+				{"subagent_remove", "Unregister a sub-agent (and delete workspace by default)"},
 				{"devops.github.list_prs", "List open PRs for an owner/repo"},
 				{"devops.github.pr_diff", "Fetch a PR's unified diff + metadata"},
 				{"devops.github.workflow_runs", "List recent GitHub Actions runs (status, conclusion, head_sha)"},
@@ -947,6 +963,11 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 			srv.Version = version
 			srv.Config = cfg
 			srv.Logger = log
+			if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
+				return err
+			} else if waReg != nil {
+				srv.WebhookAdapters = waReg
+			}
 
 			if cfg.Gmail.Enabled {
 				srv.Gmail = automation.NewGmailWatcher(cfg.Gmail, log)
@@ -1064,6 +1085,54 @@ func augmentActiveSkillsWithMCP(skillReg skills.Registry, active []string) []str
 		out = append(out, name)
 	}
 	return out
+}
+
+// buildWebhookAdapterRegistry builds a webhookadapter.Registry from the
+// opsintelligence.yaml webhooks.adapters block. Adapters that are
+// disabled (or whose config is obviously incomplete — e.g. missing
+// secret) are omitted; registration errors cause startup to fail loudly
+// (we never silently accept traffic on a misconfigured webhook).
+//
+// Add a new adapter here when you wire a new package under
+// internal/webhookadapter/<name>/. The pattern is the same for every
+// provider: read its typed config, skip if !Enabled, register.
+func buildWebhookAdapterRegistry(cfg *config.Config, log *zap.Logger) (*webhookadapter.Registry, error) {
+	if cfg == nil || !cfg.Webhooks.Enabled {
+		return nil, nil
+	}
+	reg := webhookadapter.NewRegistry()
+
+	if ghCfg := cfg.Webhooks.Adapters.GitHub; ghCfg.Enabled {
+		if strings.TrimSpace(ghCfg.Secret) == "" && !ghCfg.AllowUnverified {
+			return nil, fmt.Errorf("webhooks.adapters.github: secret is required when allow_unverified is false")
+		}
+		adapter := ghadapter.New(ghadapter.Config{
+			Enabled:         ghCfg.Enabled,
+			Secret:          ghCfg.Secret,
+			Path:            ghCfg.Path,
+			Default:         ghCfg.Default,
+			Events:          ghCfg.Events,
+			Prompts:         ghCfg.Prompts,
+			AllowUnverified: ghCfg.AllowUnverified,
+		})
+		if err := reg.Register(adapter); err != nil {
+			return nil, fmt.Errorf("webhooks.adapters.github: %w", err)
+		}
+		if log != nil {
+			log.Info("webhook adapter registered",
+				zap.String("adapter", adapter.Name()),
+				zap.String("path", "/api/webhook/"+adapter.Path()),
+				zap.Bool("allow_unverified", ghCfg.AllowUnverified),
+			)
+		}
+	}
+
+	// When no adapter registered, return nil so the gateway falls back to
+	// legacy mappings only.
+	if len(reg.List()) == 0 {
+		return nil, nil
+	}
+	return reg, nil
 }
 
 func mcpClientConfigsFromYAML(in []config.MCPClientConfig) []mcp.ClientConfig {
@@ -1516,12 +1585,47 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		AuditLog:              auditLog,
 		Hardware:              hw,
 	}
+	// Async task orchestration: lets the master agent dispatch multiple
+	// sub-agent runs in parallel (e.g. review 3 PRs simultaneously) while
+	// still reusing the same guardrail-wrapped executor as subagent_run.
+	// Async task orchestration. EnsureTaskManager wires the shared
+	// executor used by BOTH subagent_run (sync) and subagent_run_async
+	// (background). Defaults: 8 concurrent tasks, retain last 256 in
+	// memory, 30m per-task timeout.
+	tasks := subSvc.EnsureTaskManager(0, 0, 0)
 	toolReg.Register(tools.SubAgentCreateTool{S: subSvc})
 	toolReg.Register(tools.SubAgentListTool{S: subSvc})
 	toolReg.Register(tools.SubAgentRunTool{S: subSvc})
 	toolReg.Register(tools.SubAgentRemoveTool{S: subSvc})
+	toolReg.Register(tools.SubAgentRunAsyncTool{S: subSvc})
+	toolReg.Register(tools.SubAgentRunParallelTool{S: subSvc})
+	toolReg.Register(tools.SubAgentStatusTool{S: subSvc})
+	toolReg.Register(tools.SubAgentWaitTool{S: subSvc})
+	toolReg.Register(tools.SubAgentTasksTool{S: subSvc})
+	toolReg.Register(tools.SubAgentCancelTool{S: subSvc})
+	// Supervision layer: master steers running sub-agents, inspects
+	// their event stream, and can explicitly share context (children
+	// are otherwise fully isolated from master memory).
+	toolReg.Register(tools.SubAgentInterveneTool{S: subSvc})
+	toolReg.Register(tools.SubAgentStreamTool{S: subSvc})
+	toolReg.Register(tools.SubAgentShareContextTool{S: subSvc})
+	toolReg.Register(tools.SubAgentReadContextTool{S: subSvc})
 	catalog = tools.NewCatalog(toolReg, toolGraph)
 	runner = runner.WithCatalog(catalog).WithModelRegistry(reg)
+
+	// Install the supervisor dashboard as a per-turn system-prompt
+	// augmentor on the MASTER runner. The master sees a compact
+	// snapshot of every active sub-agent (status, last event, pending
+	// interventions) on every iteration — oversight is ambient, not
+	// polled. Children have their own augmentor that drains pending
+	// interventions (wired inside buildChildRunner).
+	runner = runner.WithSystemPromptAugmentor(func(_ context.Context) string {
+		board := tasks.Dashboard()
+		if board == "" {
+			return ""
+		}
+		return "## Active Sub-Agents (live)\n" + board
+	})
 
 	// ── Cron Daemon ───────────────────────────────────────────────────
 	var cronJobs []cron.Job
@@ -1678,7 +1782,13 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv.Token = cfg.Gateway.Token
 		srv.Runner = runner
 		srv.Version = version
+		srv.Config = cfg
 		srv.Logger = log
+		if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
+			return err
+		} else if waReg != nil {
+			srv.WebhookAdapters = waReg
+		}
 
 		// Determine public-facing address for the web UI
 		webHost := cfg.Gateway.Host

@@ -177,6 +177,27 @@ type Runner struct {
 	localIntelEng     localintel.Engine
 	localIntelOpenErr error
 	localIntelScratch string // advisory text merged into buildSystemPrompt for the current Run/RunStream
+
+	// systemPromptAugmentor, when non-nil, is invoked once per iteration
+	// by buildSystemPrompt. Its return value is appended to the system
+	// prompt under a clearly-delimited block, so callers can inject
+	// per-turn context without coupling the runner to a specific source
+	// (e.g. the master uses this for the sub-agent dashboard; children
+	// use it to drain pending interventions from the task manager).
+	// Return "" to skip appending on a given turn.
+	systemPromptAugmentor func(ctx context.Context) string
+}
+
+// WithSystemPromptAugmentor installs a per-turn callback whose return value
+// is appended to the system prompt (under a clearly-delimited block). Use
+// this to inject dynamic ambient context that should not live in the
+// base SystemPrompt — e.g. live sub-agent dashboards on a master runner,
+// or freshly-drained intervention messages on a child runner.
+//
+// Returns r for chaining after NewRunner / WithSession.
+func (r *Runner) WithSystemPromptAugmentor(fn func(ctx context.Context) string) *Runner {
+	r.systemPromptAugmentor = fn
+	return r
 }
 
 // NewRunner creates a new agent runner.
@@ -330,8 +351,9 @@ func (r *Runner) WithSession(sessionID string) *Runner {
 		sessionID:     sessionID,
 		channelID:     r.channelID,
 		workspaceDir:  r.workspaceDir,
-		modelRegistry: r.modelRegistry,
-		palaceRouter:  r.palaceRouter,
+		modelRegistry:         r.modelRegistry,
+		palaceRouter:          r.palaceRouter,
+		systemPromptAugmentor: r.systemPromptAugmentor,
 	}
 }
 
@@ -978,6 +1000,16 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 
 	if strings.TrimSpace(r.localIntelScratch) != "" {
 		parts = append(parts, "## On-device advisory (local Gemma)\n"+strings.TrimSpace(r.localIntelScratch))
+	}
+
+	// Dynamic per-turn augmentation (see WithSystemPromptAugmentor).
+	// The master runner uses this to inject a live sub-agent dashboard;
+	// child runners use it to pull pending interventions from the task
+	// manager at the top of every iteration. Return "" to skip.
+	if r.systemPromptAugmentor != nil {
+		if extra := strings.TrimSpace(r.systemPromptAugmentor(ctx)); extra != "" {
+			parts = append(parts, extra)
+		}
 	}
 
 	return strings.Join(parts, "\n\n")

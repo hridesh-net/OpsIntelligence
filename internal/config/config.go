@@ -164,10 +164,51 @@ type CronJobConfig struct {
 }
 
 // WebhookConfig configures the incoming webhook endpoint.
+//
+// Two layers live here:
+//
+//   - Adapters (preferred for platform integrations). Each entry in
+//     Adapters is a first-class, typed adapter (GitHub, GitLab, …) with
+//     its own verification, event parsing, action allowlist and prompt
+//     templates. Implementations live in internal/webhookadapter/<name>/.
+//   - Mappings (legacy / lightweight generic receivers). These just
+//     pattern-match a URL path and substitute top-level JSON keys into
+//     a prompt template. Useful for webhooks that don't have a typed
+//     adapter yet (e.g. ad-hoc Zapier / n8n flows).
+//
+// Both layers can coexist: Adapters are matched first; any request that
+// doesn't hit an adapter falls through to the generic Mappings handler.
 type WebhookConfig struct {
-	Enabled  bool             `yaml:"enabled"`
-	Token    string           `yaml:"token"` // Optional auth token (X-OpsIntelligence-Token)
+	Enabled bool `yaml:"enabled"`
+	// Token is the shared secret checked for generic Mappings. Adapters
+	// do their own verification (HMAC, mTLS, …) and bypass this field.
+	Token    string           `yaml:"token"`
 	Mappings []WebhookMapping `yaml:"mappings"`
+
+	// Adapters is the typed webhook-adapter registry (GitHub today;
+	// GitLab / Bitbucket / Jira / Datadog / PagerDuty as follow-ups).
+	// Each adapter mounts at /api/webhook/<adapter.path>.
+	Adapters WebhookAdapters `yaml:"adapters"`
+
+	// MaxConcurrent caps how many background agent runs can be in flight
+	// across ALL webhook adapters at once. Saturation → 503 + Retry-After
+	// so senders (GitHub, GitLab, …) back off with their own retry logic
+	// instead of this process fanning unbounded goroutines. Default 10.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
+	// Timeout bounds each adapter-triggered agent run. Accepts Go
+	// durations ("10m", "30s"). Default 10m.
+	Timeout string `yaml:"timeout,omitempty"`
+}
+
+// WebhookAdapters groups typed webhook-adapter configurations. Adding a
+// new adapter is a three-step change: add a package under
+// internal/webhookadapter/<name>/, add a typed field here, and wire the
+// constructor into cmd/opsintelligence when the adapter is enabled.
+type WebhookAdapters struct {
+	GitHub GitHubWebhookConfig `yaml:"github"`
+	// Future:
+	//   GitLab   GitLabWebhookConfig   `yaml:"gitlab"`
+	//   Bitbucket BitbucketWebhookConfig `yaml:"bitbucket"`
 }
 
 // WebhookMapping defines how an incoming webhook maps to an agent action.
@@ -178,6 +219,58 @@ type WebhookMapping struct {
 	Channel        string `yaml:"channel"`         // Channel title to deliver to (e.g. "telegram")
 	To             string `yaml:"to"`              // Destination account
 	AllowUnsafe    bool   `yaml:"allow_unsafe"`    // If true, doesn't wrap payload in safety boundaries
+}
+
+// GitHubWebhookConfig is the typed configuration for the GitHub
+// webhook adapter (internal/webhookadapter/github). It sits under
+// webhooks.adapters.github in YAML, and is applied by the adapter at
+// Path() = Path (default "github") → /api/webhook/github.
+//
+// Example:
+//
+//	webhooks:
+//	  enabled: true
+//	  adapters:
+//	    github:
+//	      enabled: true
+//	      secret: "${OPSINTEL_GITHUB_WEBHOOK_SECRET}"
+//	      path: "github"
+//	      events:
+//	        pull_request:    [opened, reopened, synchronize, ready_for_review]
+//	        workflow_run:    [completed]
+//	      prompts:
+//	        pull_request: |
+//	          PR {{.action}} on {{.repository.full_name}}#{{.pull_request.number}}.
+//
+// Bounded concurrency (max_concurrent) and the per-delivery agent timeout
+// are router-level settings (see webhooks.router).
+type GitHubWebhookConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Secret  string `yaml:"secret"`               // HMAC secret for X-Hub-Signature-256 (required when Enabled)
+	Path    string `yaml:"path,omitempty"`       // URL suffix, default "github" (→ /api/webhook/github)
+	Default string `yaml:"default_prompt,omitempty"`
+	// Events maps a GitHub event name (from the X-GitHub-Event header, e.g.
+	// "pull_request", "workflow_run") to the allowlist of payload actions
+	// that should trigger the agent. An empty list means "any action for
+	// this event". If the map itself is empty, every event is allowed.
+	Events map[string][]string `yaml:"events,omitempty"`
+	// Prompts maps a GitHub event name to a Go text/template. Templates have
+	// access to the full parsed JSON payload plus these extras:
+	//   .event         — the X-GitHub-Event value
+	//   .delivery_id   — the X-GitHub-Delivery value
+	//   .action        — payload.action (convenience, may be empty)
+	// Missing templates fall back to Default, then to a concise auto-summary.
+	Prompts map[string]string `yaml:"prompts,omitempty"`
+	// MaxConcurrent caps how many background agent runs may spawn from
+	// GitHub webhooks at once. Additional deliveries still queue via the
+	// sub-agent TaskManager. Defaults to 5.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
+	// Timeout bounds each agent run triggered by a GitHub webhook. Accepts
+	// Go durations ("10m", "30s"). Defaults to 10m.
+	Timeout string `yaml:"timeout,omitempty"`
+	// AllowUnverified bypasses HMAC checks. NEVER enable this in production:
+	// it exists solely for local testing with tools like smee.io.
+	AllowUnverified bool `yaml:"allow_unverified,omitempty"`
 }
 
 // GmailConfig holds settings for the Gmail Pub/Sub integration.

@@ -8,6 +8,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pluggable webhook-adapter framework.** New
+  `internal/webhookadapter` package introduces a typed, first-class
+  contract for inbound action webhooks (GitHub today, GitLab /
+  Bitbucket / Jira / Datadog / PagerDuty as peers later). An `Adapter`
+  owns `Name / Path / Enabled / Verify / Parse / Filter / Render`; the
+  shared `Router` mounts every registered adapter under
+  `/api/webhook/<path>`, enforces a 2 MiB body cap, runs
+  `Verify → Parse → Filter → Render`, acquires a slot from a shared
+  semaphore (`webhooks.max_concurrent`, default 10, saturation → 503 +
+  `Retry-After: 30`), responds 202 Accepted, and detaches the agent run
+  into a background goroutine with a shared timeout
+  (`webhooks.timeout`, default 10m). Filter results with reason prefix
+  `healthcheck:` (e.g. GitHub's `ping`) return 204 No Content.
+- **GitHub adapter** at `internal/webhookadapter/github/`. Replaces the
+  previous `internal/gateway/github_webhook.go` (now removed). Same
+  HMAC-SHA256 verification, same event/action allowlist, same nested
+  `text/template` prompt rendering — just now behind the shared
+  adapter contract, so adding GitLab/Bitbucket/Datadog next is a
+  drop-in change rather than another bespoke handler.
+- **Config restructure**: `webhooks.github.*` is now
+  `webhooks.adapters.github.*`. Router-level concurrency and timeout
+  moved to `webhooks.max_concurrent` / `webhooks.timeout` so every
+  adapter shares a single pool. Legacy `webhooks.mappings` remain fully
+  supported as a fallback for ad-hoc generic receivers.
+- **Master ↔ child supervision layer.** The master agent now sees a
+  live dashboard of active sub-agents on every one of its turns
+  (auto-injected via the new `Runner.WithSystemPromptAugmentor` hook)
+  — no polling required. Each entry shows task id, status, elapsed,
+  goal, last progress event, and pending intervention count. Children
+  have their own augmentor that drains pending interventions at the
+  top of each iteration and surfaces them as a `## SUPERVISOR
+  GUIDANCE` block. Ambient parent/child oversight, zero extra tool
+  calls.
+- **Async / parallel sub-agent orchestration (generalised).**
+  `internal/subagents.TaskManager` now carries per-task
+  `ProgressEvent` streams (with `KindProgress|Blocked|Error|Lifecycle`),
+  pending/applied `Intervention` lists, and a `SharedNote` audit
+  trail. `ExecFn` now threads a `task_id` through so the child's
+  runner can wire supervisor hooks scoped to its own task. Task
+  retention (default 256), per-task event-log bound (default 128),
+  bounded concurrency (default 8) all unchanged. Existing six async
+  tools (`subagent_run_async`, `_parallel`, `_status`, `_wait`,
+  `_tasks`, `_cancel`) unchanged.
+- **New master-side supervisor tools**: `subagent_intervene(task_id,
+  guidance)` pushes authoritative guidance that the child obeys on
+  its next iteration; `subagent_stream(task_id?, since_index?)` drains
+  the ordered event log for inspection; `subagent_share_context(task_id,
+  note)` records an explicit opt-in context share (audit-trail only,
+  isolation invariant preserved); `subagent_read_context(task_id)`
+  reads back the shared-context trail.
+- **New child-side tool** `supervisor_report(message, phase?, kind?)`,
+  pre-bound to the child's own `task_id`, for posting
+  `ProgressEvent`s back to the TaskManager. Children can report
+  `progress`, `blocked`, or `error` kinds. Injected into the child's
+  tool registry only on the tracked (async) path; the legacy
+  synchronous `subagent_run` does not get supervision.
+- **Docs**: [`doc/webhook-adapters.md`](doc/webhook-adapters.md)
+  (framework reference) and
+  [`doc/supervised-subagents.md`](doc/supervised-subagents.md) (the
+  parent/child model, lifecycle, and tool surface).
+- **Updated `doc/github-webhooks.md`** to reference the new adapter
+  layout and the shared router-level concurrency knobs.
+
+### Changed
+
+- `subagents.ExecFn` signature is now
+  `func(ctx, task_id, sub_agent_id, prompt)` — callers must update
+  custom executors. The TaskManager threads the task id so executors
+  can install per-task supervisor hooks.
+- `SubAgentSvc.runSync` remains for the synchronous path but now
+  delegates to `runSyncWithTask("", …)` — supervision is only
+  available on tracked async tasks.
+- Sub-agent child runners now also have `subagent_intervene`,
+  `subagent_stream`, `subagent_share_context`, and
+  `subagent_read_context` in their `subAgentOmit` list (a child
+  cannot intervene on itself or a sibling).
+
+### Removed
+
+- `internal/gateway/github_webhook.go` and its `_test.go` — logic
+  migrated unchanged into `internal/webhookadapter/github/`.
+
 - **Smart prompts & prompt chaining.** New `internal/prompts` package
   introduces `SmartPrompt` / `Chain` types, a filesystem loader (YAML
   frontmatter + Go `text/template` body), and a bounded sequential

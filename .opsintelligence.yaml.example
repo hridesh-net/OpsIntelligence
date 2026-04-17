@@ -101,30 +101,97 @@ cron:
 # shared secret in X-OpsIntelligence-Token.
 webhooks:
   enabled: true
+  # Shared-secret token for the *legacy generic mappings* below
+  # (X-OpsIntelligence-Token header). Adapters do their own
+  # verification (HMAC, mTLS, …) and ignore this field.
   token: "${OPSINTEL_WEBHOOK_TOKEN}"
-  # Webhook prompt templates support `{{.<key>}}` substitution of
-  # top-level keys from the JSON payload. Use the agent's devops.*
-  # tools to fetch anything deeper.
-  mappings:
-    # ── GitHub ────────────────────────────────────────────────────────
-    # Point GitHub repo/org webhook at /api/webhook/github with
-    # Content-Type: application/json and secret = OPSINTEL_WEBHOOK_TOKEN.
-    # GitHub payloads have top-level `action` and `number` on PR events.
-    - path: "github"
-      prompt_template: |
-        GitHub webhook fired: action={{.action}} number={{.number}}.
 
-        Rules:
-        - If this is a pull_request opened/reopened/synchronize event,
-          follow skills/devops → [[pr-review]] on this PR and post a
-          Ship/Hold verdict with evidence.
-        - If this is a workflow_run completed with conclusion=failure
-          on the default branch, follow [[cicd]] and post the first
-          failing step.
-        - Otherwise, acknowledge with a one-line status and stop.
-      deliver: true
-      channel: "slack"
-      to: "#ops-alerts"
+  # Router-level knobs shared by every adapter. Saturation returns 503 +
+  # Retry-After so the sending platform retries with its own backoff
+  # instead of this process fanning goroutines unbounded.
+  max_concurrent: 10
+  timeout: "10m"
+
+  # ── Typed webhook adapters (preferred) ────────────────────────────
+  # Each adapter lives under internal/webhookadapter/<name>/ and knows
+  # how to verify, parse, filter, and render events from its platform.
+  # Adapters take precedence over the generic mappings below; add a new
+  # one by dropping a new package under internal/webhookadapter/ and
+  # wiring it in cmd/opsintelligence/main.go#buildWebhookAdapterRegistry.
+  adapters:
+    # GitHub webhook adapter
+    # Point a repository / organisation webhook at
+    #   https://<your-host>/api/webhook/github
+    # with Content-Type: application/json and the secret below.
+    # The adapter validates X-Hub-Signature-256 HMAC, parses
+    # X-GitHub-Event, filters by (event, action), passes the full
+    # nested JSON to the prompt template, and the gateway responds
+    # 202 Accepted — the agent runs asynchronously so GitHub's
+    # 10-second delivery timeout is never hit. See
+    # doc/github-webhooks.md and doc/webhook-adapters.md for full
+    # reference.
+    github:
+      enabled: true
+      secret: "${OPSINTEL_GITHUB_WEBHOOK_SECRET}"
+      path: "github"          # full URL: /api/webhook/github
+      # events + actions allowlist. Empty map = allow all events.
+      # Empty action list for an entry = allow all actions of that event.
+      events:
+        pull_request:        [opened, reopened, synchronize, ready_for_review, edited]
+        pull_request_review: [submitted]
+        workflow_run:        [completed]
+        check_suite:         [completed]
+        issues:              [opened, reopened]
+        push:                []   # no-action event
+      # Per-event prompt templates. Templates use Go text/template and
+      # have access to the *full* parsed payload. In addition, the
+      # adapter injects:
+      #   {{.event}}        — X-GitHub-Event value
+      #   {{.delivery_id}}  — X-GitHub-Delivery value
+      #   {{.action}}       — payload.action (may be empty)
+      #   {{.payload_keys}} — comma-separated top-level keys (debug)
+      # Missing templates fall back to default_prompt, then a concise
+      # built-in auto-summary.
+      prompts:
+        pull_request: |
+          GitHub PR {{.action}}: {{.repository.full_name}}#{{.pull_request.number}}
+          — "{{.pull_request.title}}" by @{{.pull_request.user.login}}
+          Base: {{.pull_request.base.ref}} ← Head: {{.pull_request.head.ref}}
+
+          Run `chain_run id="pr-review"` with owner/repo/number above.
+          You may dispatch sub-tasks with `subagent_run_async` /
+          `subagent_run_parallel` to check Sonar + pipeline in parallel.
+          Post the verdict back via the gh-pr-review skill.
+        workflow_run: |
+          CI run "{{.workflow_run.name}}" finished with
+          conclusion={{.workflow_run.conclusion}} on
+          {{.repository.full_name}} branch {{.workflow_run.head_branch}}.
+          If conclusion is failure|cancelled|timed_out, run
+          `chain_run id="cicd-regression"`; otherwise acknowledge briefly.
+        check_suite: |
+          Check suite {{.check_suite.conclusion}} on
+          {{.repository.full_name}} for SHA {{.check_suite.head_sha}}.
+          Investigate failing runs via devops.github.workflow_logs.
+        issues: |
+          Issue {{.action}}: {{.repository.full_name}}#{{.issue.number}}
+          — "{{.issue.title}}" by @{{.issue.user.login}}. Triage and
+          label per team conventions.
+
+    # Future adapters (stubs — enable when packages land):
+    # gitlab:
+    #   enabled: false
+    #   token: "${OPSINTEL_GITLAB_WEBHOOK_TOKEN}"
+    #   events: [merge_request, pipeline, push]
+    # bitbucket:
+    #   enabled: false
+    #   secret: "${OPSINTEL_BITBUCKET_WEBHOOK_SECRET}"
+
+  # ── Legacy generic webhook mappings (still supported) ──────────────
+  # For ad-hoc receivers that don't have a typed adapter yet (Zapier,
+  # n8n, custom scripts). Templates only see top-level JSON keys via
+  # {{.key}} — for nested payloads, write a proper adapter instead.
+  # Protected by the global `token` above (X-OpsIntelligence-Token).
+  mappings:
     # ── GitLab ────────────────────────────────────────────────────────
     # GitLab payloads expose top-level `object_kind` (e.g.
     # "merge_request", "pipeline").

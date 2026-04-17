@@ -25,6 +25,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/voice"
+	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
 )
 
@@ -53,6 +54,18 @@ type Server struct {
 	Gmail      *automation.GmailWatcher
 	Voice      *voice.Daemon
 	Logger     *zap.Logger
+
+	// WebhookAdapters is the typed, pluggable webhook-adapter registry
+	// (see internal/webhookadapter). When non-nil and non-empty the
+	// gateway mounts its Router under /api/webhook/ and uses the shared
+	// WebhookRunner for every accepted delivery. Populate this from
+	// cmd/opsintelligence before Start().
+	WebhookAdapters *webhookadapter.Registry
+	// WebhookRunner is the backgrounded agent runner called for every
+	// accepted webhook delivery. When nil, the gateway falls back to
+	// driving s.Runner directly (one master run per delivery). Callers
+	// that want to fan-out via sub-agents can supply their own.
+	WebhookRunner webhookadapter.RunnerFn
 }
 
 // NewServer initializes a new Gateway server on the specified port.
@@ -177,7 +190,30 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/a2a", s.handleA2A)
 
 	// ── Webhooks ──────────────────────────────────────────────────────────────
-	mux.HandleFunc("/api/webhook/", auth(s.withCorrelation(s.handleWebhook)))
+	// Typed adapter registry (GitHub today, GitLab/Bitbucket/… later)
+	// takes precedence at /api/webhook/. Each adapter does its own
+	// verification (HMAC, mTLS, …) so they bypass the generic Bearer
+	// auth wrapper.
+	//
+	// Requests that don't match a registered adapter path fall through
+	// to the legacy generic-mappings handler below, which keeps the
+	// Bearer token gate (X-OpsIntelligence-Token).
+	webhookRouter := s.buildWebhookRouter()
+	if webhookRouter != nil {
+		mux.HandleFunc("/api/webhook/", func(w http.ResponseWriter, r *http.Request) {
+			// Try typed adapter first.
+			suffix := strings.TrimPrefix(r.URL.Path, "/api/webhook/")
+			suffix = strings.Trim(suffix, "/")
+			if s.WebhookAdapters != nil && s.WebhookAdapters.Lookup(suffix) != nil {
+				s.withCorrelation(webhookRouter.ServeHTTP)(w, r)
+				return
+			}
+			// Fallback to generic mappings (Bearer-protected).
+			auth(s.withCorrelation(s.handleWebhook))(w, r)
+		})
+	} else {
+		mux.HandleFunc("/api/webhook/", auth(s.withCorrelation(s.handleWebhook)))
+	}
 
 	if s.Gmail != nil {
 		if err := s.Gmail.Start(context.Background()); err != nil {
@@ -460,6 +496,78 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// buildWebhookRouter wires a webhookadapter.Router when any adapter is
+// registered. Returns nil if the registry is empty/disabled, in which
+// case the gateway serves only the legacy generic mappings handler.
+func (s *Server) buildWebhookRouter() *webhookadapter.Router {
+	if s.Config == nil || !s.Config.Webhooks.Enabled {
+		return nil
+	}
+	if s.WebhookAdapters == nil || len(s.WebhookAdapters.List()) == 0 {
+		return nil
+	}
+	runner := s.WebhookRunner
+	if runner == nil {
+		runner = defaultWebhookRunner(s.Runner, s.logger())
+	}
+	return &webhookadapter.Router{
+		Registry:      s.WebhookAdapters,
+		Runner:        runner,
+		Log:           s.logger(),
+		Timeout:       parseDurationOr(s.Config.Webhooks.Timeout, 10*time.Minute),
+		MaxConcurrent: s.Config.Webhooks.MaxConcurrent,
+	}
+}
+
+// defaultWebhookRunner drives the master agent runner for every accepted
+// webhook delivery. Callers that want to fan out per-event work to
+// sub-agents can supply their own RunnerFn on Server.WebhookRunner.
+func defaultWebhookRunner(runner *agent.Runner, log *zap.Logger) webhookadapter.RunnerFn {
+	if runner == nil {
+		return nil
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return func(ctx context.Context, e webhookadapter.Event, prompt string) {
+		ctx = correlation.WithChannel(ctx, "webhook:"+e.Source)
+		ctx = correlation.WithSessionID(ctx, e.SessionID)
+		session := runner.WithSession(e.SessionID)
+		_, err := session.Run(ctx, memory.Message{
+			ID:        uuid.New().String(),
+			SessionID: e.SessionID,
+			Role:      memory.RoleUser,
+			Content:   prompt,
+			CreatedAt: time.Now(),
+		})
+		if err != nil {
+			log.Error("webhook agent run failed",
+				zap.String("adapter", e.Source),
+				zap.String("kind", e.Kind),
+				zap.String("delivery_id", e.DeliveryID),
+				zap.String("session_id", e.SessionID),
+				zap.Error(err))
+			return
+		}
+		log.Info("webhook agent run completed",
+			zap.String("adapter", e.Source),
+			zap.String("kind", e.Kind),
+			zap.String("delivery_id", e.DeliveryID),
+			zap.String("session_id", e.SessionID))
+	}
+}
+
+func parseDurationOr(s string, fallback time.Duration) time.Duration {
+	if strings.TrimSpace(s) == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // ── SSE Stream Handler ────────────────────────────────────────────────────────

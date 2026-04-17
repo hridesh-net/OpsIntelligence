@@ -22,6 +22,7 @@ import (
 // SubAgentSvc holds shared dependencies for sub-agent tools (delegation to specialist runners).
 type SubAgentSvc struct {
 	Store *subagents.Store
+	Tasks *subagents.TaskManager // shared async task tracker (may be nil before init)
 
 	Provider       provider.Provider
 	ParentRegistry *agent.ToolRegistry
@@ -41,12 +42,134 @@ type SubAgentSvc struct {
 	Hardware  *system.HardwareReport
 }
 
-var subAgentOmit = []string{"subagent_create", "subagent_list", "subagent_run", "subagent_remove"}
+// EnsureTaskManager wires a TaskManager that reuses the same sync executor as
+// the blocking subagent_run tool. Safe to call multiple times; subsequent
+// calls are no-ops once a manager is present.
+func (s *SubAgentSvc) EnsureTaskManager(maxConcurrent, retainLimit int, defaultTimeout time.Duration) *subagents.TaskManager {
+	if s.Tasks != nil {
+		return s.Tasks
+	}
+	exec := func(ctx context.Context, taskID, subAgentID, task string) (string, int, error) {
+		return s.runSyncWithTask(ctx, taskID, subAgentID, task, 0)
+	}
+	s.Tasks = subagents.NewTaskManager(exec)
+	if maxConcurrent > 0 {
+		s.Tasks.MaxConcurrent = maxConcurrent
+	}
+	if retainLimit > 0 {
+		s.Tasks.RetainLimit = retainLimit
+	}
+	if defaultTimeout > 0 {
+		s.Tasks.DefaultTimeout = defaultTimeout
+	}
+	return s.Tasks
+}
 
-// buildChildRunner constructs a runner for one sub-agent invocation: same tool stack as the parent
-// minus recursive sub-agent tools, isolated workspace, no planning/reflection.
-func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspace string) *agent.Runner {
+// runSync is the shared synchronous run used by the blocking subagent_run
+// tool. It does not have an async task_id (there's no TaskManager tracking
+// it), so supervisor features like progress reporting / intervention are
+// unavailable for this path. Callers that want supervision should use
+// subagent_run_async (goes through runSyncWithTask with a tracked task_id).
+func (s *SubAgentSvc) runSync(ctx context.Context, subAgentID, task string, maxIterations int) (string, int, error) {
+	return s.runSyncWithTask(ctx, "", subAgentID, task, maxIterations)
+}
+
+// runSyncWithTask is the single shared run path. When taskID != "" the
+// child runner is wired with two supervisor hooks:
+//
+//  1. Its system prompt is augmented on every iteration with any
+//     interventions the master queued via TaskManager.Intervene — they
+//     are drained atomically and appear as SYSTEM: authoritative guidance.
+//  2. It is allowed to call the supervisor_report tool (injected by main
+//     when taskID != "") to post progress events back to the manager.
+//
+// The taskID/subAgentID distinction: taskID identifies this invocation;
+// subAgentID identifies which named specialist to run.
+func (s *SubAgentSvc) runSyncWithTask(ctx context.Context, taskID, subAgentID, task string, maxIterations int) (string, int, error) {
+	sa, err := s.Store.Get(subAgentID)
+	if err != nil {
+		return "", 0, err
+	}
+	if sa == nil {
+		return "", 0, fmt.Errorf("unknown sub-agent id %q (use subagent_list)", subAgentID)
+	}
+	maxIt := maxIterations
+	if maxIt <= 0 {
+		maxIt = 32
+	}
+	if maxIt > 64 {
+		maxIt = 64
+	}
+	ws := s.Store.WorkspaceDir(sa.ID)
+	run := s.buildChildRunner(maxIt, sa.ToolsProfile, ws, taskID)
+
+	sid := "subagent:" + sa.ID + ":" + uuid.New().String()
+	runner := run.WithSession(sid)
+
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 20*time.Minute)
+		defer cancel()
+	}
+
+	res, err := runner.Run(ctx, memory.Message{
+		ID:        uuid.New().String(),
+		SessionID: sid,
+		Role:      memory.RoleUser,
+		Content:   strings.TrimSpace(task),
+		CreatedAt: time.Now(),
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return res.Response, res.Iterations, nil
+}
+
+// subAgentOmit lists tools that must not be available inside a sub-agent.
+// These are either recursion hazards (sub-agents spawning grand-children)
+// or master-only supervisor controls (a child should not be able to
+// intervene in its own task or another child's).
+var subAgentOmit = []string{
+	// sub-agent management is master-only
+	"subagent_create",
+	"subagent_list",
+	"subagent_run",
+	"subagent_remove",
+	"subagent_run_async",
+	"subagent_run_parallel",
+	"subagent_status",
+	"subagent_wait",
+	"subagent_tasks",
+	"subagent_cancel",
+	"subagent_intervene",
+	"subagent_stream",
+	"subagent_share_context",
+	"subagent_read_context",
+}
+
+// buildChildRunner constructs a runner for one sub-agent invocation:
+// same tool stack as the parent minus recursive sub-agent tools + master-
+// only supervisor controls, isolated workspace, no planning/reflection.
+//
+// When taskID != "" the runner is also wired with two supervisor hooks:
+//
+//   - A supervisor_report tool, scoped to this exact task_id, so the
+//     child can post progress events back to the TaskManager.
+//   - A per-iteration system-prompt augmentor that drains any pending
+//     interventions from the TaskManager and surfaces them as an
+//     authoritative SUPERVISOR block so the child obeys them on its
+//     next turn.
+//
+// When taskID == "" (legacy synchronous subagent_run) neither hook is
+// wired — supervision is only available on the async/tracked path.
+func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspace, taskID string) *agent.Runner {
 	childReg := s.ParentRegistry.CloneWithout(subAgentOmit...)
+
+	// Inject supervisor_report scoped to this taskID when tracked.
+	if taskID != "" && s.Tasks != nil {
+		childReg.Register(SupervisorReportTool{Tasks: s.Tasks, TaskID: taskID})
+	}
+
 	catalog := NewCatalog(childReg, s.ToolGraph)
 	prof := toolsProfile
 	if prof != "coding" {
@@ -64,7 +187,30 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		EnableReflection:      false,
 		StateDir:              s.Store.StateDir(),
 	}, s.Provider, childReg, s.Mem, s.Log, workspace)
-	return run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)
+
+	run = run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)
+
+	// Per-turn intervention augmentor (tracked tasks only).
+	if taskID != "" && s.Tasks != nil {
+		tasks := s.Tasks
+		run = run.WithSystemPromptAugmentor(func(ctx context.Context) string {
+			drained := tasks.DrainInterventions(taskID)
+			if len(drained) == 0 {
+				return ""
+			}
+			var b strings.Builder
+			b.WriteString("## SUPERVISOR GUIDANCE\n")
+			b.WriteString("Your master (parent agent) has pushed the following authoritative guidance while you were running. Treat it as top-priority and adjust your plan immediately:\n\n")
+			for _, iv := range drained {
+				b.WriteString(fmt.Sprintf("- [%s] %s: %s\n",
+					iv.At.Format(time.RFC3339), iv.From, iv.Message))
+			}
+			b.WriteString("\nAcknowledge the guidance by calling supervisor_report(kind=\"progress\", message=\"acknowledged intervention: …\") before resuming tool use.")
+			return b.String()
+		})
+	}
+
+	return run
 }
 
 // ── subagent_create ──────────────────────────────────────────────────────────
@@ -200,34 +346,12 @@ func (t SubAgentRunTool) Execute(ctx context.Context, input json.RawMessage) (st
 	if sa == nil {
 		return "", fmt.Errorf("unknown sub-agent id %q (use subagent_list)", args.ID)
 	}
-	maxIt := args.MaxIterations
-	if maxIt <= 0 {
-		maxIt = 32
-	}
-	if maxIt > 64 {
-		maxIt = 64
-	}
-	ws := t.S.Store.WorkspaceDir(sa.ID)
-	run := t.S.buildChildRunner(maxIt, sa.ToolsProfile, ws)
-
-	sid := "subagent:" + sa.ID + ":" + uuid.New().String()
-	runner := run.WithSession(sid)
-
-	runCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
-	defer cancel()
-
-	res, err := runner.Run(runCtx, memory.Message{
-		ID:        uuid.New().String(),
-		SessionID: sid,
-		Role:      memory.RoleUser,
-		Content:   strings.TrimSpace(args.Task),
-		CreatedAt: time.Now(),
-	})
+	resp, iters, err := t.S.runSync(ctx, args.ID, args.Task, args.MaxIterations)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("[sub-agent %s %q]\n%s\n---\n(iterations=%d)",
-		sa.ID, sa.Name, res.Response, res.Iterations), nil
+		sa.ID, sa.Name, resp, iters), nil
 }
 
 // ── subagent_remove ──────────────────────────────────────────────────────────
