@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-04-18
+
+### Fixed
+
+- **MemPalace managed `mempalace init`:** create the `mempalace/world` directory under state dir before invoking the
+  upstream CLI. Some mempalace versions error with "Directory not found" when the path does not
+  exist yet (`opsintelligence mempalace setup` / `memory.mempalace.managed_venv`).
+
 ## [0.3.0] — 2026-04-17
 
 ### Added

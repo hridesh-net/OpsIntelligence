@@ -83,6 +83,10 @@ func Ensure(ctx context.Context, opts EnsureOptions) error {
 }
 
 func runMempalaceInit(ctx context.Context, w io.Writer, venvRoot, world string) error {
+	// PyPI mempalace expects the world directory to exist before init (it scans it for entities).
+	if err := os.MkdirAll(world, 0o755); err != nil {
+		return fmt.Errorf("mempalace: mkdir world %q: %w", world, err)
+	}
 	cli := VenvMempalaceCLI(venvRoot)
 	if _, err := os.Stat(cli); err == nil {
 		if err := run(ctx, w, cli, "init", world); err != nil {
