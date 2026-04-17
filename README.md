@@ -81,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/in
 **Pin a specific version:**
 
 ```bash
-OPSINTELLIGENCE_VERSION=v0.2.6 bash install.sh
+OPSINTELLIGENCE_VERSION=v0.3.0 bash install.sh
 ```
 
 **Build from source (requires Go matching `go.mod`, currently 1.26+):**
@@ -109,7 +109,7 @@ downloaded or compiled.
    `opsintelligence-<os>-<arch>` for their platform (see
    [Releases](https://github.com/hridesh-net/OpsIntelligence/releases)).
    Pin the version explicitly:
-   `OPSINTELLIGENCE_VERSION=v0.2.6 bash install.sh` (adjust tag as
+   `OPSINTELLIGENCE_VERSION=v0.3.0 bash install.sh` (adjust tag as
    needed).
 2. **Avoid surprise downloads.** On restricted networks, the default
    installer may try to **clone the repo**, **pull Go from go.dev**, or
