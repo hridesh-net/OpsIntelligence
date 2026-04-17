@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/in
 **Pin a specific version:**
 
 ```bash
-OPSINTELLIGENCE_VERSION=v0.1.0 bash install.sh
+OPSINTELLIGENCE_VERSION=v0.2.0 bash install.sh
 ```
 
 **Build from source (requires Go 1.24+):**

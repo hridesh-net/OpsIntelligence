@@ -7,7 +7,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/install.sh | bash
 #   bash install.sh
-#   OPSINTELLIGENCE_VERSION=v0.1.0 bash install.sh
+#   OPSINTELLIGENCE_VERSION=v0.2.0 bash install.sh
 #
 # Environment:
 #   OPSINTELLIGENCE_VERSION   Git tag or "latest" (default: latest)

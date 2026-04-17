@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-17
+
+Phase 3d (users, roles, API keys over `/api/v1` + dashboard management
+UI) plus installer and local-intel fixes so `install.sh` and
+`WITH_GEMMA=1` work before this repo publishes its own release assets.
+
 ### Fixed
 
 - **Installer no longer hard-errors on a missing release binary.**
