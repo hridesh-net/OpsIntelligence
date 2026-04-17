@@ -14,22 +14,24 @@ import (
 	"time"
 )
 
-// DefaultGGUFURL is the primary model download used by `opsintelligence local-intel setup`
-// when no explicit URL/env override is provided. It points to OpsIntelligence's own
-// release assets once those ship. Exposed as a var (not const) so integration tests
-// can temporarily redirect the primary endpoint without touching opt.URL (opt.URL
-// intentionally disables the whole fallback chain).
-var DefaultGGUFURL = "https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf"
-
-// FallbackGGUFURLs is the ordered list of default URLs tried after DefaultGGUFURL
-// when no explicit URL is configured. The AssistClaw release asset is identical in
-// content (same Gemma 4 E2B-IT GGUF) and is kept as a public mirror so brand-new
-// OpsIntelligence forks — which may not yet have published their own release —
-// can still bootstrap `local-intel` without extra environment variables.
+// DefaultGGUFURL is the primary model download used by onboarding and
+// `opsintelligence local-intel setup` when no explicit URL/env override is provided.
 //
-// Override with --url / OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL to disable the chain.
+// GitHub release assets (gemma-4-e2b-it.gguf) are optional and only appear when CI
+// is configured with GEMMA_GGUF_SOURCE_URL, so the default chain starts with a
+// public Hugging Face mirror (same Gemma 4 E2B-IT family, Q4_K_M quant).
+//
+// Exposed as a var (not const) so tests can redirect the primary endpoint.
+var DefaultGGUFURL = "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"
+
+// FallbackGGUFURLs is tried in order after DefaultGGUFURL when no explicit URL is set.
+// Second mirror (bartowski), then first-party GitHub when a release attaches the
+// canonical filename (see .github/workflows/release.yml).
+//
+// Override with --url / OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL to use a single source only.
 var FallbackGGUFURLs = []string{
-	"https://github.com/hridesh-net/AssistClaw/releases/latest/download/gemma-4-e2b-it.gguf",
+	"https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf",
+	"https://github.com/hridesh-net/OpsIntelligence/releases/latest/download/gemma-4-e2b-it.gguf",
 }
 
 // defaultGGUFURLChain returns the ordered list of URLs we will try when the
@@ -89,9 +91,7 @@ func BootstrapGGUF(ctx context.Context, opt BootstrapOptions) (BootstrapResult, 
 	// Build the ordered list of URLs to try. An explicit opt.URL or the
 	// OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL env var pins a single source
 	// and disables the fallback chain. Otherwise we try DefaultGGUFURL
-	// followed by FallbackGGUFURLs so a fresh OpsIntelligence install
-	// can still pull a GGUF even if the repo hasn't tagged a release
-	// with the asset yet (the AssistClaw mirror ships the same file).
+	// then FallbackGGUFURLs (HF mirrors, then optional GitHub release asset).
 	var urls []string
 	if u := strings.TrimSpace(opt.URL); u != "" {
 		urls = []string{u}

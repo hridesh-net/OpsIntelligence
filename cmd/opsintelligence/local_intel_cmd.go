@@ -39,7 +39,7 @@ func localIntelSetupCmd(gf *globalFlags, stateDir *string) *cobra.Command {
 		Long: `Downloads a Gemma-compatible GGUF into a managed path and prints a config snippet.
 
 Default output path: <state_dir>/models/gemma-4-e2b-it.gguf
-Default URL: OpsIntelligence release asset (localintel.DefaultGGUFURL); override with --url or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL.
+Default URL: public Gemma 4 E2B-IT GGUF mirror (localintel.DefaultGGUFURL), then alternates; override with --url or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL.
 Optional integrity check: --sha256 or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := mempalaceLoadCfg(gf, *stateDir)

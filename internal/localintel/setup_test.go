@@ -91,11 +91,9 @@ func TestBootstrapGGUF_BearerToken(t *testing.T) {
 	}
 }
 
-// When the first URL 404s (primary release asset missing) and a later
-// URL succeeds, BootstrapGGUF should transparently fall through the
-// chain and return a successful download. Mirrors the real-world case
-// where OpsIntelligence hasn't tagged a release with gemma-4-e2b-it.gguf
-// yet but the AssistClaw mirror does.
+// When the first URL 404s and a later URL succeeds, BootstrapGGUF should
+// transparently fall through the chain (e.g. primary HF mirror down,
+// second mirror OK).
 func TestBootstrapGGUF_FallbackURL_SkipsFailedPrimary(t *testing.T) {
 	payload := []byte("fallback-gguf-bytes")
 	hits := make(map[string]int)

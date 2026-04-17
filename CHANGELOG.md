@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Local Gemma GGUF bootstrap:** default download chain now uses public Hugging Face mirrors (Unsloth → bartowski Q4_K_M) because GitHub `releases/latest/download/gemma-4-e2b-it.gguf` is only present when `GEMMA_GGUF_SOURCE_URL` is configured in release CI; removed the broken AssistClaw GitHub fallback.
+
 ### Added
 
 - **Bundled skill `mastering-aws-cli`:** AWS CLI v2 quick-reference (`skills/aws-cli-main`) listed in `skills/marketplace.json`.

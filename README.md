@@ -161,15 +161,13 @@ Common environment toggles:
 > binary-only behaviour (useful for airgapped mirrors).
 >
 > **Note on Gemma for local-intel.** `WITH_GEMMA=1 bash install.sh`
-> (or `opsintelligence local-intel setup`) tries the OpsIntelligence
-> release asset first, then transparently falls back to the
-> AssistClaw release which ships the same `gemma-4-e2b-it.gguf`.
-> That way `local-intel` works out of the box on a brand-new
-> OpsIntelligence install even before our own release carries the
-> GGUF. Override the URL explicitly via
-> `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL=...` or `--url` to pin a
-> specific source (e.g. an internal mirror) — doing so disables the
-> fallback chain.
+> (or `opsintelligence local-intel setup`) downloads Gemma 4 E2B-IT
+> weights from public Hugging Face mirrors by default (Unsloth, then
+> bartowski), then tries the OpsIntelligence GitHub release asset when
+> present. The file is stored as `models/gemma-4-e2b-it.gguf` under your
+> state directory. Pin a single source with
+> `OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL=...` or `--url` (disables the
+> fallback chain).
 
 **Uninstall:**
 
