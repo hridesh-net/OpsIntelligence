@@ -279,6 +279,30 @@ embeddings:
     - "ollama"
 
 # ─────────────────────────────────────────────
+# Ops-plane datastore (users, RBAC, audit, tasks)
+#
+# This is STRICTLY SEPARATE from agent memory (memory.episodic_db_path /
+# memory.semantic_db_path). Local installs keep the default SQLite file
+# under state_dir/ops.db; cloud installs point at Postgres.
+# ─────────────────────────────────────────────
+datastore:
+  # driver: "sqlite" (default) | "postgres"
+  driver: "sqlite"
+  # dsn: driver-specific. Empty -> file:<state_dir>/ops.db?_foreign_keys=on.
+  # The OPSINTELLIGENCE_DATASTORE_DSN env var overrides this value.
+  #
+  # Postgres example:
+  #   driver: "postgres"
+  #   dsn: "postgres://opsi:secret@db.internal:5432/opsi?sslmode=require"
+  dsn: ""
+  max_open_conns: 0
+  max_idle_conns: 0
+  conn_max_lifetime: ""
+  # migrations: "auto" (run on startup) | "manual" (only via
+  # `opsintelligence datastore migrate`). Default auto.
+  migrations: "auto"
+
+# ─────────────────────────────────────────────
 # Tracing (off by default)
 # ─────────────────────────────────────────────
 tracing:

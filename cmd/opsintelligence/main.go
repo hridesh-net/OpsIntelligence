@@ -211,6 +211,7 @@ func rootCmd() *cobra.Command {
 		logicTestCmd(flags),
 		cronCmd(flags),
 		dlqCmd(flags),
+		datastoreCmd(flags),
 		doctorCmd(flags),
 		versionCmd(flags),
 		localgemmaCmd(flags),

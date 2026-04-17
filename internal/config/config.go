@@ -82,6 +82,41 @@ type Config struct {
 	// Teams selects the active team whose *.md guidelines are loaded into the
 	// system prompt, plus the directory they live under.
 	Teams TeamsConfig `yaml:"teams"`
+
+	// Datastore configures the ops-plane persistence layer (users, roles,
+	// api keys, sessions, audit log, task history, oidc state). Strictly
+	// separate from agent memory. Default: SQLite under state_dir/ops.db.
+	Datastore DatastoreConfig `yaml:"datastore"`
+}
+
+// DatastoreConfig configures the ops-plane persistence backend.
+//
+// Driver selects between the embedded SQLite driver (default, zero
+// config, perfect for local installs) and the Postgres driver (for
+// cloud / multi-operator installs). Only RBAC/auth/audit/task-history
+// tables live here; agent memory stays in memory.episodic_db_path and
+// memory.semantic_db_path.
+type DatastoreConfig struct {
+	// Driver selects the backend: "sqlite" (default) or "postgres".
+	Driver string `yaml:"driver"`
+	// DSN is driver-specific. For SQLite: a file path or URI. For
+	// Postgres: a libpq URL. When empty, defaults to
+	// <state_dir>/ops.db for SQLite.
+	//
+	// The value is overridden by the OPSINTELLIGENCE_DATASTORE_DSN
+	// environment variable (useful for cloud installs / secrets).
+	DSN string `yaml:"dsn"`
+	// MaxOpenConns caps the connection pool (0 -> driver default).
+	MaxOpenConns int `yaml:"max_open_conns"`
+	// MaxIdleConns caps idle connections (0 -> driver default).
+	MaxIdleConns int `yaml:"max_idle_conns"`
+	// ConnMaxLifetime is a Go duration string (e.g. "30m"). Empty ->
+	// driver default. Useful behind a pgBouncer or cloud LB that
+	// silently drops idle connections.
+	ConnMaxLifetime string `yaml:"conn_max_lifetime"`
+	// Migrations controls auto-run on startup: "auto" (default) or
+	// "manual" (operator runs `opsintelligence datastore migrate`).
+	Migrations string `yaml:"migrations"`
 }
 
 // DevOpsConfig groups the built-in DevOps platform integrations.
@@ -816,6 +851,31 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Agent.MaxIterations == 0 {
 		cfg.Agent.MaxIterations = 64
+	}
+
+	// Datastore defaults. Local profile: SQLite under state_dir/ops.db.
+	// Cloud operators override via YAML or OPSINTELLIGENCE_DATASTORE_DSN.
+	if strings.TrimSpace(cfg.Datastore.Driver) == "" {
+		cfg.Datastore.Driver = "sqlite"
+	}
+	if strings.TrimSpace(cfg.Datastore.DSN) == "" {
+		if env := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_DATASTORE_DSN")); env != "" {
+			cfg.Datastore.DSN = env
+		} else if cfg.Datastore.Driver == "sqlite" {
+			// Expand a literal leading "~" — the onboarding template
+			// writes state_dir: "~/.opsintelligence" verbatim and the
+			// mattn/go-sqlite3 driver does not expand tildes.
+			base := cfg.StateDir
+			if strings.HasPrefix(base, "~") {
+				if home, err := os.UserHomeDir(); err == nil {
+					base = filepath.Join(home, strings.TrimPrefix(base, "~"))
+				}
+			}
+			cfg.Datastore.DSN = "file:" + filepath.Join(base, "ops.db") + "?_foreign_keys=on&_busy_timeout=5000"
+		}
+	}
+	if strings.TrimSpace(cfg.Datastore.Migrations) == "" {
+		cfg.Datastore.Migrations = "auto"
 	}
 	if cfg.Agent.ToolsDir == "" {
 		cfg.Agent.ToolsDir = filepath.Join(cfg.StateDir, "tools")

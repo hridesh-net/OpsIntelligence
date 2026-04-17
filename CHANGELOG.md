@@ -8,6 +8,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ops-plane datastore layer (phase 1 of the cloud-dashboard +
+  RBAC rollout).** New `internal/datastore` package introduces the
+  persistence surface for users, roles, permissions, API keys,
+  sessions, audit log, task history and OIDC state. Strictly
+  separate from agent memory (`internal/memory` /
+  `internal/mempalace`) — different tables, different DSN, different
+  lifecycle.
+  - **Interfaces first**: `Store`, `UserRepo`, `RoleRepo`,
+    `APIKeyRepo`, `SessionRepo`, `AuditRepo`, `TaskHistoryRepo`,
+    `OIDCStateRepo`; upstream auth/RBAC/gateway code depends on
+    these, not on the driver.
+  - **Two drivers** at `internal/datastore/driver/sqlite` (bundled
+    default, backed by `mattn/go-sqlite3`, adds `_loc=UTC` to DSNs
+    so datetime comparisons round-trip across hosts) and
+    `internal/datastore/driver/postgres` (new `lib/pq` dependency).
+    Side-effect import
+    `github.com/opsintelligence/opsintelligence/internal/datastore/drivers`
+    registers both.
+  - **Embedded migrations** under
+    `internal/datastore/migrations/{sqlite,postgres}/0001_init.sql`;
+    per-driver DDL kept in sync for every version number. Applied
+    via `datastore.RunMigrations` / `Store.Migrate`, tracked in a
+    portable `schema_migrations` table.
+  - **Shared sqlstore** at `internal/datastore/sqlstore/` implements
+    every repo against `database/sql` with a tiny `Dialect`
+    interface that does placeholder rewriting (`?` → `$N`) and
+    bool-literal selection. New schema columns only need one set of
+    scan/insert helpers across drivers.
+  - **Sentinel errors** `ErrNotFound`, `ErrConflict`, `ErrExpired`,
+    `ErrInvalidConfig` with driver-error mapping (handles
+    lib/pq SQLSTATE 23505 and mattn's "UNIQUE constraint failed").
+- **`opsintelligence datastore` CLI.** New subcommands:
+  - `datastore migrate` — apply all pending migrations (prints
+    before/after version).
+  - `datastore status` — show driver, redacted DSN, applied /
+    latest / bundled counts, up-to-date vs pending.
+  - `datastore ping` — verify connectivity (5 s timeout).
+  - `datastore down` — deliberate stub; emits guidance for manual
+    reverse SQL instead of silent destructive rollbacks.
+- **`DatastoreConfig`** added to `internal/config.Config` with
+  defaults in `applyDefaults`: driver `sqlite`, DSN
+  `file:<state_dir>/ops.db?_foreign_keys=on&_busy_timeout=5000`
+  (tilde-expanded so onboarding's `state_dir: "~/..."` template
+  resolves correctly), migrations `auto`. The
+  `OPSINTELLIGENCE_DATASTORE_DSN` env var overrides the YAML value.
+- **`.opsintelligence.yaml.example`** gains a `datastore:` block
+  with both SQLite and Postgres examples inline.
+
+### Added (prior)
+
 - **Pluggable webhook-adapter framework.** New
   `internal/webhookadapter` package introduces a typed, first-class
   contract for inbound action webhooks (GitHub today, GitLab /
