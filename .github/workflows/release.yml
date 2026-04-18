@@ -91,8 +91,10 @@ jobs:
           CXX: zig c++ -target aarch64-linux-musl
         run: |
           mkdir -p dist
-          # Keep dynamic linking for libffi/purego so local Gemma runtime can dlopen on ARM64.
-          go build -mod=vendor -tags fts5,opsintelligence_localgemma -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
+          # Zig/musl static link + jupiterrider/ffi (opsintelligence_localgemma) panics at init:
+          # purego.Dlopen("libffi.so.8") -> "Dynamic loading not supported". Ship arm64 without
+          # in-process Gemma; use cloud LLM + local-intel GGUF prep, or build on-device with glibc + localgemma.
+          go build -mod=vendor -tags fts5 -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

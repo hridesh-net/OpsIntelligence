@@ -7,7 +7,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/install.sh | bash
 #   bash install.sh
-#   OPSINTELLIGENCE_VERSION=v0.3.4 bash install.sh
+#   OPSINTELLIGENCE_VERSION=v0.3.5 bash install.sh
 #
 # Environment:
 #   OPSINTELLIGENCE_VERSION   Git tag or "latest" (default: latest)
@@ -26,7 +26,8 @@
 #                        strict binary-only policy (see README "Installing on a client").
 #   OPSINTELLIGENCE_BOOTSTRAP_GO_VERSION  Go version to download for bootstrap (default
 #                        matches go.mod; e.g. 1.26.2). Override if go.dev layout changes.
-#   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). CI sets fts5,opsintelligence_localgemma
+#   OPSINTELLIGENCE_INSTALL_GO_TAGS  Go build tags for source build (default: fts5). Release CI uses
+#                        fts5,opsintelligence_localgemma except linux-arm64 (fts5 only — musl+ffi panics).
 #   SKIP_VENV=1          Skip Python venv creation
 #   SKIP_NODE=1          Skip Node/pnpm/TypeScript install (CI fresh-install smoke)
 #   SKIP_SENSING=1       Skip optional C++ sensing build

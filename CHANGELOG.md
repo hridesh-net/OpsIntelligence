@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-04-17
+
+### Fixed
+
+- **Linux arm64 release binary:** Zig/musl cross-builds with **`opsintelligence_localgemma`** panic at startup (`jupiterrider/ffi` / `purego.Dlopen` → *Dynamic loading not supported*). Official **`linux-arm64`** artifacts are now built with **`fts5` only** (no in-process Gemma in that tarball); other targets unchanged.
+
 ## [0.3.4] — 2026-04-17
 
 ### Fixed

@@ -81,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/hridesh-net/OpsIntelligence/main/in
 **Pin a specific version:**
 
 ```bash
-OPSINTELLIGENCE_VERSION=v0.3.4 bash install.sh
+OPSINTELLIGENCE_VERSION=v0.3.5 bash install.sh
 ```
 
 **Build from source (requires Go matching `go.mod`, currently 1.26+):**
@@ -109,7 +109,7 @@ downloaded or compiled.
    `opsintelligence-<os>-<arch>` for their platform (see
    [Releases](https://github.com/hridesh-net/OpsIntelligence/releases)).
    Pin the version explicitly:
-   `OPSINTELLIGENCE_VERSION=v0.3.4 bash install.sh` (adjust tag as
+   `OPSINTELLIGENCE_VERSION=v0.3.5 bash install.sh` (adjust tag as
    needed).
 2. **Avoid surprise downloads.** On restricted networks, the default
    installer may try to **clone the repo**, **pull Go from go.dev**, or
@@ -166,6 +166,11 @@ Common environment toggles:
 > (canonical Hugging Face URLs). **`opsintelligence onboard`** / **`local-intel setup`**
 > download from those mirrors (no GitHub login). Pin your own mirror with
 > **`OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_URL`** or **`--url`**.
+>
+> **Linux arm64 pre-built binaries** are built with **`fts5` only** (no in-process Gemma):
+> the cross-compiled musl binary cannot load `libffi` via `purego` and would panic at startup
+> if linked with **`opsintelligence_localgemma`**. On arm64, use the full cloud stack, or build
+> from source on your device with glibc and **`EXTRA_TAGS=opsintelligence_localgemma`**.
 
 **Uninstall:**
 
