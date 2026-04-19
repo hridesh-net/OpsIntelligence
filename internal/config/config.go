@@ -41,6 +41,10 @@ type Config struct {
 	// Agent configures the agent runner behavior.
 	Agent AgentConfig `yaml:"agent"`
 
+	// SmartPrompts configures optional extra directories for the chain_run
+	// prompt library (embedded seed + <state_dir>/prompts are always loaded).
+	SmartPrompts SmartPromptsConfig `yaml:"smart_prompts"`
+
 	// Channels configures messaging channel integrations.
 	Channels ChannelsConfig `yaml:"channels"`
 
@@ -717,6 +721,15 @@ type GPIOConfig struct {
 	BinaryPath string `yaml:"binary_path"`
 }
 
+// SmartPromptsConfig augments where smart prompts / chains are loaded from.
+// Markdown and chain YAML use the same layout as <state_dir>/prompts/.
+// Directories are scanned in order after the embedded seed; <state_dir>/prompts
+// is always last and wins on ID conflicts. Use for local dev (e.g. point at
+// the OpsIntelligence git checkout `prompts/` tree).
+type SmartPromptsConfig struct {
+	ExtraSourceDirs []string `yaml:"extra_source_dirs"`
+}
+
 // AgentConfig controls agent runner behavior.
 type AgentConfig struct {
 	MaxIterations   int      `yaml:"max_iterations"`
@@ -724,6 +737,20 @@ type AgentConfig struct {
 	ToolsDir        string   `yaml:"tools_dir"`
 	SkillsDir       string   `yaml:"skills_dir"`
 	EnabledSkills   []string `yaml:"enabled_skills"`
+	// RunTraceMode controls NDJSON run tracing for every agent turn (CLI, gateway,
+	// channels, webhooks, sub-agents). Empty or "auto" (default): if run_trace_file is
+	// unset, use logs/runtrace.ndjson under state_dir. "on"/"enabled"/"true": same as auto.
+	// "off"/"false"/"disabled"/"no": disable (clears run_trace_file / run_trace_subagent_file).
+	// Override with OPSINTELLIGENCE_RUN_TRACE_MODE or OPSINTELLIGENCE_RUN_TRACE (0|1).
+	RunTraceMode string `yaml:"run_trace_mode"`
+	// RunTraceFile enables append-only NDJSON tracing (tools, model iterations,
+	// chain metadata). Relative paths resolve under StateDir (e.g. "logs/runtrace.ndjson").
+	// When empty and RunTraceMode is not off, applyDefaults sets logs/runtrace.ndjson.
+	RunTraceFile string `yaml:"run_trace_file"`
+	// RunTraceSubagentFile is a separate NDJSON trace for sub-agent runs only.
+	// When set, sub-agents write here (and ctx carries this path for chain_run).
+	// Relative paths resolve under StateDir. When empty, sub-agents use RunTraceFile.
+	RunTraceSubagentFile string `yaml:"run_trace_subagent_file"`
 	// Heartbeat schedules periodic synthetic prompts (proactive ticks on a dedicated session).
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
 	// Planning adds an upfront milestone breakdown (extra LLM call). Nil = enabled (default on).
@@ -1048,6 +1075,37 @@ func applyDefaults(cfg *Config) {
 	if cfg.Agent.SkillsDir == "" {
 		cfg.Agent.SkillsDir = filepath.Join(cfg.StateDir, "skills")
 	}
+	applyAgentRunTrace(cfg)
+	if cfg.Agent.RunTraceFile != "" && !filepath.IsAbs(cfg.Agent.RunTraceFile) {
+		cfg.Agent.RunTraceFile = filepath.Join(cfg.StateDir, cfg.Agent.RunTraceFile)
+	}
+	if cfg.Agent.RunTraceSubagentFile != "" && !filepath.IsAbs(cfg.Agent.RunTraceSubagentFile) {
+		cfg.Agent.RunTraceSubagentFile = filepath.Join(cfg.StateDir, cfg.Agent.RunTraceSubagentFile)
+	}
+	var extraPromptDirs []string
+	for _, dir := range cfg.SmartPrompts.ExtraSourceDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(cfg.StateDir, dir)
+		}
+		extraPromptDirs = append(extraPromptDirs, filepath.Clean(dir))
+	}
+	cfg.SmartPrompts.ExtraSourceDirs = extraPromptDirs
+	if env := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_SMART_PROMPTS_EXTRA")); env != "" {
+		for _, p := range strings.Split(env, string(os.PathListSeparator)) {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(cfg.StateDir, p)
+			}
+			cfg.SmartPrompts.ExtraSourceDirs = append(cfg.SmartPrompts.ExtraSourceDirs, filepath.Clean(p))
+		}
+	}
 	if cfg.Teams.Dir == "" {
 		cfg.Teams.Dir = filepath.Join(cfg.StateDir, "teams")
 	}
@@ -1124,6 +1182,45 @@ func applyDefaults(cfg *Config) {
 		// Safe default for fresh configs while preserving explicit false in active setups.
 		cfg.Agent.Palace.FailOpen = true
 	}
+}
+
+// applyAgentRunTrace picks a default NDJSON path so tracing is on for any agent
+// workload unless the operator disables it (run_trace_mode: off or env).
+func applyAgentRunTrace(cfg *Config) {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Agent.RunTraceMode))
+	if e := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE_MODE")); e != "" {
+		mode = strings.ToLower(e)
+	} else if tag := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE")); tag != "" {
+		switch strings.ToLower(tag) {
+		case "0", "false", "no", "off":
+			mode = "off"
+		case "1", "true", "yes", "on":
+			mode = "auto"
+		}
+	}
+	if mode == "" {
+		mode = "auto"
+	}
+
+	switch mode {
+	case "off", "false", "disabled", "no":
+		cfg.Agent.RunTraceFile = ""
+		cfg.Agent.RunTraceSubagentFile = ""
+		cfg.Agent.RunTraceMode = "off"
+		return
+	}
+
+	// auto, on, enabled, true, yes — same behavior: default file when unset.
+	if strings.TrimSpace(cfg.Agent.RunTraceFile) == "" {
+		cfg.Agent.RunTraceFile = "logs/runtrace.ndjson"
+	}
+	if e := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE_FILE")); e != "" {
+		cfg.Agent.RunTraceFile = e
+	}
+	if e := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE_SUBAGENT_FILE")); e != "" {
+		cfg.Agent.RunTraceSubagentFile = e
+	}
+	cfg.Agent.RunTraceMode = mode
 }
 
 // validate checks that required fields are present.

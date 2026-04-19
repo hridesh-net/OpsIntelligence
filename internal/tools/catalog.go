@@ -85,6 +85,15 @@ func (c *Catalog) DecayInertia() {
 	c.toolGraph.DecayInertia()
 }
 
+// TraceRoutingIntents returns graph keyword routing labels for the user message
+// (same signals as tool-graph BFS seeds). Used by run_trace for observability.
+func (c *Catalog) TraceRoutingIntents(userMessage string) []string {
+	if c.toolGraph == nil {
+		return nil
+	}
+	return c.toolGraph.ClassifyIntents(userMessage)
+}
+
 // FindTools performs a keyword search across all tool definitions and returns
 // the top-N matching tools as plain text (safe for any LLM, even without native tool use).
 func (c *Catalog) FindTools(query string, topN int) string {

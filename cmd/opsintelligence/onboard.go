@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -477,16 +478,26 @@ func runOnboarding(configPath string) (bool, error) {
 		planoPowerfulModel string
 		localIntelEnabled  bool
 		localIntelGGUF     string
-		// DevOps YAML block (optional; not collected in wizard yet — empty disables integrations)
-		githubToken  string
-		gitlabURL    string
-		gitlabToken  string
-		jenkinsURL   string
-		jenkinsUser  string
-		jenkinsToken string
-		sonarURL     string
-		sonarToken   string
-		activeTeam   string
+		// DevOps YAML (optional; omitted when skipped so merge preserves existing)
+		githubToken       string
+		githubTokenEnv    string
+		githubBaseURL     string
+		githubDefaultOrg  string
+		gitlabURL         string
+		gitlabToken       string
+		gitlabTokenEnv    string
+		jenkinsURL        string
+		jenkinsUser       string
+		jenkinsToken      string
+		jenkinsTokenEnv   string
+		sonarURL           string
+		sonarToken         string
+		sonarTokenEnv      string
+		sonarProjectPrefix string
+		activeTeam         string
+		configureDevOps   bool
+		ghWebhookEnabled  bool
+		ghWebhookSecret   string
 	)
 
 	theme := huh.ThemeBase()
@@ -907,6 +918,60 @@ func runOnboarding(configPath string) (bool, error) {
 
 		localIntelEnabled = existing.Agent.LocalIntel.Enabled
 		localIntelGGUF = existing.Agent.LocalIntel.GGUFPath
+
+		// Pre-populate DevOps (REST/API tokens — separate from GitHub webhook signing secret)
+		d := existing.DevOps
+		if d.GitHub.Token != "" {
+			githubToken = d.GitHub.Token
+		}
+		if strings.TrimSpace(d.GitHub.TokenEnv) != "" {
+			githubTokenEnv = strings.TrimSpace(d.GitHub.TokenEnv)
+		}
+		if strings.TrimSpace(d.GitHub.BaseURL) != "" {
+			githubBaseURL = strings.TrimSpace(d.GitHub.BaseURL)
+		}
+		if strings.TrimSpace(d.GitHub.DefaultOrg) != "" {
+			githubDefaultOrg = strings.TrimSpace(d.GitHub.DefaultOrg)
+		}
+		if strings.TrimSpace(d.GitLab.BaseURL) != "" {
+			gitlabURL = strings.TrimSpace(d.GitLab.BaseURL)
+		}
+		if d.GitLab.Token != "" {
+			gitlabToken = d.GitLab.Token
+		}
+		if strings.TrimSpace(d.GitLab.TokenEnv) != "" {
+			gitlabTokenEnv = strings.TrimSpace(d.GitLab.TokenEnv)
+		}
+		if strings.TrimSpace(d.Jenkins.BaseURL) != "" {
+			jenkinsURL = strings.TrimSpace(d.Jenkins.BaseURL)
+		}
+		if strings.TrimSpace(d.Jenkins.User) != "" {
+			jenkinsUser = strings.TrimSpace(d.Jenkins.User)
+		}
+		if d.Jenkins.Token != "" {
+			jenkinsToken = d.Jenkins.Token
+		}
+		if strings.TrimSpace(d.Jenkins.TokenEnv) != "" {
+			jenkinsTokenEnv = strings.TrimSpace(d.Jenkins.TokenEnv)
+		}
+		if strings.TrimSpace(d.Sonar.BaseURL) != "" {
+			sonarURL = strings.TrimSpace(d.Sonar.BaseURL)
+		}
+		if d.Sonar.Token != "" {
+			sonarToken = d.Sonar.Token
+		}
+		if strings.TrimSpace(d.Sonar.TokenEnv) != "" {
+			sonarTokenEnv = strings.TrimSpace(d.Sonar.TokenEnv)
+		}
+		if strings.TrimSpace(d.Sonar.ProjectKeyPrefix) != "" {
+			sonarProjectPrefix = strings.TrimSpace(d.Sonar.ProjectKeyPrefix)
+		}
+
+		if existing.Webhooks.Enabled && existing.Webhooks.Adapters.GitHub.Enabled &&
+			strings.TrimSpace(existing.Webhooks.Adapters.GitHub.Secret) != "" {
+			ghWebhookEnabled = true
+			ghWebhookSecret = existing.Webhooks.Adapters.GitHub.Secret
+		}
 	}
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -1520,6 +1585,108 @@ func runOnboarding(configPath string) (bool, error) {
 		}
 	}
 
+	// DevOps REST/API tokens (optional). When skipped, generated YAML omits `devops`
+	// so a merge with the previous file keeps your existing block.
+	configureDevOps = false
+	if existing != nil {
+		if githubToken != "" || strings.TrimSpace(githubTokenEnv) != "" ||
+			gitlabToken != "" || strings.TrimSpace(gitlabTokenEnv) != "" || strings.TrimSpace(gitlabURL) != "" ||
+			(strings.TrimSpace(jenkinsURL) != "" && (jenkinsToken != "" || strings.TrimSpace(jenkinsTokenEnv) != "")) ||
+			(strings.TrimSpace(sonarURL) != "" && (sonarToken != "" || strings.TrimSpace(sonarTokenEnv) != "")) {
+			configureDevOps = true
+		}
+	}
+	_ = huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Configure DevOps API integrations now?").
+			Description(
+				"GitHub PAT, GitLab, Jenkins, Sonar — used for PR review and REST APIs.\n" +
+					"Skip to leave an existing devops: section unchanged, or add tokens in YAML later.",
+			).
+			Value(&configureDevOps),
+	)).WithTheme(theme).Run()
+
+	if configureDevOps {
+		_ = huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("GitHub API base URL (optional)").
+				Description("Leave blank for https://api.github.com (GitHub.com).").
+				Value(&githubBaseURL),
+			huh.NewInput().
+				Title("GitHub default org (optional)").
+				Description("Short org name for shorthand repo queries.").
+				Value(&githubDefaultOrg),
+			huh.NewInput().
+				Title("GitHub personal access token (optional)").
+				Description("Fine-grained or classic token for API calls — not the webhook signing secret.").
+				Password(true).
+				Value(&githubToken),
+			huh.NewInput().
+				Title("Or: GitHub token env var (optional)").
+				Description("e.g. GITHUB_TOKEN — leave PAT blank to use token_env only.").
+				Value(&githubTokenEnv),
+			huh.NewInput().
+				Title("GitLab base URL (optional)").
+				Value(&gitlabURL),
+			huh.NewInput().
+				Title("GitLab token (optional)").
+				Password(true).
+				Value(&gitlabToken),
+			huh.NewInput().
+				Title("Or: GitLab token env var (optional)").
+				Value(&gitlabTokenEnv),
+			huh.NewInput().
+				Title("Jenkins base URL (optional)").
+				Value(&jenkinsURL),
+			huh.NewInput().
+				Title("Jenkins user (optional)").
+				Value(&jenkinsUser),
+			huh.NewInput().
+				Title("Jenkins token (optional)").
+				Password(true).
+				Value(&jenkinsToken),
+			huh.NewInput().
+				Title("Or: Jenkins token env var (optional)").
+				Value(&jenkinsTokenEnv),
+			huh.NewInput().
+				Title("SonarQube base URL (optional)").
+				Value(&sonarURL),
+			huh.NewInput().
+				Title("SonarQube token (optional)").
+				Password(true).
+				Value(&sonarToken),
+			huh.NewInput().
+				Title("Or: Sonar token env var (optional)").
+				Value(&sonarTokenEnv),
+			huh.NewInput().
+				Title("Sonar project key prefix (optional)").
+				Value(&sonarProjectPrefix),
+		)).WithTheme(theme).Run()
+	}
+
+	dimPre := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	fmt.Println()
+	fmt.Println(dimPre.Render("  GitHub can POST signed webhooks to your gateway when PRs change — separate from a PAT (REST)."))
+	fmt.Println(dimPre.Render("  GitHub.com requires a public HTTPS URL (Tailscale Funnel, reverse proxy, smee.io, etc.)."))
+	_ = huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Enable GitHub → gateway webhook adapter?").
+			Description(
+				"When enabled, set the same signing secret in GitHub → Settings → Webhooks.\n" +
+					"Skip to leave an existing webhooks: block unchanged.",
+			).
+			Value(&ghWebhookEnabled),
+	)).WithTheme(theme).Run()
+	if ghWebhookEnabled {
+		_ = huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Webhook signing secret").
+				Description("Repository/org webhook secret (X-Hub-Signature-256). Not your PAT.").
+				Password(true).
+				Value(&ghWebhookSecret),
+		)).WithTheme(theme).Run()
+	}
+
 	// Build the YAML
 	var sb strings.Builder
 	sb.WriteString("# OpsIntelligence Configuration\nversion: 1\n\n")
@@ -1536,6 +1703,7 @@ func runOnboarding(configPath string) (bool, error) {
 	sb.WriteString("\n")
 
 	sb.WriteString("agent:\n  max_iterations: 64\n")
+	sb.WriteString("  # run_trace_mode: off   # tracing defaults to on (logs/runtrace.ndjson); uncomment to disable\n")
 	if len(selectedSkills) > 0 {
 		sb.WriteString("  enabled_skills:\n")
 		for _, s := range selectedSkills {
@@ -1714,46 +1882,89 @@ func runOnboarding(configPath string) (bool, error) {
 		sb.WriteString(fmt.Sprintf("      prefer_model: \"%s\"\n", planoPowerfulModel))
 	}
 
-	// Output DevOps YAML
-	sb.WriteString("\ndevops:\n")
-	writeBool := func(key string, ok bool) {
-		if ok {
-			sb.WriteString("    enabled: true\n")
-		} else {
-			sb.WriteString("    enabled: false\n")
+	if configureDevOps {
+		sb.WriteString("\ndevops:\n")
+		writeEn := func(on bool) {
+			if on {
+				sb.WriteString("    enabled: true\n")
+			} else {
+				sb.WriteString("    enabled: false\n")
+			}
+		}
+		ghOn := githubToken != "" || strings.TrimSpace(githubTokenEnv) != ""
+		sb.WriteString("  github:\n")
+		writeEn(ghOn)
+		if b := strings.TrimSpace(githubBaseURL); b != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: %q\n", b))
+		}
+		if o := strings.TrimSpace(githubDefaultOrg); o != "" {
+			sb.WriteString(fmt.Sprintf("    default_org: %q\n", o))
+		}
+		if githubToken != "" {
+			sb.WriteString(fmt.Sprintf("    token: %q\n", githubToken))
+		}
+		if e := strings.TrimSpace(githubTokenEnv); e != "" {
+			sb.WriteString(fmt.Sprintf("    token_env: %q\n", e))
+		}
+
+		glOn := strings.TrimSpace(gitlabURL) != "" && (gitlabToken != "" || strings.TrimSpace(gitlabTokenEnv) != "")
+		sb.WriteString("  gitlab:\n")
+		writeEn(glOn)
+		if u := strings.TrimSpace(gitlabURL); u != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: %q\n", u))
+		}
+		if gitlabToken != "" {
+			sb.WriteString(fmt.Sprintf("    token: %q\n", gitlabToken))
+		}
+		if e := strings.TrimSpace(gitlabTokenEnv); e != "" {
+			sb.WriteString(fmt.Sprintf("    token_env: %q\n", e))
+		}
+
+		jkOn := strings.TrimSpace(jenkinsURL) != "" && (jenkinsToken != "" || strings.TrimSpace(jenkinsTokenEnv) != "")
+		sb.WriteString("  jenkins:\n")
+		writeEn(jkOn)
+		if u := strings.TrimSpace(jenkinsURL); u != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: %q\n", u))
+		}
+		if jenkinsUser != "" {
+			sb.WriteString(fmt.Sprintf("    user: %q\n", jenkinsUser))
+		}
+		if jenkinsToken != "" {
+			sb.WriteString(fmt.Sprintf("    token: %q\n", jenkinsToken))
+		}
+		if e := strings.TrimSpace(jenkinsTokenEnv); e != "" {
+			sb.WriteString(fmt.Sprintf("    token_env: %q\n", e))
+		}
+
+		soOn := strings.TrimSpace(sonarURL) != "" && (sonarToken != "" || strings.TrimSpace(sonarTokenEnv) != "")
+		sb.WriteString("  sonar:\n")
+		writeEn(soOn)
+		if u := strings.TrimSpace(sonarURL); u != "" {
+			sb.WriteString(fmt.Sprintf("    base_url: %q\n", u))
+		}
+		if sonarToken != "" {
+			sb.WriteString(fmt.Sprintf("    token: %q\n", sonarToken))
+		}
+		if e := strings.TrimSpace(sonarTokenEnv); e != "" {
+			sb.WriteString(fmt.Sprintf("    token_env: %q\n", e))
+		}
+		if p := strings.TrimSpace(sonarProjectPrefix); p != "" {
+			sb.WriteString(fmt.Sprintf("    project_key_prefix: %q\n", p))
 		}
 	}
-	sb.WriteString("  github:\n")
-	writeBool("github", githubToken != "")
-	if githubToken != "" {
-		sb.WriteString("    token: \"" + githubToken + "\"\n")
-	}
-	sb.WriteString("  gitlab:\n")
-	writeBool("gitlab", gitlabToken != "" && gitlabURL != "")
-	if gitlabURL != "" {
-		sb.WriteString("    base_url: \"" + gitlabURL + "\"\n")
-	}
-	if gitlabToken != "" {
-		sb.WriteString("    token: \"" + gitlabToken + "\"\n")
-	}
-	sb.WriteString("  jenkins:\n")
-	writeBool("jenkins", jenkinsURL != "" && jenkinsToken != "")
-	if jenkinsURL != "" {
-		sb.WriteString("    base_url: \"" + jenkinsURL + "\"\n")
-	}
-	if jenkinsUser != "" {
-		sb.WriteString("    user: \"" + jenkinsUser + "\"\n")
-	}
-	if jenkinsToken != "" {
-		sb.WriteString("    token: \"" + jenkinsToken + "\"\n")
-	}
-	sb.WriteString("  sonar:\n")
-	writeBool("sonar", sonarURL != "" && sonarToken != "")
-	if sonarURL != "" {
-		sb.WriteString("    base_url: \"" + sonarURL + "\"\n")
-	}
-	if sonarToken != "" {
-		sb.WriteString("    token: \"" + sonarToken + "\"\n")
+
+	if ghWebhookEnabled && strings.TrimSpace(ghWebhookSecret) != "" {
+		sb.WriteString("\nwebhooks:\n")
+		sb.WriteString("  enabled: true\n")
+		sb.WriteString("  max_concurrent: 10\n")
+		sb.WriteString("  timeout: \"10m\"\n")
+		sb.WriteString("  adapters:\n")
+		sb.WriteString("    github:\n")
+		sb.WriteString("      enabled: true\n")
+		sb.WriteString(fmt.Sprintf("      secret: %q\n", strings.TrimSpace(ghWebhookSecret)))
+		sb.WriteString("      path: \"github\"\n")
+		sb.WriteString("      events:\n")
+		sb.WriteString("        pull_request: [opened, reopened, synchronize, ready_for_review]\n")
 	}
 
 	if activeTeam != "" {
@@ -1763,10 +1974,27 @@ func runOnboarding(configPath string) (bool, error) {
 	}
 
 	tpl = sb.String()
-	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
-	_ = os.WriteFile(configPath, []byte(tpl), 0o600)
+	merged, err := mergeOnboardYAML(configPath, []byte(tpl))
+	if err != nil {
+		return false, fmt.Errorf("merge config into %s: %w", configPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(configPath, merged, 0o600); err != nil {
+		return false, err
+	}
 
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✔ Configuration saved!"))
+
+	if ghWebhookEnabled && strings.TrimSpace(ghWebhookSecret) != "" {
+		dimWH := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		whURL := "http://" + gwHost + ":" + strconv.Itoa(gwPort) + "/api/webhook/github"
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  GitHub webhook — payload URL"))
+		fmt.Println(dimWH.Render("  Use an HTTPS URL GitHub can reach; path must match your config (default /api/webhook/github):"))
+		fmt.Println(dimWH.Render("    " + whURL))
+	}
 
 	if localIntelEnabled {
 		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))

@@ -30,9 +30,10 @@ It pairs with two other OpsIntelligence pieces:
 
 - The **`devops.github.*`** agent tools (PR metadata, diffs, checks) —
   prefer these when you just need to read data.
-- The **`pr-review` smart-prompt chain** — call
-  `chain_run {id: "pr-review", inputs: {pr_url: "..."}}` to produce the
-  Ship/Hold verdict and findings. Then come back here to **post** them.
+- The **`pr-review` smart-prompt chain** — the main agent should fetch
+  PR metadata and diff via `devops.github.pull_request` and
+  `devops.github.pr_diff`, then call `chain_run` with those strings in
+  `inputs` (see `skills/devops/pr-review.md`). Then come back here to **post** them.
 
 > **Safety posture**: this skill is **read-only by default** on GitHub.
 > Pushing fixes, approving, merging, re-running CI, and closing PRs are

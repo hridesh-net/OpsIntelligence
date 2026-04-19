@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-04-18
+
+### Added
+
+- **Run trace (NDJSON) defaults on:** `agent.run_trace_mode` defaults to `auto`, so an unset `run_trace_file` resolves to `logs/runtrace.ndjson` under `state_dir` for every agent entry point (CLI, gateway, channels, webhooks, sub-agents). Disable with `run_trace_mode: off` or `OPSINTELLIGENCE_RUN_TRACE_MODE` / `OPSINTELLIGENCE_RUN_TRACE=0`. Optional path overrides: `OPSINTELLIGENCE_RUN_TRACE_FILE`, `OPSINTELLIGENCE_RUN_TRACE_SUBAGENT_FILE`.
+- **`internal/observability/runtrace`:** context-scoped trace path (`WithOutputPath`) so `chain_run` logs to the same file as the active runner; optional dedicated `agent.run_trace_subagent_file` for sub-agents.
+- **`task_start` / `model_iteration`:** `run_trace_mode`, `routing_intents` (tool-graph keyword alignment), `skills_context_chars`, `runner_role` (master vs sub-agent). `task_done` now records `finish` for `stop`, `max_iterations`, and `error` (including stream failures).
+- **Smart prompts:** `smart_prompts.extra_source_dirs` and `OPSINTELLIGENCE_SMART_PROMPTS_EXTRA` merge extra prompt roots; CLI opens library paths from config.
+- **Onboarding YAML merge:** selective replace vs deep merge (`onboard_merge.go`) so re-onboard does not wipe unrelated keys; optional DevOps and GitHub webhook steps.
+
+### Changed
+
+- **PR review path:** `devops.github.pull_request` tool; `pr-review/gather` uses injected PR JSON/diff; chain steps remain tool-free in the prompt runner; skills and default webhook prompt updated accordingly.
+- **Tool graph:** `ClassifyIntents` returns sorted, de-duplicated labels for tracing and graph seeds.
+
+### Fixed
+
+- **GitHub webhook default prompt:** raw string no longer embeds nested backticks that broke compilation (`internal/webhookadapter/github/adapter.go`).
+
 ## [0.3.5] — 2026-04-17
 
 ### Fixed

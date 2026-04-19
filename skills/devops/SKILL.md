@@ -35,7 +35,7 @@ human confirmation in the same turn.
 4. Prefer delegating multi-step reasoning to a named **smart prompt chain**
    via the `chain_run` tool. Chains are bounded, self-critiquing pipelines
    and cost far fewer tokens than improvising the whole flow inline:
-   - `chain_run {id: "pr-review", inputs: {pr_url: "..."}}` → Ship/Hold verdict.
+   - `chain_run` with `id: "pr-review"` and `inputs` including `pr_url` **plus** GitHub evidence strings from `devops.github.pull_request` / `devops.github.pr_diff` (see `pr-review.md`) → Ship/Hold verdict.
    - `chain_run {id: "sonar-triage", inputs: {project_key: "..."}}` → gate recommendation.
    - `chain_run {id: "cicd-regression", inputs: {platform: "github", target: "owner/repo/ci.yml"}}` → regression triage.
    - `chain_run {id: "incident-scribe", inputs: {evidence: "..."}}` → brief + update + postmortem skeleton.

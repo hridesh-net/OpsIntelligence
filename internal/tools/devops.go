@@ -32,6 +32,7 @@ func DevOpsTools(cfg config.DevOpsConfig) []agent.Tool {
 		}, httpc)
 		out = append(out,
 			&githubListPRsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubGetPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubPRDiffTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
@@ -83,6 +84,91 @@ func (t *githubListPRsTool) Definition() provider.ToolDef {
 			Required: []string{"repo"},
 		},
 	}
+}
+
+type githubGetPRTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubGetPRTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name:        "devops.github.pull_request",
+		Description: "Fetch JSON metadata for one GitHub pull request (title, author, base/head refs, draft, URLs). Call this (with devops.github.pr_diff) before chain_run id=pr-review so the chain has real evidence.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner":  map[string]any{"type": "string", "description": "Org/user (default: devops.github.default_org)."},
+				"repo":   map[string]any{"type": "string", "description": "Repository name."},
+				"number": map[string]any{"type": "integer", "description": "Pull request number."},
+			},
+			Required: []string{"repo", "number"},
+		},
+	}
+}
+
+func (t *githubGetPRTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner, Repo string
+		Number      int
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", err
+	}
+	if a.Owner == "" {
+		a.Owner = t.defaultOrg
+	}
+	if a.Owner == "" {
+		return "", fmt.Errorf("owner is required (no default_org configured)")
+	}
+	if a.Number < 1 {
+		return "", fmt.Errorf("number must be a positive PR number")
+	}
+	pr, err := t.c.GetPullRequest(ctx, a.Owner, a.Repo, a.Number)
+	if err != nil {
+		return "", err
+	}
+	body := pr.Body
+	const maxBody = 6000
+	if len(body) > maxBody {
+		body = body[:maxBody] + "\n… (body truncated) …"
+	}
+	summary := struct {
+		Number    int    `json:"number"`
+		State     string `json:"state"`
+		Draft     bool   `json:"draft"`
+		Title     string `json:"title"`
+		Body      string `json:"body"`
+		HTMLURL   string `json:"html_url"`
+		User      string `json:"user"`
+		HeadRef   string `json:"head_ref"`
+		HeadSHA   string `json:"head_sha"`
+		HeadRepo  string `json:"head_repo"`
+		BaseRef   string `json:"base_ref"`
+		BaseSHA   string `json:"base_sha"`
+		BaseRepo  string `json:"base_repo"`
+		UpdatedAt string `json:"updated_at"`
+	}{
+		Number:    pr.Number,
+		State:     pr.State,
+		Draft:     pr.Draft,
+		Title:     pr.Title,
+		Body:      body,
+		HTMLURL:   pr.HTMLURL,
+		User:      pr.User.Login,
+		HeadRef:   pr.Head.Ref,
+		HeadSHA:   pr.Head.SHA,
+		HeadRepo:  pr.Head.Repo.FullName,
+		BaseRef:   pr.Base.Ref,
+		BaseSHA:   pr.Base.SHA,
+		BaseRepo:  pr.Base.Repo.FullName,
+		UpdatedAt: pr.UpdatedAt,
+	}
+	b, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (t *githubListPRsTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {

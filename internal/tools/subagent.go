@@ -40,6 +40,14 @@ type SubAgentSvc struct {
 	Guardrail *security.Guardrail
 	AuditLog  *security.AuditLog
 	Hardware  *system.HardwareReport
+
+	// RunTracePath is the NDJSON path for child runs: agent.run_trace_subagent_file
+	// when set, otherwise the same path as the master agent.run_trace_file.
+	RunTracePath string
+	// RunTraceMode is the resolved agent.run_trace_mode (copied for run_trace.task_start).
+	RunTraceMode string
+	// EnabledSkillNames is copied from the parent agent for run_trace.task_start.
+	EnabledSkillNames []string
 }
 
 // EnsureTaskManager wires a TaskManager that reuses the same sync executor as
@@ -179,6 +187,10 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		MaxIterations:         maxIterations,
 		Model:                 s.Model,
 		ActiveSkillsContext:   s.ActiveSkillsContext,
+		EnabledSkillNames:     s.EnabledSkillNames,
+		RunTracePath:          s.RunTracePath,
+		RunnerRole:            "subagent",
+		RunTraceMode:          s.RunTraceMode,
 		ProviderName:          s.ProviderName,
 		ToolsProfile:          prof,
 		GatewayPublicBaseURL:  s.GatewayPublicBaseURL,

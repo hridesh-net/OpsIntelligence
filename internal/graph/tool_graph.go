@@ -75,7 +75,7 @@ var intentSeeds = map[Intent][]string{
 	IntentSchedule:      {"cron", "bash"},
 	IntentCommunicate:   {"message"},
 	IntentSystem:        {"env", "process", "bash", "subagent_run", "subagent_create", "subagent_list"},
-	IntentPRReview:      {"chain_run", "devops.github.list_prs", "devops.github.pr_diff", "devops.gitlab.list_mrs", "bash", "read_file"},
+	IntentPRReview:      {"chain_run", "devops.github.list_prs", "devops.github.pull_request", "devops.github.pr_diff", "devops.gitlab.list_mrs", "bash", "read_file"},
 	IntentSonar:         {"chain_run", "devops.sonar.quality_gate", "devops.sonar.issues"},
 	IntentCICD:          {"chain_run", "devops.github.workflow_runs", "devops.github.commit_status", "devops.gitlab.pipelines", "devops.jenkins.job_status", "bash"},
 	IntentIncident:      {"chain_run", "devops.github.workflow_runs", "message", "memory_search", "bash"},
@@ -148,6 +148,7 @@ func NewToolGraph() *ToolGraph {
 		// PR review cluster: chains + GitHub/GitLab evidence + bash for local
 		// checkout/tests + read_file for spot inspection + message for posting.
 		{from: "chain_run", to: "devops.github.list_prs", typ: EdgeCompanion},
+		{from: "chain_run", to: "devops.github.pull_request", typ: EdgeCompanion},
 		{from: "chain_run", to: "devops.github.pr_diff", typ: EdgeCompanion},
 		{from: "chain_run", to: "devops.gitlab.list_mrs", typ: EdgeCompanion},
 		{from: "devops.github.list_prs", to: "devops.github.pr_diff", typ: EdgeCompanion},
@@ -273,44 +274,54 @@ func (g *ToolGraph) Traverse(userMessage string, topN int) []string {
 	return out
 }
 
-// ClassifyIntents returns the matched intents for a user message (for debugging).
+// ClassifyIntents returns sorted, de-duplicated routing labels for intents
+// whose keywords appear in the user message (same signals as tool graph BFS seeds).
 func (g *ToolGraph) ClassifyIntents(msg string) []string {
 	lower := strings.ToLower(msg)
-	var matched []string
+	seen := make(map[string]struct{})
 	for intent, keywords := range intentKeywords {
 		for _, kw := range keywords {
 			if strings.Contains(lower, kw) {
+				var label string
 				switch intent {
 				case IntentWebResearch:
-					matched = append(matched, "WEB_RESEARCH")
+					label = "WEB_RESEARCH"
 				case IntentFileOps:
-					matched = append(matched, "FILE_OPS")
+					label = "FILE_OPS"
 				case IntentCodeExec:
-					matched = append(matched, "CODE_EXEC")
+					label = "CODE_EXEC"
 				case IntentBrowser:
-					matched = append(matched, "BROWSER")
+					label = "BROWSER"
 				case IntentMemory:
-					matched = append(matched, "MEMORY")
+					label = "MEMORY"
 				case IntentSchedule:
-					matched = append(matched, "SCHEDULE")
+					label = "SCHEDULE"
 				case IntentCommunicate:
-					matched = append(matched, "COMMUNICATE")
+					label = "COMMUNICATE"
 				case IntentSystem:
-					matched = append(matched, "SYSTEM")
+					label = "SYSTEM"
 				case IntentPRReview:
-					matched = append(matched, "PR_REVIEW")
+					label = "PR_REVIEW"
 				case IntentSonar:
-					matched = append(matched, "SONAR")
+					label = "SONAR"
 				case IntentCICD:
-					matched = append(matched, "CICD")
+					label = "CICD"
 				case IntentIncident:
-					matched = append(matched, "INCIDENT")
+					label = "INCIDENT"
 				case IntentDevOpsGeneric:
-					matched = append(matched, "DEVOPS")
+					label = "DEVOPS"
+				}
+				if label != "" {
+					seen[label] = struct{}{}
 				}
 				break
 			}
 		}
 	}
-	return matched
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

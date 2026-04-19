@@ -142,7 +142,7 @@ func promptsRunCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			lib, err := openLibraryWithStateDir(cfg.StateDir)
+			lib, err := openLibraryFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -263,10 +263,13 @@ func openLibrary(gf *globalFlags) (*prompts.Library, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openLibraryWithStateDir(cfg.StateDir)
+	return openLibraryFromConfig(cfg)
 }
 
-func openLibraryWithStateDir(stateDir string) (*prompts.Library, error) {
+func openLibraryFromConfig(cfg *config.Config) (*prompts.Library, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil config")
+	}
 	embed, err := config.EmbeddedPromptsFS()
 	if err != nil {
 		return nil, fmt.Errorf("embedded prompts fs: %w", err)
@@ -274,7 +277,8 @@ func openLibraryWithStateDir(stateDir string) (*prompts.Library, error) {
 	return prompts.Loader{
 		Embedded:     embed,
 		EmbeddedRoot: ".",
-		Dir:          filepath.Join(stateDir, "prompts"),
+		ExtraDirs:    cfg.SmartPrompts.ExtraSourceDirs,
+		Dir:          filepath.Join(cfg.StateDir, "prompts"),
 	}.Load()
 }
 

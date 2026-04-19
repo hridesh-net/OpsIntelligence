@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
+	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
+	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
@@ -23,11 +26,14 @@ import (
 // chain names are a curated vocabulary the agent can pick from via the
 // Smart Prompts Index in its system prompt.
 type ChainRunTool struct {
-	Runner *prompts.Runner
+	Runner    *prompts.Runner
+	TracePath string // optional NDJSON run trace (same file as agent.run_trace_file)
 }
 
 // NewChainRunTool returns a ChainRunTool backed by the given runner.
-func NewChainRunTool(r *prompts.Runner) *ChainRunTool { return &ChainRunTool{Runner: r} }
+func NewChainRunTool(r *prompts.Runner, tracePath string) *ChainRunTool {
+	return &ChainRunTool{Runner: r, TracePath: strings.TrimSpace(tracePath)}
+}
 
 // Definition is the schema advertised to the LLM.
 func (t *ChainRunTool) Definition() provider.ToolDef {
@@ -52,8 +58,10 @@ func (t *ChainRunTool) Definition() provider.ToolDef {
 					"description": "How to resolve `id`. Default 'auto': chain first, then prompt.",
 				},
 				"inputs": map[string]any{
-					"type":        "object",
-					"description": "Free-form inputs referenced by the chain/prompt templates (e.g. {'pr_url': '...'}).",
+					"type": "object",
+					"description": "Inputs for the chain templates (e.g. {'pr_url': 'https://github.com/o/r/pull/1'}). " +
+						"For chain id \"pr-review\" on GitHub, the outer agent should first call devops.github.pull_request and devops.github.pr_diff, " +
+						"then pass optional strings github_pr_json, github_diff (truncate diff to ~24k chars), and github_ci_hint so the gather step has real evidence.",
 				},
 				"trace": map[string]any{
 					"type":        "boolean",
@@ -95,17 +103,19 @@ func (t *ChainRunTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		wantTrace = *req.Trace
 	}
 
+	inputKeys := chainInputKeys(req.Inputs)
+
 	switch req.Kind {
 	case "chain":
-		return runChain(ctx, t.Runner, req.ID, req.Inputs, wantTrace)
+		return t.runChain(ctx, req.ID, req.Inputs, wantTrace, inputKeys)
 	case "prompt":
-		return runPrompt(ctx, t.Runner, req.ID, req.Inputs)
+		return t.runSinglePrompt(ctx, req.ID, req.Inputs, inputKeys)
 	case "auto":
 		if _, ok := t.Runner.Lib.Chain(req.ID); ok {
-			return runChain(ctx, t.Runner, req.ID, req.Inputs, wantTrace)
+			return t.runChain(ctx, req.ID, req.Inputs, wantTrace, inputKeys)
 		}
 		if _, ok := t.Runner.Lib.Prompt(req.ID); ok {
-			return runPrompt(ctx, t.Runner, req.ID, req.Inputs)
+			return t.runSinglePrompt(ctx, req.ID, req.Inputs, inputKeys)
 		}
 		return unknownIDMessage(t.Runner.Lib, req.ID), nil
 	default:
@@ -113,11 +123,51 @@ func (t *ChainRunTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	}
 }
 
-func runChain(ctx context.Context, r *prompts.Runner, id string, inputs map[string]any, trace bool) (string, error) {
-	result, err := r.RunChain(ctx, id, inputs)
+func chainInputKeys(inputs map[string]any) []string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (t *ChainRunTool) runChain(ctx context.Context, id string, inputs map[string]any, trace bool, inputKeys []string) (string, error) {
+	started := time.Now()
+	t.traceChain(ctx, "chain_run_start", map[string]any{
+		"chain_id":    id,
+		"run_kind":    "chain",
+		"input_keys":  inputKeys,
+		"chain_model": t.Runner.DefaultModel,
+	})
+	result, err := t.Runner.RunChain(ctx, id, inputs)
 	if err != nil {
+		t.traceChain(ctx, "chain_run_error", map[string]any{
+			"chain_id": id,
+			"error":    err.Error(),
+			"ms":       time.Since(started).Milliseconds(),
+		})
 		return fmt.Sprintf("chain_run: %s", err.Error()), nil
 	}
+	stepIDs := make([]string, len(result.Steps))
+	stepModels := make([]string, len(result.Steps))
+	stepTok := make([]int, len(result.Steps))
+	for i, s := range result.Steps {
+		stepIDs[i] = s.PromptID
+		stepModels[i] = s.Model
+		stepTok[i] = s.Usage.TotalTokens
+	}
+	t.traceChain(ctx, "chain_run_complete", map[string]any{
+		"chain_id":     id,
+		"ms":           time.Since(started).Milliseconds(),
+		"step_prompts": stepIDs,
+		"step_models":  stepModels,
+		"step_tokens":  stepTok,
+		"total_tokens": result.Usage.TotalTokens,
+	})
 	if !trace {
 		return result.Final, nil
 	}
@@ -137,12 +187,58 @@ func runChain(ctx context.Context, r *prompts.Runner, id string, inputs map[stri
 	return sb.String(), nil
 }
 
-func runPrompt(ctx context.Context, r *prompts.Runner, id string, inputs map[string]any) (string, error) {
-	step, err := r.RunPrompt(ctx, id, inputs)
+func (t *ChainRunTool) runSinglePrompt(ctx context.Context, id string, inputs map[string]any, inputKeys []string) (string, error) {
+	started := time.Now()
+	t.traceChain(ctx, "chain_run_start", map[string]any{
+		"chain_id":    id,
+		"run_kind":    "prompt",
+		"input_keys":  inputKeys,
+		"chain_model": t.Runner.DefaultModel,
+	})
+	step, err := t.Runner.RunPrompt(ctx, id, inputs)
 	if err != nil {
+		t.traceChain(ctx, "chain_run_error", map[string]any{
+			"chain_id": id,
+			"error":    err.Error(),
+			"ms":       time.Since(started).Milliseconds(),
+		})
 		return fmt.Sprintf("chain_run: %s", err.Error()), nil
 	}
+	t.traceChain(ctx, "chain_run_complete", map[string]any{
+		"chain_id":     id,
+		"run_kind":     "prompt",
+		"ms":           time.Since(started).Milliseconds(),
+		"step_prompts": []string{id},
+		"step_models":  []string{step.Model},
+		"step_tokens":  []int{step.Usage.TotalTokens},
+		"total_tokens": step.Usage.TotalTokens,
+	})
 	return step.Output, nil
+}
+
+func (t *ChainRunTool) traceChain(ctx context.Context, eventKind string, fields map[string]any) {
+	path := runtrace.OutputPathFrom(ctx)
+	if path == "" {
+		path = strings.TrimSpace(t.TracePath)
+	}
+	if path == "" {
+		return
+	}
+	ev := map[string]any{}
+	for k, v := range fields {
+		ev[k] = v
+	}
+	ev["kind"] = eventKind
+	if id := correlation.RequestID(ctx); id != "" {
+		ev["request_id"] = id
+	}
+	if id := correlation.SessionID(ctx); id != "" {
+		ev["session_id"] = id
+	}
+	if ch := correlation.Channel(ctx); ch != "" {
+		ev["channel"] = ch
+	}
+	runtrace.Append(path, ev)
 }
 
 func unknownIDMessage(lib *prompts.Library, id string) string {

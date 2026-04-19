@@ -41,6 +41,10 @@ type Loader struct {
 	// EmbeddedRoot is the subpath within Embedded to scan. Ignored when
 	// Embedded is nil.
 	EmbeddedRoot string
+	// ExtraDirs are optional prompt roots merged after Embedded but before
+	// Dir. Later directories override earlier ones for the same prompt ID.
+	// Dir (<state_dir>/prompts) is always merged last and wins.
+	ExtraDirs []string
 	// Dir is the on-disk directory that overrides embedded defaults.
 	// Missing directories are not an error.
 	Dir string
@@ -53,6 +57,17 @@ func (ld Loader) Load() (*Library, error) {
 	if ld.Embedded != nil && ld.EmbeddedRoot != "" {
 		if err := ld.loadFromFS(lib, ld.Embedded, ld.EmbeddedRoot, "<embedded>"); err != nil {
 			return nil, fmt.Errorf("prompts: load embedded: %w", err)
+		}
+	}
+	for _, dir := range ld.ExtraDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			if err := ld.loadFromFS(lib, os.DirFS(dir), ".", dir); err != nil {
+				return nil, fmt.Errorf("prompts: load extra %s: %w", dir, err)
+			}
 		}
 	}
 	if ld.Dir != "" {

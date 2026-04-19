@@ -23,6 +23,19 @@ agent:
   # Seed with `cp -R <repo>/skills ~/.opsintelligence/` after first install.
   skills_dir: "~/.opsintelligence/skills"
   tools_dir: "~/.opsintelligence/tools"
+  # NDJSON run trace: on by default (auto → logs/runtrace.ndjson under state_dir).
+  # run_trace_mode: off          # disable entirely
+  # run_trace_mode: auto         # default; omit run_trace_file to use logs/runtrace.ndjson
+  # run_trace_file: "logs/custom.ndjson"
+  # Optional: dedicated NDJSON for sub-agent runs (else same file as master).
+  # run_trace_subagent_file: "logs/runtrace-subagents.ndjson"
+
+# Optional extra smart-prompt / chain roots (after embedded seed, before
+# <state_dir>/prompts). Last directory in the list wins on ID conflicts;
+# <state_dir>/prompts is always merged last and wins over everything.
+# smart_prompts:
+#   extra_source_dirs:
+#     - "/abs/path/to/OpsIntelligence/prompts"
 
 # ─────────────────────────────────────────────
 # DevOps platform integrations (first-class)

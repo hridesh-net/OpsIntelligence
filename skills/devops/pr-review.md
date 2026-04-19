@@ -9,10 +9,13 @@ Use this node when the user asks "review PR X", "should we merge Y", or
 "what's blocking #123". The workflow is the same whether the source is
 GitHub or GitLab.
 
-> **Fast path (thinking)**: call `chain_run` with
-> `{"id": "pr-review", "inputs": {"pr_url": "<url>"}}`. That chain
-> already implements the gather → analyze → critique → render flow
-> documented below, with a built-in self-critique pass.
+> **Fast path**: the `pr-review` chain runs **without tools** (LLM-only
+> steps). The **outer agent** must call GitHub DevOps tools first, then
+> pass evidence into the chain, for example:
+> `chain_run` with
+> `{"id": "pr-review", "inputs": {"pr_url": "<url>", "github_pr_json": "<output of devops.github.pull_request>", "github_diff": "<truncated devops.github.pr_diff>", "github_ci_hint": "optional summary"}}`.
+> The chain then implements gather → analyze → critique → render with a
+> built-in self-critique pass.
 >
 > **Fast path (posting the review back to GitHub)**: once the chain has
 > produced a verdict, follow the [`gh-pr-review`](../gh-pr-review/SKILL.md)
@@ -33,7 +36,7 @@ GitHub or GitLab.
 
 | What | GitHub tool | GitLab tool |
 |---|---|---|
-| Metadata (title, author, base/head, draft) | `devops.github.get_pr` | `devops.gitlab.list_mrs` (scoped) |
+| Metadata (title, author, base/head, draft) | `devops.github.pull_request` | `devops.gitlab.list_mrs` (scoped) |
 | Diff / changed files | `devops.github.pr_diff` | `devops.gitlab.list_mrs` + manual URL |
 | CI status | `devops.github.commit_status` + `devops.github.workflow_runs` | `devops.gitlab.pipelines` |
 | Quality gate | `devops.sonar.quality_gate` (projectKey derived from repo) | same |

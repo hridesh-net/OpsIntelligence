@@ -1,5 +1,12 @@
 # Smart Prompts & Prompt Chaining
 
+**Where the code lives vs the markdown:** the Go runtime (loader, library,
+`Runner`, types) is in `internal/prompts/`. The actual prompt and chain
+**files** ship inside the binary from `internal/config/seed/prompts/`
+(go:embed), are copied to `<state_dir>/prompts/` on first boot, and can be
+overridden again with `smart_prompts.extra_source_dirs` in YAML (or
+`OPSINTELLIGENCE_SMART_PROMPTS_EXTRA` for `PATH`-style extra roots).
+
 OpsIntelligence ships a small library of curated, disk-editable
 **smart prompts** and a runtime for executing them as ordered **chains**.
 Chains are how the agent gets good at hard DevOps tasks — PR review,
@@ -128,6 +135,35 @@ opsintelligence prompts run meta/self-critique \
 `opsintelligence prompts run` uses the default model from
 `routing.default` in your config. Each step's latency and token usage is
 reported in the trace.
+
+## Execution trace (monitoring)
+
+**Tracing starts automatically** for every agent turn (CLI, gateway, messaging
+channels, webhooks, sub-agents) unless you turn it off. With the default
+`agent.run_trace_mode` of `auto`, an empty `agent.run_trace_file` becomes
+`logs/runtrace.ndjson` under `state_dir`. Set `agent.run_trace_mode: off` to
+disable, or point `agent.run_trace_file` at a custom path (relative paths
+resolve under `state_dir`). Optional `agent.run_trace_subagent_file` writes
+sub-agent runs to a separate NDJSON file (when unset, sub-agents use the same
+file as the master). The active trace path is carried on the request context
+so `chain_run` events land in the same file as the runner that invoked them.
+
+**Environment overrides:** `OPSINTELLIGENCE_RUN_TRACE_MODE` (`auto` / `off` /
+same values as YAML), `OPSINTELLIGENCE_RUN_TRACE` (`0` / `1` as off / on),
+`OPSINTELLIGENCE_RUN_TRACE_FILE`, and `OPSINTELLIGENCE_RUN_TRACE_SUBAGENT_FILE`
+for path overrides without editing YAML.
+
+Typical `kind` values:
+
+| kind | Meaning |
+| --- | --- |
+| `task_start` | New user turn: `run_trace_mode` (effective policy), `runner_role` (`master` / `subagent`), query preview, `routing_intents` (keyword alignment with the tool graph), `skills_context_chars`, `skills_enabled` / `skills_enabled_count`, primary `model`, `llm_backend`, `provider`, `tools_profile`, local intel flags. |
+| `model_iteration` | Each main-loop LLM call: `iteration`, `model`, `llm_backend`, `routing_intents`, `skills_context_chars`, `tools_offered` (names selected for that completion). |
+| `tool_call` / `tool_done` | A tool invocation: name, input size, duration, success, result size. |
+| `chain_run_start` / `chain_run_complete` / `chain_run_error` | `chain_run` tool: chain or meta prompt id, per-step prompt ids/models/tokens. |
+| `task_done` | End of a turn: `finish` is `stop`, `max_iterations`, or `error` (with optional `error` text on failures / stream errors). |
+
+Inspect with `tail -f ~/.opsintelligence/logs/runtrace.ndjson | jq .` (or any NDJSON viewer).
 
 ## Agent-facing surface
 

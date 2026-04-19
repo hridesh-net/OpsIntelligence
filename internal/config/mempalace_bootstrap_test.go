@@ -24,4 +24,11 @@ func TestMemPalaceBootstrapConfig_stateDirAndPaths(t *testing.T) {
 	if cfg.Agent.LocalIntel.CacheDir != ci {
 		t.Fatalf("LocalIntel.CacheDir: got %q want %q", cfg.Agent.LocalIntel.CacheDir, ci)
 	}
+	rt := filepath.Join(root, "logs", "runtrace.ndjson")
+	if cfg.Agent.RunTraceFile != rt {
+		t.Fatalf("RunTraceFile: got %q want %q (auto tracing under state_dir)", cfg.Agent.RunTraceFile, rt)
+	}
+	if cfg.Agent.RunTraceMode != "auto" {
+		t.Fatalf("RunTraceMode: got %q want auto", cfg.Agent.RunTraceMode)
+	}
 }

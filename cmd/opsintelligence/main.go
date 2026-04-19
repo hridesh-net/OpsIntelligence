@@ -732,7 +732,8 @@ func toolsCmd(gf *globalFlags) *cobra.Command {
 				{"subagent_read_context", "Read back the shared-context audit trail for a task"},
 				{"subagent_remove", "Unregister a sub-agent (and delete workspace by default)"},
 				{"devops.github.list_prs", "List open PRs for an owner/repo"},
-				{"devops.github.pr_diff", "Fetch a PR's unified diff + metadata"},
+				{"devops.github.pull_request", "Fetch JSON metadata for a single PR (title, author, refs, draft)"},
+				{"devops.github.pr_diff", "Fetch a PR's unified diff (patch text, truncated)"},
 				{"devops.github.workflow_runs", "List recent GitHub Actions runs (status, conclusion, head_sha)"},
 				{"devops.github.commit_status", "Check combined commit status for a ref"},
 				{"devops.gitlab.list_mrs", "List open GitLab merge requests"},
@@ -1475,19 +1476,26 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		log.Info("devops tool registered", zap.String("tool", t.Definition().Name))
 	}
 
+	masterRunTrace := strings.TrimSpace(cfg.Agent.RunTraceFile)
+	subRunTraceOnly := strings.TrimSpace(cfg.Agent.RunTraceSubagentFile)
+	childRunTrace := subRunTraceOnly
+	if childRunTrace == "" {
+		childRunTrace = masterRunTrace
+	}
+
 	// Smart-prompt library: merge the embedded defaults with any operator
 	// overrides under <state_dir>/prompts/. Register `chain_run` and
 	// `chain_list` so the LLM can invoke named chains (pr-review,
 	// sonar-triage, cicd-regression, incident-scribe) and single meta
 	// prompts (self-critique, evidence-extractor, plan-then-act).
-	promptLibrary, promptIndex := loadSmartPrompts(cfg.StateDir, log)
+	promptLibrary, promptIndex := loadSmartPrompts(cfg, log)
 	if promptLibrary != nil {
 		pr := &prompts.Runner{
 			Provider:     p,
 			Lib:          promptLibrary,
 			DefaultModel: modelInfo.ID,
 		}
-		toolReg.Register(tools.NewChainRunTool(pr))
+		toolReg.Register(tools.NewChainRunTool(pr, masterRunTrace))
 		toolReg.Register(tools.NewChainListTool(pr))
 		log.Info("smart prompts loaded",
 			zap.Int("chains", len(promptLibrary.ListChains())),
@@ -1551,6 +1559,10 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		MaxIterations:         cfg.Agent.MaxIterations,
 		Model:                 modelInfo.ID,
 		ActiveSkillsContext:   skillsCtx,
+		EnabledSkillNames:     activeSkillNames,
+		RunTracePath:          masterRunTrace,
+		RunnerRole:            "master",
+		RunTraceMode:          cfg.Agent.RunTraceMode,
 		ProviderName:          providerNameForCaps,
 		ToolsProfile:          cfg.Security.Profile,
 		EnablePlanning:        agentPlanningEnabled(cfg),
@@ -1615,6 +1627,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		Log:                   log,
 		Model:                 modelInfo.ID,
 		ActiveSkillsContext:   skillsCtx,
+		EnabledSkillNames:     activeSkillNames,
+		RunTracePath:          childRunTrace,
 		ProviderName:          providerNameForCaps,
 		GatewayPublicBaseURL:  cfg.PublicGatewayBaseURL(),
 		ExtensionPromptAppend: extPrompt,
@@ -1622,6 +1636,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		Guardrail:             guardrail,
 		AuditLog:              auditLog,
 		Hardware:              hw,
+		RunTraceMode:          cfg.Agent.RunTraceMode,
 	}
 	// Async task orchestration: lets the master agent dispatch multiple
 	// sub-agent runs in parallel (e.g. review 3 PRs simultaneously) while
@@ -1975,10 +1990,15 @@ func resolveBundledSkillsSrc() string {
 }
 
 // loadSmartPrompts hydrates the smart-prompt Library from the embedded
-// defaults and overlays any operator overrides under <state_dir>/prompts/.
+// defaults, optional smart_prompts.extra_source_dirs, then operator overrides
+// under <state_dir>/prompts/ (last wins per prompt id).
 // Failures are logged but never fatal: the agent should still boot even
 // if a custom prompt file has a syntax error.
-func loadSmartPrompts(stateDir string, log *zap.Logger) (*prompts.Library, string) {
+func loadSmartPrompts(cfg *config.Config, log *zap.Logger) (*prompts.Library, string) {
+	if cfg == nil {
+		return nil, ""
+	}
+	stateDir := cfg.StateDir
 	embed, err := config.EmbeddedPromptsFS()
 	if err != nil {
 		log.Warn("smart prompts embedded fs unavailable", zap.Error(err))
@@ -1987,6 +2007,7 @@ func loadSmartPrompts(stateDir string, log *zap.Logger) (*prompts.Library, strin
 	ld := prompts.Loader{
 		Embedded:     embed,
 		EmbeddedRoot: ".",
+		ExtraDirs:    cfg.SmartPrompts.ExtraSourceDirs,
 		Dir:          filepath.Join(stateDir, "prompts"),
 	}
 	lib, err := ld.Load()
@@ -1998,6 +2019,10 @@ func loadSmartPrompts(stateDir string, log *zap.Logger) (*prompts.Library, strin
 			return nil, ""
 		}
 		return fallback, fallback.Index()
+	}
+	if len(cfg.SmartPrompts.ExtraSourceDirs) > 0 {
+		log.Info("smart prompts extra source dirs active",
+			zap.Strings("dirs", cfg.SmartPrompts.ExtraSourceDirs))
 	}
 	return lib, lib.Index()
 }

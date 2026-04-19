@@ -238,7 +238,10 @@ Repository: {{with .repository}}{{.full_name}}{{end}}.
 Sender: @{{with .sender}}{{.login}}{{end}}.
 
 Inspect the payload below and decide on the right DevOps workflow:
-- pull_request / pull_request_review → run chain_run id="pr-review".
+- pull_request / pull_request_review → build pr_url from the payload, call
+  devops.github.pull_request + devops.github.pr_diff (then optional CI tools),
+  then chain_run id="pr-review" with inputs including pr_url, github_pr_json,
+  and truncated github_diff (chains cannot call the GitHub API themselves).
 - workflow_run / check_suite / check_run (failed) → run chain_run id="cicd-regression".
 - issues / issue_comment → summarise and triage.
 - push → check CI status and recent regressions if this is the default branch.

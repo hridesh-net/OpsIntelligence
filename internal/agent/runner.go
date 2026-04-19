@@ -23,6 +23,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
+	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
@@ -121,6 +122,14 @@ type Config struct {
 	ExtensionPromptAppend string
 	// StateDir is the OpsIntelligence state root (for owner-only policy path checks in the guardrail).
 	StateDir string
+	// RunTracePath is an optional absolute path to an append-only NDJSON trace file.
+	RunTracePath string
+	// RunnerRole is "master" (default) or "subagent"; recorded in run_trace.task_start.
+	RunnerRole string
+	// RunTraceMode is the resolved agent.run_trace_mode (e.g. auto, off) for run_trace.task_start.
+	RunTraceMode string
+	// EnabledSkillNames lists skills merged into this runner (for run_trace only).
+	EnabledSkillNames []string
 	Palace   PalaceConfig
 	// LocalIntel runs optional on-device Gemma before the main model (see opsintelligence.yaml agent.local_intel).
 	LocalIntel LocalIntelRunnerConfig
@@ -371,6 +380,122 @@ func (r *Runner) logFields(ctx context.Context, extra ...zap.Field) []zap.Field 
 	return append(fields, extra...)
 }
 
+// traceRoutingCatalog is implemented by tools.Catalog for run_trace routing hints.
+type traceRoutingCatalog interface {
+	TraceRoutingIntents(userMessage string) []string
+}
+
+func (r *Runner) tracePath(ctx context.Context) string {
+	if p := runtrace.OutputPathFrom(ctx); p != "" {
+		return p
+	}
+	return strings.TrimSpace(r.cfg.RunTracePath)
+}
+
+func (r *Runner) routingIntentsForTrace(userMessage string) []string {
+	if r.catalog == nil {
+		return nil
+	}
+	c, ok := r.catalog.(traceRoutingCatalog)
+	if !ok {
+		return nil
+	}
+	return c.TraceRoutingIntents(userMessage)
+}
+
+func (r *Runner) emitTrace(ctx context.Context, kind string, fields map[string]any) {
+	path := r.tracePath(ctx)
+	if path == "" {
+		return
+	}
+	ev := map[string]any{}
+	for k, v := range fields {
+		ev[k] = v
+	}
+	ev["kind"] = kind
+	if id := correlation.RequestID(ctx); id != "" {
+		ev["request_id"] = id
+	}
+	if id := correlation.SessionID(ctx); id != "" {
+		ev["session_id"] = id
+	} else if r.sessionID != "" {
+		ev["session_id"] = r.sessionID
+	}
+	if ch := correlation.Channel(ctx); ch != "" {
+		ev["channel"] = ch
+	} else if r.channelID != "" {
+		ev["channel"] = r.channelID
+	}
+	runtrace.Append(path, ev)
+}
+
+func (r *Runner) emitTraceTaskDone(ctx context.Context, iterations int, finish string, errMsg string) {
+	m := map[string]any{
+		"iterations": iterations,
+		"finish":     finish,
+	}
+	if errMsg != "" {
+		m["error"] = truncateForTrace(errMsg, 500)
+	}
+	r.emitTrace(ctx, "task_done", m)
+}
+
+func (r *Runner) traceTaskStart(ctx context.Context, userMessage string) {
+	if r.tracePath(ctx) == "" {
+		return
+	}
+	advisory := strings.TrimSpace(r.localIntelScratch) != ""
+	role := strings.TrimSpace(r.cfg.RunnerRole)
+	if role == "" {
+		role = "master"
+	}
+	traceFields := map[string]any{
+		"query_preview":          truncateForTrace(userMessage, 240),
+		"runner_role":            role,
+		"routing_intents":        r.routingIntentsForTrace(userMessage),
+		"skills_context_chars":   len(strings.TrimSpace(r.cfg.ActiveSkillsContext)),
+		"skills_enabled":         append([]string(nil), r.cfg.EnabledSkillNames...),
+		"skills_enabled_count":   len(r.cfg.EnabledSkillNames),
+		"primary_model":          r.cfg.Model,
+		"llm_backend":            runtrace.InferBackend(r.cfg.ProviderName, r.cfg.Model, r.cfg.LocalIntel.Enabled, advisory),
+		"tools_profile":          r.cfg.ToolsProfile,
+		"provider":               r.cfg.ProviderName,
+		"local_intel_enabled":    r.cfg.LocalIntel.Enabled,
+		"local_advisory_applied": advisory,
+	}
+	if m := strings.TrimSpace(r.cfg.RunTraceMode); m != "" {
+		traceFields["run_trace_mode"] = m
+	}
+	r.emitTrace(ctx, "task_start", traceFields)
+}
+
+func (r *Runner) traceModelIteration(ctx context.Context, iteration int, userMessage string, req *provider.CompletionRequest) {
+	if r.tracePath(ctx) == "" || req == nil {
+		return
+	}
+	names := make([]string, 0, len(req.Tools))
+	for _, t := range req.Tools {
+		names = append(names, t.Name)
+	}
+	advisory := strings.TrimSpace(r.localIntelScratch) != ""
+	r.emitTrace(ctx, "model_iteration", map[string]any{
+		"iteration":            iteration,
+		"model":                req.Model,
+		"llm_backend":          runtrace.InferBackend(r.cfg.ProviderName, req.Model, r.cfg.LocalIntel.Enabled, advisory),
+		"routing_intents":      r.routingIntentsForTrace(userMessage),
+		"skills_context_chars": len(strings.TrimSpace(r.cfg.ActiveSkillsContext)),
+		"tools_offered":        names,
+	})
+}
+
+func truncateForTrace(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
 // streamInternalAgentUI is true when we should show planning / reflection / maintenance
 // tokens to the stream handler (CLI, web SSE). Messaging apps must not surface this.
 func (r *Runner) streamInternalAgentUI() bool {
@@ -400,6 +525,9 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 	ctx, _ = correlation.EnsureRequestID(ctx)
 	ctx = correlation.WithSessionID(ctx, r.sessionID)
 	ctx = correlation.WithChannel(ctx, r.channelID)
+	if p := strings.TrimSpace(r.cfg.RunTracePath); p != "" {
+		ctx = runtrace.WithOutputPath(ctx, p)
+	}
 	ctx, enqueueSpan := obstracing.StartSpan(ctx, "agent.enqueue_message")
 
 	userMessage := msg.Content
@@ -422,6 +550,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 	iterations := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
+	r.traceTaskStart(ctx, userMessage)
 
 	// V3: Planning Phase
 	plan := ""
@@ -452,6 +581,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 
 		// Build the completion request from working memory.
 		req := r.buildRequestV3(ctx, userMessage)
+		r.traceModelIteration(ctx, iterations, userMessage, req)
 
 		r.log.Debug("running completion",
 			zap.String("model", r.cfg.Model),
@@ -464,12 +594,14 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		stream, err := r.provider.Stream(modelCtx, req)
 		if err != nil {
 			modelSpan.End()
+			r.emitTraceTaskDone(ctx, iterations, "error", err.Error())
 			return nil, fmt.Errorf("agent: stream: %w", err)
 		}
 
 		resp, err := provider.CollectStream(modelCtx, stream)
 		modelSpan.End()
 		if err != nil {
+			r.emitTraceTaskDone(ctx, iterations, "error", err.Error())
 			return nil, fmt.Errorf("agent: collect stream: %w", err)
 		}
 
@@ -511,6 +643,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			// Compact working memory if over budget.
 			r.working.Compact(r.working.TotalTokens())
 
+			r.emitTraceTaskDone(ctx, iterations, "stop", "")
 			return &RunResult{
 				SessionID:  r.sessionID,
 				Response:   assistantContent,
@@ -568,6 +701,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		}
 	}
 
+	r.emitTraceTaskDone(ctx, iterations, "max_iterations", "")
 	return nil, fmt.Errorf("agent: exceeded max iterations (%d)", r.cfg.MaxIterations)
 }
 
@@ -608,16 +742,38 @@ func extractMarkdownBash(text string) []provider.ContentPart {
 }
 
 // executeTool runs a single tool call and returns the result string.
-func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) string {
+func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (result string) {
+	start := time.Now()
+	defer func() {
+		if r.tracePath(ctx) == "" {
+			return
+		}
+		ok := result != "" && !strings.HasPrefix(result, "Error") && !strings.HasPrefix(result, "[Security]")
+		r.emitTrace(ctx, "tool_done", map[string]any{
+			"tool":         tc.ToolName,
+			"ms":           time.Since(start).Milliseconds(),
+			"ok":           ok,
+			"result_chars": len(result),
+		})
+	}()
+
 	tool, ok := r.tools.Get(tc.ToolName)
 	if !ok {
 		r.log.Warn("tool not found", zap.String("tool", tc.ToolName))
-		return fmt.Sprintf("Error: tool %q not found", tc.ToolName)
+		result = fmt.Sprintf("Error: tool %q not found", tc.ToolName)
+		return result
 	}
 
 	inputJSON, err := json.Marshal(tc.ToolInput)
 	if err != nil {
-		return fmt.Sprintf("Error marshalling tool input: %v", err)
+		result = fmt.Sprintf("Error marshalling tool input: %v", err)
+		return result
+	}
+	if r.tracePath(ctx) != "" {
+		r.emitTrace(ctx, "tool_call", map[string]any{
+			"tool":        tc.ToolName,
+			"input_bytes": len(inputJSON),
+		})
 	}
 
 	// ── Guardrail: pre-execution tool check ──────────────────────────────
@@ -637,7 +793,8 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) strin
 					zap.String("reason", check.Message),
 				)...,
 			)
-			return "[Security] " + check.Message
+			result = "[Security] " + check.Message
+			return result
 		}
 		if check.Action == security.ActionWarn {
 			r.log.Warn("guardrail warning on tool call",
@@ -661,20 +818,22 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) strin
 		r.catalog.RecordUsage(tc.ToolName)
 	}
 
-	start := time.Now()
+	t0 := time.Now()
 	if r.mediaFn != nil {
 		ctx = context.WithValue(ctx, channels.MediaFnKey, r.mediaFn)
 	}
-	result, err := tool.Execute(ctx, inputJSON)
-	dur := time.Since(start)
-	if err != nil {
+	var execErr error
+	result, execErr = tool.Execute(ctx, inputJSON)
+	dur := time.Since(t0)
+	if execErr != nil {
 		r.log.Error("tool execution failed",
 			r.logFields(ctx,
 				zap.String("tool", tc.ToolName),
-				zap.Error(err),
+				zap.Error(execErr),
 			)...,
 		)
-		return fmt.Sprintf("Error: %v", err)
+		result = fmt.Sprintf("Error: %v", execErr)
+		return result
 	}
 
 	if strings.TrimSpace(result) == "" {
@@ -900,7 +1059,7 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 ## Common Workflows
 
 ### DevOps fast paths (prefer these; chains are cheaper than improvising)
-- "Review PR X" / "should we merge Y" → ` + "`chain_run`" + ` with ` + "`id=\"pr-review\"`" + ` and ` + "`inputs.pr_url`" + `. After the verdict, follow the ` + "`gh-pr-review`" + ` skill to post the review (gh pr checkout → lint/test locally → post line-level suggestions).
+- "Review PR X" / "should we merge Y" (GitHub URL): **Smart-prompt chains run without tools** — they only see text you pass in. **Do not** call ` + "`chain_run`" + ` with only ` + "`pr_url`" + ` and expect the chain to hit the GitHub API. Instead: (1) Parse owner, repo, and number from the URL. (2) Call ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (truncate the diff to ~24k chars for the prompt). Optionally call ` + "`devops.github.workflow_runs`" + ` / ` + "`devops.github.commit_status`" + ` and paste short summaries into ` + "`github_ci_hint`" + `. (3) Call ` + "`chain_run`" + ` with ` + "`{\"id\":\"pr-review\",\"inputs\":{\"pr_url\":<url>,\"github_pr_json\":<string from pull_request>,\"github_diff\":<string from pr_diff>,\"github_ci_hint\":<optional>}}`" + `. (4) After the verdict, follow the ` + "`gh-pr-review`" + ` skill to post back to GitHub if asked.
 - "Why is the pipeline red / what regressed?" → ` + "`chain_run`" + ` with ` + "`id=\"cicd-regression\"`" + ` and ` + "`inputs.platform`" + ` ("github"|"gitlab"|"jenkins") + ` + "`inputs.target`" + `.
 - "Sonar quality gate / triage new-code issues" → ` + "`chain_run`" + ` with ` + "`id=\"sonar-triage\"`" + ` and ` + "`inputs.project_key`" + `.
 - "Incident just paged / prod is down" → ` + "`chain_run`" + ` with ` + "`id=\"incident-scribe\"`" + `, then ` + "`message`" + ` the brief to Slack. Never take write actions without a human "yes".
@@ -1109,6 +1268,9 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 	ctx, _ = correlation.EnsureRequestID(ctx)
 	ctx = correlation.WithSessionID(ctx, r.sessionID)
 	ctx = correlation.WithChannel(ctx, r.channelID)
+	if p := strings.TrimSpace(r.cfg.RunTracePath); p != "" {
+		ctx = runtrace.WithOutputPath(ctx, p)
+	}
 	ctx, enqueueSpan := obstracing.StartSpan(ctx, "agent.enqueue_message")
 
 	userMessage := msg.Content
@@ -1132,6 +1294,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 	iterations := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
+	r.traceTaskStart(ctx, userMessage)
 
 	// V3: Planning Phase (kept in working memory for the model; not streamed to Slack/chat surfaces).
 	plan := ""
@@ -1161,12 +1324,17 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		iterations++
 		fullResponse.Reset()
 
+		req := r.buildRequestV3(ctx, userMessage)
+		r.traceModelIteration(ctx, iterations, userMessage, req)
+
 		// V3: Use buildRequestV3 with query context
 		modelCtx, modelSpan := obstracing.StartSpan(ctx, "agent.model_call")
-		stream, err := r.provider.Stream(modelCtx, r.buildRequestV3(modelCtx, userMessage))
+		stream, err := r.provider.Stream(modelCtx, req)
 		if err != nil {
 			modelSpan.End()
-			handler.OnError(fmt.Errorf("agent: stream: %w", err))
+			streamErr := fmt.Errorf("agent: stream: %w", err)
+			r.emitTraceTaskDone(ctx, iterations, "error", streamErr.Error())
+			handler.OnError(streamErr)
 			return
 		}
 
@@ -1190,6 +1358,11 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 					totalUsage.TotalTokens += event.Usage.TotalTokens
 				}
 			case provider.StreamEventError:
+				if event.Err != nil {
+					r.emitTraceTaskDone(ctx, iterations, "error", event.Err.Error())
+				} else {
+					r.emitTraceTaskDone(ctx, iterations, "error", "stream error (nil)")
+				}
 				handler.OnError(event.Err)
 				return
 			}
@@ -1210,6 +1383,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		_ = r.memory.Episodic.Save(ctx, assistantMsg)
 
 		if len(toolCalls) == 0 || finishReason == provider.FinishReasonStop {
+			r.emitTraceTaskDone(ctx, iterations, "stop", "")
 			handler.OnDone(&RunResult{
 				SessionID: r.sessionID, Response: fullResponse.String(),
 				Iterations: iterations, Usage: totalUsage,
@@ -1265,7 +1439,9 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		}
 	}
 
-	handler.OnError(fmt.Errorf("agent: exceeded max iterations (%d)", r.cfg.MaxIterations))
+	maxIterErr := fmt.Errorf("agent: exceeded max iterations (%d)", r.cfg.MaxIterations)
+	r.emitTraceTaskDone(ctx, iterations, "max_iterations", maxIterErr.Error())
+	handler.OnError(maxIterErr)
 }
 
 // HandleChannelMessage is a background message handler for messaging channels.
