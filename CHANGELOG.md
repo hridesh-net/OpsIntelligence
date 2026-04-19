@@ -6,9 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-04-19
+
 ### Added
 
-- **Dashboard → Run trace:** browse the tail of master / sub-agent NDJSON run traces via `GET /api/v1/runtrace` (`run_trace.read` permission). Gateway settings help text documents **lan** bind for Tailscale/LAN access to `/dashboard/`.
+- **Dashboard → Run trace:** tail master / sub-agent NDJSON via **Run trace** in the sidebar (`GET /api/v1/runtrace`, permission **`run_trace.read`** on built-in roles except viewer). Gateway **Bind mode** help documents **lan** for Tailscale/LAN access to `/dashboard/`.
+
+### Changed
+
+- **`opsintelligence status`:** when stopped, prints dashboard URL, `curl /health`, SSH port-forward hint, and `tail -f` for the run trace file; live status view shows the same hints when running.
+
+### Fixed
+
+- **Gateway `GET /`:** when phase-2 auth is enabled, redirect to `/dashboard/`; legacy root uses `io.ReadSeeker` for embedded `index.html` (avoids empty responses on `/` while `/health` still works).
 
 ## [0.3.6] — 2026-04-18
 
