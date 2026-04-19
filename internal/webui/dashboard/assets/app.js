@@ -298,21 +298,25 @@
         </select>
       </label>
       <button type="button" class="primary" id="runtrace-refresh">Refresh</button>
-      <label class="inline"><input type="checkbox" id="runtrace-live" /> Auto-refresh (10s)</label>
+      <label class="inline"><input type="checkbox" id="runtrace-live" checked /> Auto-refresh (10s)</label>
     `;
     body.textContent = "Loading…";
 
     const whichSel = document.getElementById("runtrace-which");
+    const liveCb = document.getElementById("runtrace-live");
     const refresh = () => loadRunTraceInto(body, whichSel.value);
     document.getElementById("runtrace-refresh").addEventListener("click", refresh);
     whichSel.addEventListener("change", refresh);
-    document.getElementById("runtrace-live").addEventListener("change", (ev) => {
+    liveCb.addEventListener("change", (ev) => {
       clearRunTracePoll();
       if (ev.target.checked) {
         runTracePollId = setInterval(refresh, 10000);
       }
     });
     refresh();
+    if (liveCb.checked) {
+      runTracePollId = setInterval(refresh, 10000);
+    }
   }
 
   async function loadRunTraceInto(bodyEl, which) {
@@ -323,7 +327,20 @@
       );
       const lines = Array.isArray(data.lines) ? data.lines : [];
       const meta = `path: ${data.path || "—"}${data.truncated ? " (tail truncated)" : ""}\n\n`;
-      const text = meta + lines.map((row) => JSON.stringify(JSON.parse(row))).join("\n");
+      const text =
+        meta +
+        lines
+          .map((row) => {
+            if (typeof row === "string") {
+              try {
+                return JSON.stringify(JSON.parse(row), null, 2);
+              } catch {
+                return row;
+              }
+            }
+            return JSON.stringify(row, null, 2);
+          })
+          .join("\n");
       bodyEl.textContent = text || meta + "(no lines yet)";
     } catch (err) {
       const m = String(err.message || err);

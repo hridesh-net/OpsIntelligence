@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-04-19
+
+### Changed
+
+- **Dashboard → Run trace:** **Auto-refresh (10s)** is enabled by default when opening the tab (still cleared when navigating away; can be turned off).
+
+### Fixed
+
+- **Dashboard → Run trace:** render each tail line whether the API returns JSON strings or already-parsed objects (avoids `"[object Object]" is not valid JSON`).
+- **Bedrock (Converse / ConverseStream):** map registry tool names to AWS-safe names (`[a-zA-Z0-9_-]+`) and back, so dotted tools such as `devops.github.pull_request` no longer trigger `ValidationException` on history replay or new turns.
+
 ## [0.3.7] — 2026-04-19
 
 ### Added

@@ -121,12 +121,13 @@ func (p *Provider) Complete(ctx context.Context, req *provider.CompletionRequest
 		model = "anthropic.claude-3-5-haiku-20241022-v1:0"
 	}
 
-	messages, system, err := buildConverseMessages(req)
+	toolAliases := newBedrockToolAliases(req.Tools)
+	messages, system, err := buildConverseMessages(req, toolAliases)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock: build messages: %w", err)
 	}
 
-	toolConfig, err := buildConverseTools(req.Tools)
+	toolConfig, err := buildConverseTools(req.Tools, toolAliases)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock: build tools: %w", err)
 	}
@@ -165,7 +166,7 @@ func (p *Provider) Complete(ctx context.Context, req *provider.CompletionRequest
 				resp.Content = append(resp.Content, provider.ContentPart{
 					Type:      provider.ContentTypeToolUse,
 					ToolUseID: *tu.Value.ToolUseId,
-					ToolName:  *tu.Value.Name,
+					ToolName:  toolAliases.fromAWSName(*tu.Value.Name),
 					ToolInput: tu.Value.Input,
 				})
 				resp.FinishReason = provider.FinishReasonToolUse
@@ -194,12 +195,13 @@ func (p *Provider) Stream(ctx context.Context, req *provider.CompletionRequest) 
 		model = p.cfg.DefaultModel
 	}
 
-	messages, system, err := buildConverseMessages(req)
+	toolAliases := newBedrockToolAliases(req.Tools)
+	messages, system, err := buildConverseMessages(req, toolAliases)
 	if err != nil {
 		return nil, err
 	}
 
-	toolConfig, err := buildConverseTools(req.Tools)
+	toolConfig, err := buildConverseTools(req.Tools, toolAliases)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +268,7 @@ func (p *Provider) Stream(ctx context.Context, req *provider.CompletionRequest) 
 						ToolUse: &provider.ContentPart{
 							Type:      provider.ContentTypeToolUse,
 							ToolUseID: call.ID,
-							ToolName:  call.Name,
+							ToolName:  toolAliases.fromAWSName(call.Name),
 							ToolInput: args,
 						},
 					}
@@ -297,7 +299,7 @@ func (p *Provider) SupportsNativeStreaming() bool { return true }
 // Unified Converse Message Builders
 // ─────────────────────────────────────────────
 
-func buildConverseTools(reqTools []provider.ToolDef) (*types.ToolConfiguration, error) {
+func buildConverseTools(reqTools []provider.ToolDef, aliases *bedrockToolAliases) (*types.ToolConfiguration, error) {
 	if len(reqTools) == 0 {
 		return nil, nil
 	}
@@ -321,7 +323,7 @@ func buildConverseTools(reqTools []provider.ToolDef) (*types.ToolConfiguration, 
 
 		bTools = append(bTools, &types.ToolMemberToolSpec{
 			Value: types.ToolSpecification{
-				Name:        aws.String(t.Name),
+				Name:        aws.String(aliases.toAWSName(t.Name)),
 				Description: aws.String(t.Description),
 				InputSchema: &types.ToolInputSchemaMemberJson{
 					Value: document.NewLazyDocument(schemaMap),
@@ -397,7 +399,7 @@ func onlyToolResults(parts []provider.ContentPart) bool {
 	return true
 }
 
-func buildConverseMessages(req *provider.CompletionRequest) ([]types.Message, []types.SystemContentBlock, error) {
+func buildConverseMessages(req *provider.CompletionRequest, aliases *bedrockToolAliases) ([]types.Message, []types.SystemContentBlock, error) {
 	merged := mergeToolResultTurnsForConverse(req.Messages)
 	var messages []types.Message
 	for _, m := range merged {
@@ -431,7 +433,7 @@ func buildConverseMessages(req *provider.CompletionRequest) ([]types.Message, []
 				content = append(content, &types.ContentBlockMemberToolUse{
 					Value: types.ToolUseBlock{
 						Input:     document.NewLazyDocument(input),
-						Name:      aws.String(cp.ToolName),
+						Name:      aws.String(aliases.toAWSName(cp.ToolName)),
 						ToolUseId: aws.String(cp.ToolUseID),
 					},
 				})
