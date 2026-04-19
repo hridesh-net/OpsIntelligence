@@ -25,6 +25,11 @@ type StatusInfo struct {
 	PlanoEndpoint string
 	MCPEnabled    bool
 	MCPTransport  string
+	// GatewayBase is e.g. http://127.0.0.1:18790 (for dashboard / health hints).
+	GatewayBase   string
+	GatewayBind   string
+	RunTraceFile  string
+	RunTraceMode  string
 }
 
 // ─────────────────────────────────────────────
@@ -148,9 +153,26 @@ func (m StatusModel) View() string {
 		dim.Render("  channels    ") + channelStr,
 		dim.Render("  plano       ") + planoStr,
 		dim.Render("  mcp         ") + mcpStr,
-		"",
-		dim.Render("  press q to quit"),
 	}
+
+	if strings.TrimSpace(m.info.GatewayBase) != "" {
+		base := strings.TrimSuffix(strings.TrimSpace(m.info.GatewayBase), "/")
+		rows = append(rows, "",
+			dim.Render("  dashboard   ")+prim.Render(base+"/dashboard/"),
+			dim.Render("  health      ")+dim.Render("curl -sS "+base+"/health"),
+		)
+		if b := strings.TrimSpace(m.info.GatewayBind); b != "" && b != "loopback" {
+			rows = append(rows, dim.Render("  gateway.bind ")+prim.Render(b))
+		}
+	}
+	if strings.TrimSpace(m.info.RunTraceFile) != "" && strings.TrimSpace(m.info.RunTraceMode) != "off" {
+		rows = append(rows,
+			"",
+			dim.Render("  run trace   ")+dim.Render("tail -f "+strings.TrimSpace(m.info.RunTraceFile)),
+		)
+	}
+
+	rows = append(rows, "", dim.Render("  press q to quit"))
 
 	body := strings.Join(rows, "\n")
 

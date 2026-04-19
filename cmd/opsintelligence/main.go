@@ -338,7 +338,24 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 			pid, err := ReadPID(PidFile(cfg.StateDir))
 			if err != nil || !CheckPID(pid) {
 				fmt.Println("● OpsIntelligence is NOT running.")
-				fmt.Printf("  Start with: opsintelligence start\n")
+				fmt.Printf("  Start with: opsintelligence start\n\n")
+				gw := cfg.PublicGatewayBaseURL()
+				fmt.Printf("  After start, dashboard: %s/dashboard/\n", gw)
+				fmt.Printf("  Health check: curl -sS %s/health\n", gw)
+				bind := strings.TrimSpace(cfg.Gateway.Bind)
+				if bind == "" {
+					bind = "loopback"
+				}
+				if bind != "lan" && !strings.EqualFold(bind, "0.0.0.0") {
+					fmt.Println("\n  If the browser is on another computer and Ops runs over SSH,")
+					fmt.Println("  forward the port then open the URL locally, e.g.:")
+					fmt.Printf("    ssh -L 18790:127.0.0.1:%d you@server\n", cfg.Gateway.Port)
+					fmt.Printf("    → http://127.0.0.1:%d/dashboard/\n", cfg.Gateway.Port)
+					fmt.Println("  Or set gateway.bind: lan in opsintelligence.yaml so the gateway listens on all interfaces.")
+				}
+				if strings.TrimSpace(cfg.Agent.RunTraceFile) != "" && strings.TrimSpace(cfg.Agent.RunTraceMode) != "off" {
+					fmt.Printf("\n  Monitor agent turns (NDJSON): tail -f %s\n", cfg.Agent.RunTraceFile)
+				}
 				return nil
 			}
 
@@ -378,6 +395,10 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				mcpTransport = "stdio"
 			}
 
+			gwBind := strings.TrimSpace(cfg.Gateway.Bind)
+			if gwBind == "" {
+				gwBind = "loopback"
+			}
 			return tui.RunStatus(tui.StatusInfo{
 				PID:           pid,
 				Version:       version,
@@ -387,6 +408,10 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				PlanoEndpoint: cfg.Plano.Endpoint,
 				MCPEnabled:    cfg.MCP.Server.Enabled,
 				MCPTransport:  mcpTransport,
+				GatewayBase:   cfg.PublicGatewayBaseURL(),
+				GatewayBind:   gwBind,
+				RunTraceFile:  cfg.Agent.RunTraceFile,
+				RunTraceMode:  cfg.Agent.RunTraceMode,
 			})
 		},
 	}
