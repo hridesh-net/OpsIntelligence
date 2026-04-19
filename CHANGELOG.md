@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-04-19
+
+### Added
+
+- **Pseudo-XML tool calls:** if the model emits blocks like `<function=devops.github.list_prs><parameter=owner>…</parameter></function>` instead of native tool JSON, the runner parses them, strips the markup from assistant text, and executes the tools (same spirit as the existing markdown `bash` fallback). Covered by unit tests.
+
+### Changed
+
+- **Messaging channels (e.g. WhatsApp):** model tokens are buffered for the turn and sent once at the end so pseudo-tool markup is not streamed into the chat; CLI / in-app surfaces that stream internally are unchanged.
+- **Dashboard → Run trace:** each event shows a one-line summary (kind, iteration, tool, chain, skills, query preview, errors) above the pretty-printed JSON.
+
+### Fixed
+
+- **Agent loop:** a turn with tool calls inferred from XML/markdown no longer stops early only because the API reported `stop` without native tool parts (so PR-style flows can run tools and continue).
+- **Run trace:** `tool_call` and `tool_done` events include **`iteration`** so they align with `model_iteration` in the tail file.
+
 ## [0.3.8] — 2026-04-19
 
 ### Changed

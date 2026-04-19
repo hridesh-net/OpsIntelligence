@@ -319,6 +319,35 @@
     }
   }
 
+  function summarizeRunTraceEvent(o) {
+    if (!o || typeof o !== "object") return "";
+    const k = o.kind || "?";
+    const parts = [`${k}`];
+    if (o.iteration != null && o.iteration !== "") parts.push(`iter=${o.iteration}`);
+    if (o.tool) parts.push(`tool=${o.tool}`);
+    if (o.chain_id) parts.push(`chain=${o.chain_id}`);
+    if (o.run_kind) parts.push(`run=${o.run_kind}`);
+    if (o.finish) parts.push(`finish=${o.finish}`);
+    if (k === "model_iteration" && o.model) parts.push(`model=${o.model}`);
+    if (k === "model_iteration" && Array.isArray(o.tools_offered)) {
+      parts.push(`tools_offered=${o.tools_offered.length}`);
+    }
+    if (Array.isArray(o.skills_enabled) && o.skills_enabled.length) {
+      const s = o.skills_enabled.join(",");
+      parts.push(`skills=${s.length > 120 ? s.slice(0, 120) + "…" : s}`);
+    }
+    if (k === "task_start" && o.query_preview) {
+      const q = String(o.query_preview);
+      parts.push(`query=${q.length > 100 ? q.slice(0, 100) + "…" : q}`);
+    }
+    if (k === "tool_done" && o.ok != null) parts.push(o.ok ? "ok" : "err");
+    if ((k === "task_done" || k === "chain_run_error") && o.error) {
+      const e = String(o.error);
+      parts.push(`error=${e.length > 120 ? e.slice(0, 120) + "…" : e}`);
+    }
+    return "▶ " + parts.join("  ·  ");
+  }
+
   async function loadRunTraceInto(bodyEl, which) {
     bodyEl.textContent = "Loading…";
     try {
@@ -331,16 +360,22 @@
         meta +
         lines
           .map((row) => {
+            let obj = row;
             if (typeof row === "string") {
               try {
-                return JSON.stringify(JSON.parse(row), null, 2);
+                obj = JSON.parse(row);
               } catch {
                 return row;
               }
             }
-            return JSON.stringify(row, null, 2);
+            if (obj && typeof obj === "object") {
+              const head = summarizeRunTraceEvent(obj);
+              const body = JSON.stringify(obj, null, 2);
+              return head ? `${head}\n${body}` : body;
+            }
+            return JSON.stringify(obj, null, 2);
           })
-          .join("\n");
+          .join("\n\n");
       bodyEl.textContent = text || meta + "(no lines yet)";
     } catch (err) {
       const m = String(err.message || err);

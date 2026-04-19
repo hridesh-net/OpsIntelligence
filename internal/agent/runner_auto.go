@@ -58,6 +58,7 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 
 	for iterations < maxAutoIterations {
 		iterations++
+		r.traceLoopIteration = iterations
 
 		// Periodic checkpoint so the model re-orients on very long autonomous runs.
 		if iterations > 1 && iterations%25 == 0 {
@@ -97,6 +98,16 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 		assistantContent := resp.Text()
 		toolCalls := resp.ToolCalls()
 
+		if len(toolCalls) == 0 {
+			if x := extractXMLFunctionCalls(assistantContent); len(x) > 0 {
+				toolCalls = x
+				assistantContent = stripXMLFunctionBlocks(assistantContent)
+			}
+		}
+		if len(toolCalls) == 0 {
+			toolCalls = extractMarkdownBash(assistantContent)
+		}
+
 		if strings.TrimSpace(assistantContent) == "" && len(toolCalls) > 0 {
 			assistantContent = "[Activating tools...]"
 		}
@@ -113,11 +124,6 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 		}
 		r.working.Append(assistantMsg)
 		_ = r.memory.Episodic.Save(ctx, assistantMsg)
-
-		// Markdown fallback parser: if the model dropped out of native tool schema
-		if len(toolCalls) == 0 {
-			toolCalls = extractMarkdownBash(assistantContent)
-		}
 
 		if len(toolCalls) == 0 && resp.FinishReason == provider.FinishReasonStop {
 			// In autonomous mode, we don't exit if no tools are called. We nudge the agent.

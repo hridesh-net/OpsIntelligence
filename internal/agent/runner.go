@@ -195,6 +195,9 @@ type Runner struct {
 	// use it to drain pending interventions from the task manager).
 	// Return "" to skip appending on a given turn.
 	systemPromptAugmentor func(ctx context.Context) string
+
+	// traceLoopIteration is the current agent loop index (1-based) for run_trace tool_call/tool_done.
+	traceLoopIteration int
 }
 
 // WithSystemPromptAugmentor installs a per-turn callback whose return value
@@ -578,6 +581,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 
 	for iterations < r.cfg.MaxIterations {
 		iterations++
+		r.traceLoopIteration = iterations
 
 		// Build the completion request from working memory.
 		req := r.buildRequestV3(ctx, userMessage)
@@ -609,9 +613,18 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
 		totalUsage.TotalTokens += resp.Usage.TotalTokens
 
-		// Append assistant message to working memory.
 		assistantContent := resp.Text()
 		toolCalls := resp.ToolCalls()
+
+		if len(toolCalls) == 0 {
+			if x := extractXMLFunctionCalls(assistantContent); len(x) > 0 {
+				toolCalls = x
+				assistantContent = stripXMLFunctionBlocks(assistantContent)
+			}
+		}
+		if len(toolCalls) == 0 {
+			toolCalls = extractMarkdownBash(assistantContent)
+		}
 
 		if strings.TrimSpace(assistantContent) == "" && len(toolCalls) > 0 {
 			assistantContent = "[Activating tools...]"
@@ -632,14 +645,9 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			r.log.Warn("episodic save failed", zap.Error(err))
 		}
 
-		// Markdown fallback parser: if the model dropped out of native tool schema
-		// but printed bash instructions, we execute them autonomously anyway.
+		// If no tool calls, we're done (do not use FinishReasonStop alone — models may emit
+		// stop while only pseudo-XML tool blocks were parsed above).
 		if len(toolCalls) == 0 {
-			toolCalls = extractMarkdownBash(assistantContent)
-		}
-
-		// If no tool calls, we're done.
-		if len(toolCalls) == 0 || resp.FinishReason == provider.FinishReasonStop {
 			// Compact working memory if over budget.
 			r.working.Compact(r.working.TotalTokens())
 
@@ -741,6 +749,51 @@ func extractMarkdownBash(text string) []provider.ContentPart {
 	return results
 }
 
+// xmlFunctionOuterRe matches pseudo-tool blocks some models emit instead of native tool JSON.
+// Example: <function=devops.github.list_prs><parameter=owner>EvoMap</parameter>...</function>
+var xmlFunctionOuterRe = regexp.MustCompile(`(?is)<function=([a-zA-Z0-9_.-]+)\s*>(.*?)</function>`)
+
+// xmlParameterRe captures <parameter=name>value</parameter> inside a function block.
+var xmlParameterRe = regexp.MustCompile(`(?is)<parameter=([a-zA-Z0-9_]+)\s*>(.*?)</parameter>`)
+
+func extractXMLFunctionCalls(text string) []provider.ContentPart {
+	var results []provider.ContentPart
+	for _, outer := range xmlFunctionOuterRe.FindAllStringSubmatch(text, -1) {
+		if len(outer) < 3 {
+			continue
+		}
+		toolName := strings.TrimSpace(outer[1])
+		if toolName == "" {
+			continue
+		}
+		inner := outer[2]
+		args := map[string]any{}
+		for _, pm := range xmlParameterRe.FindAllStringSubmatch(inner, -1) {
+			if len(pm) < 3 {
+				continue
+			}
+			key := strings.TrimSpace(pm[1])
+			val := strings.TrimSpace(pm[2])
+			if key != "" {
+				args[key] = val
+			}
+		}
+		results = append(results, provider.ContentPart{
+			Type:      provider.ContentTypeToolUse,
+			ToolUseID: "call_xml_" + uuid.New().String()[:12],
+			ToolName:  toolName,
+			ToolInput: args,
+		})
+	}
+	return results
+}
+
+func stripXMLFunctionBlocks(text string) string {
+	s := xmlFunctionOuterRe.ReplaceAllString(text, "")
+	s = strings.ReplaceAll(s, "</tool_call>", "")
+	return strings.TrimSpace(s)
+}
+
 // executeTool runs a single tool call and returns the result string.
 func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (result string) {
 	start := time.Now()
@@ -750,6 +803,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 		}
 		ok := result != "" && !strings.HasPrefix(result, "Error") && !strings.HasPrefix(result, "[Security]")
 		r.emitTrace(ctx, "tool_done", map[string]any{
+			"iteration":    r.traceLoopIteration,
 			"tool":         tc.ToolName,
 			"ms":           time.Since(start).Milliseconds(),
 			"ok":           ok,
@@ -771,6 +825,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 	}
 	if r.tracePath(ctx) != "" {
 		r.emitTrace(ctx, "tool_call", map[string]any{
+			"iteration":   r.traceLoopIteration,
 			"tool":        tc.ToolName,
 			"input_bytes": len(inputJSON),
 		})
@@ -1322,6 +1377,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 
 	for iterations < r.cfg.MaxIterations {
 		iterations++
+		r.traceLoopIteration = iterations
 		fullResponse.Reset()
 
 		req := r.buildRequestV3(ctx, userMessage)
@@ -1339,19 +1395,19 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		}
 
 		var toolCalls []provider.ContentPart
-		var finishReason provider.FinishReason
 
 		for event := range stream {
 			switch event.Type {
 			case provider.StreamEventText:
-				handler.OnToken(event.Text)
 				fullResponse.WriteString(event.Text)
+				if r.streamInternalAgentUI() {
+					handler.OnToken(event.Text)
+				}
 			case provider.StreamEventToolUse:
 				if event.ToolUse != nil {
 					toolCalls = append(toolCalls, *event.ToolUse)
 				}
 			case provider.StreamEventDone:
-				finishReason = event.FinishReason
 				if event.Usage != nil {
 					totalUsage.PromptTokens += event.Usage.PromptTokens
 					totalUsage.CompletionTokens += event.Usage.CompletionTokens
@@ -1370,8 +1426,26 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		modelSpan.End()
 
 		assistantContent := fullResponse.String()
+		if len(toolCalls) == 0 {
+			if x := extractXMLFunctionCalls(assistantContent); len(x) > 0 {
+				toolCalls = x
+				assistantContent = stripXMLFunctionBlocks(assistantContent)
+			}
+		}
+		if len(toolCalls) == 0 {
+			toolCalls = extractMarkdownBash(assistantContent)
+		}
 		if strings.TrimSpace(assistantContent) == "" && len(toolCalls) > 0 {
 			assistantContent = "[Activating tools...]"
+		}
+
+		// Messaging channels: tokens were buffered so pseudo-XML tool markup is not sent mid-flight.
+		if !r.streamInternalAgentUI() {
+			if strings.TrimSpace(assistantContent) != "" {
+				handler.OnToken(assistantContent)
+			} else if len(toolCalls) > 0 {
+				handler.OnToken("[Activating tools...]")
+			}
 		}
 
 		assistantMsg := memory.Message{
@@ -1382,7 +1456,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		r.working.Append(assistantMsg)
 		_ = r.memory.Episodic.Save(ctx, assistantMsg)
 
-		if len(toolCalls) == 0 || finishReason == provider.FinishReasonStop {
+		if len(toolCalls) == 0 {
 			r.emitTraceTaskDone(ctx, iterations, "stop", "")
 			handler.OnDone(&RunResult{
 				SessionID: r.sessionID, Response: fullResponse.String(),
