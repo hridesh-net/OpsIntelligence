@@ -1531,19 +1531,17 @@ func runOnboarding(configPath string) (bool, error) {
 			}
 			opts = append(opts, huh.NewOption("＋  Add custom skill  (local path or URL)", customSentinel))
 
-			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).
-				Render("\n  🛠  Select Agent Skills"))
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-				Render("  Space to toggle · Enter to confirm · ↑↓ to move\n"))
-
 			skillPick := append([]string(nil), selectedSkills...)
-			_ = huh.NewForm(huh.NewGroup(
-				huh.NewMultiSelect[string]().
-					Title("Enable Skills").
-					Description("Bundled skills are fetched automatically if not present locally.").
-					Options(opts...).
-					Value(&skillPick),
-			)).WithTheme(theme).Run()
+			_ = huh.NewForm(
+				huh.NewGroup(
+					huh.NewMultiSelect[string]().
+						Title("Skills to enable").
+						Description("Space toggles · Enter confirms · ↑↓ moves. Bundled skills fetch automatically when missing.").
+						Options(opts...).
+						Value(&skillPick),
+				).Title("Agent skills").
+					Description("Optional marketplace tools for the agent."),
+			).WithTheme(theme).Run()
 
 			selectedSkills = nil
 			var customPath string
@@ -1596,72 +1594,84 @@ func runOnboarding(configPath string) (bool, error) {
 			configureDevOps = true
 		}
 	}
-	_ = huh.NewForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title("Configure DevOps API integrations now?").
-			Description(
-				"GitHub PAT, GitLab, Jenkins, Sonar — used for PR review and REST APIs.\n" +
-					"Skip to leave an existing devops: section unchanged, or add tokens in YAML later.",
-			).
-			Value(&configureDevOps),
-	)).WithTheme(theme).Run()
+	_ = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Configure DevOps API integrations now?").
+				Description(
+					"GitHub PAT, GitLab, Jenkins, Sonar — used for PR review and REST APIs.\n" +
+						"Skip to leave an existing devops: section unchanged, or add tokens in YAML later.",
+				).
+				Value(&configureDevOps),
+		).Title("DevOps integration").
+			Description("Optional REST credentials; unrelated to agent skills."),
+	).WithTheme(theme).Run()
 
 	if configureDevOps {
-		_ = huh.NewForm(huh.NewGroup(
-			huh.NewInput().
-				Title("GitHub API base URL (optional)").
-				Description("Leave blank for https://api.github.com (GitHub.com).").
-				Value(&githubBaseURL),
-			huh.NewInput().
-				Title("GitHub default org (optional)").
-				Description("Short org name for shorthand repo queries.").
-				Value(&githubDefaultOrg),
-			huh.NewInput().
-				Title("GitHub personal access token (optional)").
-				Description("Fine-grained or classic token for API calls — not the webhook signing secret.").
-				Password(true).
-				Value(&githubToken),
-			huh.NewInput().
-				Title("Or: GitHub token env var (optional)").
-				Description("e.g. GITHUB_TOKEN — leave PAT blank to use token_env only.").
-				Value(&githubTokenEnv),
-			huh.NewInput().
-				Title("GitLab base URL (optional)").
-				Value(&gitlabURL),
-			huh.NewInput().
-				Title("GitLab token (optional)").
-				Password(true).
-				Value(&gitlabToken),
-			huh.NewInput().
-				Title("Or: GitLab token env var (optional)").
-				Value(&gitlabTokenEnv),
-			huh.NewInput().
-				Title("Jenkins base URL (optional)").
-				Value(&jenkinsURL),
-			huh.NewInput().
-				Title("Jenkins user (optional)").
-				Value(&jenkinsUser),
-			huh.NewInput().
-				Title("Jenkins token (optional)").
-				Password(true).
-				Value(&jenkinsToken),
-			huh.NewInput().
-				Title("Or: Jenkins token env var (optional)").
-				Value(&jenkinsTokenEnv),
-			huh.NewInput().
-				Title("SonarQube base URL (optional)").
-				Value(&sonarURL),
-			huh.NewInput().
-				Title("SonarQube token (optional)").
-				Password(true).
-				Value(&sonarToken),
-			huh.NewInput().
-				Title("Or: Sonar token env var (optional)").
-				Value(&sonarTokenEnv),
-			huh.NewInput().
-				Title("Sonar project key prefix (optional)").
-				Value(&sonarProjectPrefix),
-		)).WithTheme(theme).Run()
+		_ = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("GitHub API base URL (optional)").
+					Description("Leave blank for https://api.github.com (GitHub.com).").
+					Value(&githubBaseURL),
+				huh.NewInput().
+					Title("GitHub default org (optional)").
+					Description("Short org name for shorthand repo queries.").
+					Value(&githubDefaultOrg),
+				huh.NewInput().
+					Title("GitHub personal access token (optional)").
+					Description("Fine-grained or classic token for API calls — not the webhook signing secret.").
+					Password(true).
+					Value(&githubToken),
+				huh.NewInput().
+					Title("Or: GitHub token env var (optional)").
+					Description("e.g. GITHUB_TOKEN — leave PAT blank to use token_env only.").
+					Value(&githubTokenEnv),
+				huh.NewInput().
+					Title("GitLab base URL (optional)").
+					Value(&gitlabURL),
+				huh.NewInput().
+					Title("GitLab token (optional)").
+					Password(true).
+					Value(&gitlabToken),
+				huh.NewInput().
+					Title("Or: GitLab token env var (optional)").
+					Value(&gitlabTokenEnv),
+				huh.NewInput().
+					Title("Jenkins base URL (optional)").
+					Description("Root URL only, e.g. https://ci.example.com — not a job URL.").
+					Value(&jenkinsURL),
+				huh.NewInput().
+					Title("Jenkins user (optional)").
+					Description("Account that owns the API token below.").
+					Value(&jenkinsUser),
+				huh.NewInput().
+					Title("Jenkins token (optional)").
+					Description("User API token from Jenkins → User → Configure → API Token.").
+					Password(true).
+					Value(&jenkinsToken),
+				huh.NewInput().
+					Title("Or: Jenkins token env var (optional)").
+					Description("Name of env var holding the API token (alternative to pasting above).").
+					Value(&jenkinsTokenEnv),
+				huh.NewInput().
+					Title("SonarQube base URL (optional)").
+					Description("Server root, e.g. https://sonar.example.com").
+					Value(&sonarURL),
+				huh.NewInput().
+					Title("SonarQube token (optional)").
+					Description("User token from SonarQube → My Account → Security.").
+					Password(true).
+					Value(&sonarToken),
+				huh.NewInput().
+					Title("Or: Sonar token env var (optional)").
+					Value(&sonarTokenEnv),
+				huh.NewInput().
+					Title("Sonar project key prefix (optional)").
+					Value(&sonarProjectPrefix),
+			).Title("DevOps credentials").
+				Description("All optional. Prefer token env vars on shared machines."),
+		).WithTheme(theme).Run()
 	}
 
 	dimPre := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))

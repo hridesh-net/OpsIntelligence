@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] — 2026-04-19
+
+### Changed
+
+- **Onboarding / `skills configure`:** Skills and DevOps steps use huh group titles and descriptions; keyboard hints live on the multiselect field instead of a separate printed header (avoids stale “skills” copy above later forms on small terminals).
+- **DevOps onboarding form:** Short per-field guidance for Jenkins and SonarQube URLs and tokens.
+
+### Fixed
+
+- **Managed MemPalace:** `mempalace init` is invoked with `--yes` so `opsintelligence mempalace setup` and `memory.mempalace.managed_venv` complete without a TTY (avoids upstream `EOFError` on room approval when stdin is closed).
+
 ## [0.3.10] — 2026-04-19
 
 ### Added

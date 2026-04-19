@@ -144,23 +144,15 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 
 	theme := huh.ThemeCatppuccin()
 
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("212")).
-		Render("  🛠  Configure Agent Skills")
-
-	fmt.Println("\n" + header)
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("  Space to toggle · Enter to confirm · ↑↓ to navigate\n"))
-
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Select skills to enable").
-				Description("Bundled skills will be downloaded automatically if not installed.").
+				Title("Skills to enable").
+				Description("Space toggles · Enter confirms · ↑↓ moves. Bundled skills download automatically when missing.").
 				Options(options...).
 				Value(&selectedNames),
-		),
+		).Title("Configure agent skills").
+			Description("Marketplace tools for the agent."),
 	).WithTheme(theme)
 
 	if err := form.Run(); err != nil {

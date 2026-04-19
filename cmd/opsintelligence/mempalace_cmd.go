@@ -39,7 +39,7 @@ func mempalaceSetupCmd(gf *globalFlags, stateDir *string) *cobra.Command {
 		Long: `Runs the same steps as memory.mempalace.managed_venv on agent start:
   - Python venv under <state_dir>/mempalace/venv
   - pip install mempalace
-  - mempalace init <state_dir>/mempalace/world
+  - mempalace init <state_dir>/mempalace/world --yes (non-interactive; no room prompts)
 
 Requires a system python with the venv module (default: python3). Override with
 OPSINTELLIGENCE_MEMPALACE_BOOTSTRAP_PYTHON or memory.mempalace.bootstrap_python in config.

@@ -20,7 +20,8 @@ type EnsureOptions struct {
 }
 
 // Ensure creates (if needed) a dedicated venv under state_dir/mempalace/venv, installs the
-// mempalace PyPI package, and runs `mempalace init` once for state_dir/mempalace/world.
+// mempalace PyPI package, and runs `mempalace init --yes` once for state_dir/mempalace/world
+// (non-interactive: no stdin prompts; matches CI / install scripts).
 // It is idempotent: subsequent calls skip work when the venv and marker file already exist.
 func Ensure(ctx context.Context, opts EnsureOptions) error {
 	if opts.StateDir == "" {
@@ -89,16 +90,16 @@ func runMempalaceInit(ctx context.Context, w io.Writer, venvRoot, world string) 
 	}
 	cli := VenvMempalaceCLI(venvRoot)
 	if _, err := os.Stat(cli); err == nil {
-		if err := run(ctx, w, cli, "init", world); err != nil {
+		if err := run(ctx, w, cli, "init", world, "--yes"); err != nil {
 			return fmt.Errorf("mempalace: %q init: %w", cli, err)
 		}
 		return nil
 	}
 	vpy := VenvInterpreter(venvRoot)
-	if err := run(ctx, w, vpy, "-m", "mempalace", "init", world); err == nil {
+	if err := run(ctx, w, vpy, "-m", "mempalace", "init", world, "--yes"); err == nil {
 		return nil
 	}
-	if err := run(ctx, w, vpy, "-m", "mempalace.cli", "init", world); err != nil {
+	if err := run(ctx, w, vpy, "-m", "mempalace.cli", "init", world, "--yes"); err != nil {
 		return fmt.Errorf("mempalace: init world %q: %w", world, err)
 	}
 	return nil
