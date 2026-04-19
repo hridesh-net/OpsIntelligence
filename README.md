@@ -15,7 +15,7 @@
 
 ## What this is
 
-OpsIntelligence is an autonomous agent for **DevOps teams inside a
+**OpsIntelligence** is an autonomous agent for **DevOps teams inside a
 company**. It plugs into the systems you already run — GitHub (Actions),
 GitLab (CI), Jenkins, SonarQube, Slack — and carries out the DevOps work
 that normally eats a senior engineer's week:
