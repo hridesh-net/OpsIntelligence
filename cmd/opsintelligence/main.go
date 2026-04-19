@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.11" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.12" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1592,11 +1592,13 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		ExtensionPromptAppend: extPrompt,
 		StateDir:              cfg.StateDir,
 		LocalIntel: agent.LocalIntelRunnerConfig{
-			Enabled:      cfg.Agent.LocalIntel.Enabled,
-			GGUFPath:     cfg.Agent.LocalIntel.GGUFPath,
-			MaxTokens:    cfg.Agent.LocalIntel.MaxTokens,
-			SystemPrompt: cfg.Agent.LocalIntel.SystemPrompt,
-			CacheDir:     localIntelCache,
+			Enabled:               cfg.Agent.LocalIntel.Enabled,
+			GGUFPath:              cfg.Agent.LocalIntel.GGUFPath,
+			MaxTokens:             cfg.Agent.LocalIntel.MaxTokens,
+			SystemPrompt:          cfg.Agent.LocalIntel.SystemPrompt,
+			CacheDir:              localIntelCache,
+			SmartRouting:          cfg.Agent.LocalIntel.SmartRouting,
+			SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 		},
 		Palace: agent.PalaceConfig{
 			Enabled:             cfg.Agent.Palace.Enabled,
@@ -1658,6 +1660,15 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		AuditLog:              auditLog,
 		Hardware:              hw,
 		RunTraceMode:          cfg.Agent.RunTraceMode,
+		LocalIntel: agent.LocalIntelRunnerConfig{
+			Enabled:               cfg.Agent.LocalIntel.Enabled,
+			GGUFPath:              cfg.Agent.LocalIntel.GGUFPath,
+			MaxTokens:             cfg.Agent.LocalIntel.MaxTokens,
+			SystemPrompt:          cfg.Agent.LocalIntel.SystemPrompt,
+			CacheDir:              localIntelCache,
+			SmartRouting:          cfg.Agent.LocalIntel.SmartRouting,
+			SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
+		},
 	}
 	// Async task orchestration: lets the master agent dispatch multiple
 	// sub-agent runs in parallel (e.g. review 3 PRs simultaneously) while

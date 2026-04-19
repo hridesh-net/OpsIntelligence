@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -20,6 +21,30 @@ import (
 )
 
 const providerName = "bedrock"
+
+// Bedrock / API gateways reject very large Converse JSON bodies (ValidationException:
+// "Failed to buffer the request body: length limit exceeded"). Clamp blocks here so
+// huge tool results (e.g. PR diffs) do not kill the whole request.
+const (
+	bedrockMaxToolResultBytes      = 28 * 1024
+	bedrockMaxMessageTextBytes     = 56 * 1024
+	bedrockMaxSystemBytes          = 180 * 1024
+	bedrockMaxToolDescriptionBytes = 6 * 1024
+)
+
+func clampBedrockUTF8(s string, maxBytes int, truncNote string) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	if strings.TrimSpace(truncNote) != "" {
+		return s + "\n\n" + truncNote
+	}
+	return s
+}
 
 // Config holds AWS Bedrock provider settings.
 type Config struct {
@@ -285,6 +310,9 @@ func (p *Provider) Stream(ctx context.Context, req *provider.CompletionRequest) 
 				}
 			}
 		}
+		if err := stream.Err(); err != nil {
+			ch <- provider.StreamEvent{Type: provider.StreamEventError, Err: fmt.Errorf("bedrock: stream reader: %w", err)}
+		}
 	}()
 	return ch, nil
 }
@@ -321,10 +349,11 @@ func buildConverseTools(reqTools []provider.ToolDef, aliases *bedrockToolAliases
 			schemaMap["properties"] = map[string]any{}
 		}
 
+		desc := clampBedrockUTF8(t.Description, bedrockMaxToolDescriptionBytes, "")
 		bTools = append(bTools, &types.ToolMemberToolSpec{
 			Value: types.ToolSpecification{
 				Name:        aws.String(aliases.toAWSName(t.Name)),
-				Description: aws.String(t.Description),
+				Description: aws.String(desc),
 				InputSchema: &types.ToolInputSchemaMemberJson{
 					Value: document.NewLazyDocument(schemaMap),
 				},
@@ -413,6 +442,8 @@ func buildConverseMessages(req *provider.CompletionRequest, aliases *bedrockTool
 				text := cp.Text
 				if strings.TrimSpace(text) == "" {
 					text = "[No text content]"
+				} else {
+					text = clampBedrockUTF8(text, bedrockMaxMessageTextBytes, "[Message text truncated for Bedrock request size]")
 				}
 				content = append(content, &types.ContentBlockMemberText{Value: text})
 			} else if cp.Type == provider.ContentTypeToolUse {
@@ -441,6 +472,8 @@ func buildConverseMessages(req *provider.CompletionRequest, aliases *bedrockTool
 				resContent := cp.ToolResultContent
 				if strings.TrimSpace(resContent) == "" {
 					resContent = "[No content]"
+				} else {
+					resContent = clampBedrockUTF8(resContent, bedrockMaxToolResultBytes, "[Tool output truncated for Bedrock request size]")
 				}
 				status := types.ToolResultStatusSuccess
 				if cp.ToolResultError {
@@ -468,7 +501,8 @@ func buildConverseMessages(req *provider.CompletionRequest, aliases *bedrockTool
 
 	var system []types.SystemContentBlock
 	if req.SystemPrompt != "" {
-		system = append(system, &types.SystemContentBlockMemberText{Value: req.SystemPrompt})
+		sys := clampBedrockUTF8(req.SystemPrompt, bedrockMaxSystemBytes, "[System prompt truncated for Bedrock request size]")
+		system = append(system, &types.SystemContentBlockMemberText{Value: sys})
 	}
 
 	return messages, system, nil

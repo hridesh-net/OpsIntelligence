@@ -14,15 +14,21 @@ const defaultLocalIntelSystem = `You are a small on-device model (Gemma 4 E2B). 
 Cover: suggested next actions, risks/unknowns, whether tools or skills likely apply, and any clarifying question worth asking.
 Be concrete; do not refuse based on your size.`
 
+// localIntelPresent is true when local_intel is enabled in config and the on-device engine
+// actually loaded (GGUF / embedded weights + binary built with local Gemma). No-ops otherwise.
+func (r *Runner) localIntelPresent() bool {
+	if !r.cfg.LocalIntel.Enabled {
+		return false
+	}
+	return r.ensureLocalIntelEngine() != nil
+}
+
 func (r *Runner) prepareLocalIntelScratch(ctx context.Context, userMessage string) {
 	r.localIntelScratch = ""
-	if !r.cfg.LocalIntel.Enabled {
+	if !r.localIntelPresent() {
 		return
 	}
 	eng := r.ensureLocalIntelEngine()
-	if eng == nil {
-		return
-	}
 	sys := strings.TrimSpace(r.cfg.LocalIntel.SystemPrompt)
 	if sys == "" {
 		sys = defaultLocalIntelSystem

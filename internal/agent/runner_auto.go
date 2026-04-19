@@ -27,6 +27,14 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 		_ = r.memory.Episodic.Save(ctx, goalMsg)
 	}
 
+	defer func() {
+		r.localIntelScratch = ""
+		r.localIntelRoutingTools = nil
+		r.localIntelRoutingSkillFocus = ""
+	}()
+	r.prepareLocalIntelScratch(ctx, goal)
+	r.prepareLocalIntelSmartRouting(ctx, goal)
+
 	var totalUsage provider.TokenUsage
 	iterations := 0
 	maxAutoIterations := 500 // higher limit for continuous mode
@@ -81,7 +89,7 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 			zap.Int("iteration", iterations),
 		)
 
-		stream, err := r.provider.Stream(ctx, req)
+		stream, err := r.openPrimaryModelStream(ctx, goal, req)
 		if err != nil {
 			return nil, fmt.Errorf("agent: autonomous stream: %w", err)
 		}

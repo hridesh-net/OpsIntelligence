@@ -145,11 +145,13 @@ type Config struct {
 
 // LocalIntelRunnerConfig is the agent-local view of config.Agent.LocalIntel.
 type LocalIntelRunnerConfig struct {
-	Enabled      bool
-	GGUFPath     string
-	MaxTokens    int
-	SystemPrompt string
-	CacheDir     string
+	Enabled               bool
+	GGUFPath              string
+	MaxTokens             int
+	SystemPrompt          string
+	CacheDir              string
+	SmartRouting          bool
+	SmartRoutingMaxTokens int
 }
 
 type PalaceConfig struct {
@@ -194,6 +196,10 @@ type Runner struct {
 	localIntelEng     localintel.Engine
 	localIntelOpenErr error
 	localIntelScratch string // advisory text merged into buildSystemPrompt for the current Run/RunStream
+
+	// localIntelRouting* are filled by prepareLocalIntelSmartRouting when SmartRouting is on.
+	localIntelRoutingTools      []string
+	localIntelRoutingSkillFocus string
 
 	// systemPromptAugmentor, when non-nil, is invoked once per iteration
 	// by buildSystemPrompt. Its return value is appended to the system
@@ -456,6 +462,7 @@ func (r *Runner) traceTaskStart(ctx context.Context, userMessage string) {
 		return
 	}
 	advisory := strings.TrimSpace(r.localIntelScratch) != ""
+	present := r.localIntelPresent()
 	role := strings.TrimSpace(r.cfg.RunnerRole)
 	if role == "" {
 		role = "master"
@@ -468,10 +475,10 @@ func (r *Runner) traceTaskStart(ctx context.Context, userMessage string) {
 		"skills_enabled":         append([]string(nil), r.cfg.EnabledSkillNames...),
 		"skills_enabled_count":   len(r.cfg.EnabledSkillNames),
 		"primary_model":          r.cfg.Model,
-		"llm_backend":            runtrace.InferBackend(r.cfg.ProviderName, r.cfg.Model, r.cfg.LocalIntel.Enabled, advisory),
+		"llm_backend":            runtrace.InferBackend(r.cfg.ProviderName, r.cfg.Model, present, advisory),
 		"tools_profile":          r.cfg.ToolsProfile,
 		"provider":               r.cfg.ProviderName,
-		"local_intel_enabled":    r.cfg.LocalIntel.Enabled,
+		"local_intel_enabled":    present,
 		"local_advisory_applied": advisory,
 	}
 	if m := strings.TrimSpace(r.cfg.RunTraceMode); m != "" {
@@ -489,10 +496,11 @@ func (r *Runner) traceModelIteration(ctx context.Context, iteration int, userMes
 		names = append(names, t.Name)
 	}
 	advisory := strings.TrimSpace(r.localIntelScratch) != ""
+	present := r.localIntelPresent()
 	r.emitTrace(ctx, "model_iteration", map[string]any{
 		"iteration":            iteration,
 		"model":                req.Model,
-		"llm_backend":          runtrace.InferBackend(r.cfg.ProviderName, req.Model, r.cfg.LocalIntel.Enabled, advisory),
+		"llm_backend":          runtrace.InferBackend(r.cfg.ProviderName, req.Model, present, advisory),
 		"routing_intents":      r.routingIntentsForTrace(userMessage),
 		"skills_context_chars": len(strings.TrimSpace(r.cfg.ActiveSkillsContext)),
 		"tools_offered":        names,
@@ -555,12 +563,17 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		r.log.Warn("episodic save failed", zap.Error(err))
 	}
 	enqueueSpan.End()
-	defer func() { r.localIntelScratch = "" }()
+	defer func() {
+		r.localIntelScratch = ""
+		r.localIntelRoutingTools = nil
+		r.localIntelRoutingSkillFocus = ""
+	}()
 
 	var totalUsage provider.TokenUsage
 	iterations := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
+	r.prepareLocalIntelSmartRouting(ctx, userMessage)
 	r.traceTaskStart(ctx, userMessage)
 
 	// V3: Planning Phase
@@ -601,9 +614,9 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			zap.Int("iteration", iterations),
 		)
 
-		// Stream the response.
+		// Stream the response (trimmed retry + optional LocalIntel fallback).
 		modelCtx, modelSpan := obstracing.StartSpan(ctx, "agent.model_call")
-		stream, err := r.provider.Stream(modelCtx, req)
+		stream, err := r.openPrimaryModelStream(modelCtx, userMessage, req)
 		if err != nil {
 			modelSpan.End()
 			r.emitTraceTaskDone(ctx, iterations, "error", err.Error())
@@ -1014,16 +1027,47 @@ func (r *Runner) mergeToolsNeededForHistory(selected []provider.ToolDef) []provi
 }
 
 func (r *Runner) selectTools(query string) []provider.ToolDef {
+	caps := provider.CapsFor(r.cfg.ProviderName)
 	var target []provider.ToolDef
 	if r.catalog != nil {
-		caps := provider.CapsFor(r.cfg.ProviderName)
 		// Decay inertia from last turn before computing new selection
 		r.catalog.DecayInertia()
 		target = r.catalog.SelectForRequest(query, caps)
 	} else {
 		target = r.tools.Definitions() // backward-compat fallback
 	}
+	target = r.mergeLocalIntelToolHints(target, caps)
 	return r.filterTools(target)
+}
+
+// mergeLocalIntelToolHints prepends Gemma-validated tool ids ahead of catalog selection, then caps by provider MaxTools.
+func (r *Runner) mergeLocalIntelToolHints(base []provider.ToolDef, caps provider.ProviderCaps) []provider.ToolDef {
+	if r.tools == nil || len(r.localIntelRoutingTools) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(r.localIntelRoutingTools))
+	var out []provider.ToolDef
+	add := func(d provider.ToolDef) {
+		if _, ok := seen[d.Name]; ok {
+			return
+		}
+		seen[d.Name] = struct{}{}
+		out = append(out, d)
+	}
+	for _, name := range r.localIntelRoutingTools {
+		t, ok := r.tools.Get(name)
+		if !ok {
+			continue
+		}
+		add(t.Definition())
+	}
+	for _, d := range base {
+		add(d)
+	}
+	if caps.MaxTools > 0 && len(out) > caps.MaxTools {
+		out = out[:caps.MaxTools]
+	}
+	return out
 }
 
 func (r *Runner) filterTools(defs []provider.ToolDef) []provider.ToolDef {
@@ -1241,6 +1285,9 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 	if r.cfg.ActiveSkillsContext != "" {
 		parts = append(parts, r.cfg.ActiveSkillsContext)
 	}
+	if sf := strings.TrimSpace(r.localIntelRoutingSkillFocus); sf != "" && !strings.EqualFold(sf, "none") {
+		parts = append(parts, "## On-device routing focus (local Gemma)\n"+truncateUTF8(sf, 1200))
+	}
 
 	if strings.TrimSpace(r.cfg.ExtensionPromptAppend) != "" {
 		parts = append(parts, strings.TrimSpace(r.cfg.ExtensionPromptAppend))
@@ -1380,13 +1427,18 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		r.log.Warn("episodic save failed", zap.Error(err))
 	}
 	enqueueSpan.End()
-	defer func() { r.localIntelScratch = "" }()
+	defer func() {
+		r.localIntelScratch = ""
+		r.localIntelRoutingTools = nil
+		r.localIntelRoutingSkillFocus = ""
+	}()
 
 	var totalUsage provider.TokenUsage
 	var fullResponse strings.Builder
 	iterations := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
+	r.prepareLocalIntelSmartRouting(ctx, userMessage)
 	r.traceTaskStart(ctx, userMessage)
 
 	// V3: Planning Phase (kept in working memory for the model; not streamed to Slack/chat surfaces).
@@ -1421,9 +1473,9 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		req := r.buildRequestV3(ctx, userMessage)
 		r.traceModelIteration(ctx, iterations, userMessage, req)
 
-		// V3: Use buildRequestV3 with query context
+		// V3: Use buildRequestV3 with query context (trimmed retry + optional LocalIntel fallback).
 		modelCtx, modelSpan := obstracing.StartSpan(ctx, "agent.model_call")
-		stream, err := r.provider.Stream(modelCtx, req)
+		stream, err := r.openPrimaryModelStream(modelCtx, userMessage, req)
 		if err != nil {
 			modelSpan.End()
 			streamErr := fmt.Errorf("agent: stream: %w", err)
@@ -2164,7 +2216,7 @@ func (r *Runner) doFlush(ctx context.Context, usage *provider.TokenUsage) {
 	r.log.Info("memory near capacity, triggering flush turn")
 
 	req := r.buildRequest()
-	stream, err := r.provider.Stream(ctx, req)
+	stream, err := r.openPrimaryModelStream(ctx, prompt, req)
 	if err != nil {
 		r.log.Warn("memory flush turn failed", zap.Error(err))
 		return
@@ -2221,7 +2273,7 @@ func (r *Runner) doFlushStream(ctx context.Context, handler StreamHandler, usage
 	r.working.Append(flushMsg)
 	r.streamThinking(handler, "\n[Maintenance: Compacting session memory...]\n")
 
-	stream, err := r.provider.Stream(ctx, r.buildRequest())
+	stream, err := r.openPrimaryModelStream(ctx, prompt, r.buildRequest())
 	if err != nil {
 		handler.OnError(fmt.Errorf("agent: flush stream: %w", err))
 		return

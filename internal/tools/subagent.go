@@ -48,6 +48,8 @@ type SubAgentSvc struct {
 	RunTraceMode string
 	// EnabledSkillNames is copied from the parent agent for run_trace.task_start.
 	EnabledSkillNames []string
+	// LocalIntel is copied from the parent agent so sub-agents get the same Gemma advisory + smart routing.
+	LocalIntel agent.LocalIntelRunnerConfig
 }
 
 // EnsureTaskManager wires a TaskManager that reuses the same sync executor as
@@ -198,6 +200,7 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		EnablePlanning:        false,
 		EnableReflection:      false,
 		StateDir:              s.Store.StateDir(),
+		LocalIntel:            s.LocalIntel,
 	}, s.Provider, childReg, s.Mem, s.Log, workspace)
 
 	run = run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)

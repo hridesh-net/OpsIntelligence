@@ -778,11 +778,13 @@ type AgentConfig struct {
 	// Palace is optional OpsIntelligence-local retrieval shaping (not the MemPalace product).
 	Palace PalaceConfig `yaml:"palace"`
 	// LocalIntel runs Gemma 4 E2B inside the process (when built with opsintelligence_localgemma) and
-	// prepends a short advisory into the cloud model's system prompt for that turn.
+	// prepends a short advisory into the cloud model's system prompt for that turn. With smart_routing,
+	// Gemma also suggests tool ids and a skill-focus line merged before the remote model runs.
 	LocalIntel LocalIntelConfig `yaml:"local_intel"`
 }
 
 // LocalIntelConfig enables optional on-device Gemma before the main (cloud) model sees the request.
+// When enabled but the engine cannot load (no GGUF, wrong build), all LocalIntel features no-op.
 type LocalIntelConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// GGUFPath overrides OPSINTELLIGENCE_LOCAL_GEMMA_GGUF when non-empty.
@@ -792,6 +794,11 @@ type LocalIntelConfig struct {
 	SystemPrompt string `yaml:"system_prompt"`
 	// CacheDir is where embedded GGUF bytes are materialized; default <state_dir>/localintel.
 	CacheDir string `yaml:"cache_dir"`
+	// SmartRouting runs an extra on-device pass that suggests tool names and a short skill-focus
+	// line before the main LLM request (ToolGraph + catalog still apply; Gemma hints are merged in).
+	SmartRouting bool `yaml:"smart_routing"`
+	// SmartRoutingMaxTokens caps the routing completion (0 = default 384).
+	SmartRoutingMaxTokens int `yaml:"smart_routing_max_tokens"`
 }
 
 type PalaceConfig struct {

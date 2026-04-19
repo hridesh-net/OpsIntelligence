@@ -1727,6 +1727,7 @@ func runOnboarding(configPath string) (bool, error) {
 			sb.WriteString(fmt.Sprintf("    gguf_path: %q\n", g))
 		}
 		sb.WriteString("    max_tokens: 256\n")
+		sb.WriteString("    smart_routing: false   # true: extra Gemma pass to suggest tools + skill focus before the cloud model\n")
 	}
 	sb.WriteString("\n")
 

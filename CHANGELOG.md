@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.12] — 2026-04-19
+
+### Added
+
+- **LocalIntel smart routing (`agent.local_intel.smart_routing`):** optional on-device Gemma pass suggests tool names and a short skill-focus line before the cloud model; hints merge ahead of ToolGraph catalog selection (still capped by provider `MaxTools`). Sub-agents inherit the same `local_intel` config.
+- **Onboarding:** when Local Intel is enabled, generated YAML documents `smart_routing: false` with a one-line comment.
+
+### Changed
+
+- **LocalIntel gating:** advisory scratch, smart routing, stream fallback, and run-trace `local_intel_enabled` / backend labels use **`localIntelPresent()`** (enabled **and** engine loaded). If GGUF/runtime is missing, LocalIntel no-ops even when `enabled: true`.
+
+### Fixed
+
+- **Bedrock:** clamp large system text, message text, tool results, and tool descriptions before Converse/ConverseStream to avoid `ValidationException` / request body length limits; surface `stream.Err()` after streaming events.
+- **Agent model stream:** up to one trimmed retry on recoverable errors, then optional **LocalIntel** stream fallback when the on-device engine is present.
+- **Autonomous runs:** same LocalIntel scratch + smart routing prep and stream resilience as interactive runs.
+
 ## [0.3.11] — 2026-04-19
 
 ### Changed
