@@ -162,6 +162,14 @@
   // Cached principal — set once at boot, used by panels to know
   // whether to attempt secrets.read / settings.write.
   let ME = null;
+  let runTracePollId = null;
+
+  function clearRunTracePoll() {
+    if (runTracePollId != null) {
+      clearInterval(runTracePollId);
+      runTracePollId = null;
+    }
+  }
 
   async function bootAppPage() {
     const me = await getJSON(`${API}/whoami`).catch(() => null);
@@ -216,6 +224,7 @@
   }
 
   function route() {
+    clearRunTracePoll();
     const { view, sub } = parseHash();
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
@@ -253,6 +262,12 @@
         subEl.textContent = "Long-lived bearer credentials for automation.";
         renderAPIKeysView(actionsEl);
         break;
+      case "runtrace":
+        titleEl.textContent = "Run trace";
+        subEl.textContent =
+          "NDJSON execution events (task_start, model_iteration, tools, chain_run, task_done).";
+        renderRunTraceView(actionsEl);
+        break;
       case "settings":
         titleEl.textContent = "Settings";
         subEl.textContent =
@@ -267,6 +282,55 @@
       default:
         titleEl.textContent = "Overview";
         subEl.textContent = "A quick look at the ops plane.";
+    }
+  }
+
+  function renderRunTraceView(actionsEl) {
+    const tb = document.getElementById("runtrace-toolbar");
+    const body = document.getElementById("runtrace-body");
+    if (!tb || !body) return;
+    actionsEl.innerHTML = "";
+    tb.innerHTML = `
+      <label class="inline">Stream
+        <select id="runtrace-which">
+          <option value="master">Master agent</option>
+          <option value="subagent">Sub-agents</option>
+        </select>
+      </label>
+      <button type="button" class="primary" id="runtrace-refresh">Refresh</button>
+      <label class="inline"><input type="checkbox" id="runtrace-live" /> Auto-refresh (10s)</label>
+    `;
+    body.textContent = "Loading…";
+
+    const whichSel = document.getElementById("runtrace-which");
+    const refresh = () => loadRunTraceInto(body, whichSel.value);
+    document.getElementById("runtrace-refresh").addEventListener("click", refresh);
+    whichSel.addEventListener("change", refresh);
+    document.getElementById("runtrace-live").addEventListener("change", (ev) => {
+      clearRunTracePoll();
+      if (ev.target.checked) {
+        runTracePollId = setInterval(refresh, 10000);
+      }
+    });
+    refresh();
+  }
+
+  async function loadRunTraceInto(bodyEl, which) {
+    bodyEl.textContent = "Loading…";
+    try {
+      const data = await fetchJSON(
+        `${API}/runtrace?which=${encodeURIComponent(which || "master")}&max_lines=500`,
+      );
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      const meta = `path: ${data.path || "—"}${data.truncated ? " (tail truncated)" : ""}\n\n`;
+      const text = meta + lines.map((row) => JSON.stringify(JSON.parse(row))).join("\n");
+      bodyEl.textContent = text || meta + "(no lines yet)";
+    } catch (err) {
+      const m = String(err.message || err);
+      bodyEl.textContent =
+        m.includes("403") || m.toLowerCase().includes("permission")
+          ? "Permission denied (needs run_trace.read on your role — owner/admin/operator/developer/auditor include it by default)."
+          : m;
     }
   }
 
@@ -311,6 +375,10 @@
           key: "bind",
           label: "Bind mode",
           type: "select",
+          help:
+            "loopback = 127.0.0.1 only (same machine / SSH port-forward). " +
+            "lan = 0.0.0.0 — reachable on your LAN or Tailscale IP (e.g. http://100.x.x.x:port/dashboard/). " +
+            "tailnet = serve via Tailscale tsnet (see gateway.tailscale). Restart after change.",
           options: [
             { value: "", label: "(default)" },
             { value: "loopback", label: "loopback (127.0.0.1)" },

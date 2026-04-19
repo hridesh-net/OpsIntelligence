@@ -140,6 +140,11 @@ const (
 	PermChatUse       Permission = "chat.use"
 )
 
+// Observability — NDJSON run trace exposed to the admin dashboard API.
+const (
+	PermRunTraceRead Permission = "run_trace.read"
+)
+
 // AllPermissions returns every permission declared above. The returned
 // slice is freshly allocated; callers may sort or filter without
 // racing other callers.
@@ -159,5 +164,6 @@ func AllPermissions() []Permission {
 		PermWebhooksRead, PermWebhooksManage, PermChannelsRead, PermChannelsManage,
 		PermSettingsRead, PermSettingsWrite, PermSecretsRead, PermSecretsWrite, PermDatastoreAdmin,
 		PermDashboardView, PermChatUse,
+		PermRunTraceRead,
 	}
 }

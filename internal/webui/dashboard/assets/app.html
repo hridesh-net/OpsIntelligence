@@ -18,6 +18,7 @@
         <a class="nav-item" data-route="tasks" href="#/tasks">Tasks</a>
         <a class="nav-item" data-route="users" href="#/users">Users &amp; Roles</a>
         <a class="nav-item" data-route="apikeys" href="#/apikeys">API keys</a>
+        <a class="nav-item" data-route="runtrace" href="#/runtrace">Run trace</a>
         <a class="nav-item" data-route="settings" href="#/settings">Settings</a>
       </nav>
       <div class="sidebar-footer">
@@ -59,8 +60,23 @@
               <li><a href="#/settings/auth">Authentication</a></li>
               <li><a href="#/settings/providers">LLM providers</a></li>
               <li><a href="#/settings/webhooks">Webhooks</a></li>
+              <li><a href="#/runtrace">Run trace</a> (NDJSON tail)</li>
             </ul>
           </div>
+        </div>
+      </section>
+
+      <section class="view hidden" id="view-runtrace">
+        <div class="card">
+          <h2>Execution trace</h2>
+          <p class="note">
+            Last lines from the agent NDJSON trace (<code>agent.run_trace_file</code> / sub-agent file).
+            For remote access over Tailscale, set <strong>Gateway → Bind mode</strong> to
+            <code>lan</code> so the gateway listens on <code>0.0.0.0</code>, then open
+            <code>http://&lt;tailscale-ip&gt;:port/dashboard/</code> in a browser.
+          </p>
+          <div id="runtrace-toolbar" class="runtrace-toolbar"></div>
+          <div id="runtrace-body" class="runtrace-scroll" aria-live="polite">Loading…</div>
         </div>
       </section>
 

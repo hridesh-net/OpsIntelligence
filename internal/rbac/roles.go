@@ -59,6 +59,7 @@ func BuiltInRoles() []RoleSpec {
 				PermWebhooksRead, PermWebhooksManage,
 				PermChannelsRead, PermChannelsManage,
 				PermSettingsRead, PermSettingsWrite, PermSecretsRead,
+				PermRunTraceRead,
 			},
 		},
 		{
@@ -92,6 +93,7 @@ func BuiltInRoles() []RoleSpec {
 				PermWebhooksRead,
 				PermChannelsRead,
 				PermSettingsRead,
+				PermRunTraceRead,
 			},
 		},
 		{
@@ -110,6 +112,7 @@ func BuiltInRoles() []RoleSpec {
 				PermWebhooksRead,
 				PermChannelsRead,
 				PermSettingsRead,
+				PermRunTraceRead,
 			},
 		},
 		{

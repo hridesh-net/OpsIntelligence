@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard → Run trace:** browse the tail of master / sub-agent NDJSON run traces via `GET /api/v1/runtrace` (`run_trace.read` permission). Gateway settings help text documents **lan** bind for Tailscale/LAN access to `/dashboard/`.
+
 ## [0.3.6] — 2026-04-18
 
 ### Added

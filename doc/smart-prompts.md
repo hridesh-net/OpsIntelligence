@@ -165,6 +165,8 @@ Typical `kind` values:
 
 Inspect with `tail -f ~/.opsintelligence/logs/runtrace.ndjson | jq .` (or any NDJSON viewer).
 
+Signed-in operators can also open **Dashboard → Run trace** (`/dashboard/#/runtrace`) to tail the same NDJSON streams in the browser (requires `run_trace.read`; built-in roles except viewer include it).
+
 ## Agent-facing surface
 
 Inside the agent loop the library is exposed via two tools:

@@ -49,6 +49,35 @@ code {
   border-radius: 4px;
 }
 
+.runtrace-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.runtrace-toolbar label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+}
+
+.runtrace-scroll {
+  max-height: min(70vh, 720px);
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ─────────────────────── auth page ─────────────────────── */
 
 .auth-page {

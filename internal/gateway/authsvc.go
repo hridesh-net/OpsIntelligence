@@ -56,6 +56,11 @@ type AuthService struct {
 	// phase-3 configsvc-backed settings API.
 	ConfigPath string
 
+	// RunTraceMaster / RunTraceSubagent are absolute NDJSON paths from
+	// resolved config (empty when tracing is disabled for that stream).
+	RunTraceMaster   string
+	RunTraceSubagent string
+
 	Log *zap.Logger
 }
 
@@ -128,6 +133,8 @@ func BuildAuthService(ctx context.Context, cfg *config.Config, store datastore.S
 		LegacyTokenConfigured:   strings.TrimSpace(ac.LegacySharedToken) != "",
 		AllowAnonymousBootstrap: allowBootstrap,
 		Log:                     log,
+		RunTraceMaster:          strings.TrimSpace(cfg.Agent.RunTraceFile),
+		RunTraceSubagent:        strings.TrimSpace(cfg.Agent.RunTraceSubagentFile),
 	}
 	return svc, nil
 }
@@ -167,6 +174,9 @@ func (s *AuthService) Mount(mux *http.ServeMux) {
 	mux.Handle("/api/v1/roles/", s.Protect(http.HandlerFunc(s.handleRoleGet)))
 	mux.Handle("/api/v1/apikeys", s.apikeysRouter())
 	mux.Handle("/api/v1/apikeys/", s.apikeyItemRouter())
+
+	// NDJSON run trace tail (dashboard + API clients with run_trace.read).
+	mux.Handle("/api/v1/runtrace", s.Protect(http.HandlerFunc(s.handleRunTrace)))
 }
 
 // usersRouter dispatches between Protect (for GET) and ProtectCSRF
