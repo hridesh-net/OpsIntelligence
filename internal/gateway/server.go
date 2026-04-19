@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -175,16 +176,28 @@ func (s *Server) Start() error {
 			http.NotFound(w, r)
 			return
 		}
-		// Serve index.html from embedded FS
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// With phase-2 auth the operator UI lives under /dashboard/; send browsers
+		// there from / so http://host:port/ is never an empty or confusing page.
+		if s.AuthService != nil {
+			http.Redirect(w, r, "/dashboard/", http.StatusFound)
+			return
+		}
 		data, err := webui.Assets().Open("index.html")
 		if err != nil {
-			http.Error(w, "not found", 404)
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		defer data.Close()
-		http.ServeContent(w, r, "index.html", time.Time{}, data.(interface {
-			http.File
-		}))
+		rs, ok := data.(io.ReadSeeker)
+		if !ok {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(w, r, "index.html", time.Time{}, rs)
 	})
 
 	// ── Health ────────────────────────────────────────────────────────────────
