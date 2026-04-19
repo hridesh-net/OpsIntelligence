@@ -146,3 +146,49 @@ func TestMCPClientConfigsFromYAML_passesDirAndEnv(t *testing.T) {
 		t.Fatalf("transport %v", c.Transport)
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestAgentPlanningEnabled(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		cfg  config.Config
+		want bool
+	}{
+		{
+			name: "enterprise_nil_planning",
+			cfg:  config.Config{Agent: config.AgentConfig{Enterprise: true}},
+			want: true,
+		},
+		{
+			name: "lean_nil_planning",
+			cfg:  config.Config{Agent: config.AgentConfig{Enterprise: false}},
+			want: false,
+		},
+		{
+			name: "explicit_off_overrides_enterprise",
+			cfg:  config.Config{Agent: config.AgentConfig{Enterprise: true, Planning: boolPtr(false)}},
+			want: false,
+		},
+		{
+			name: "explicit_on_even_without_enterprise",
+			cfg:  config.Config{Agent: config.AgentConfig{Enterprise: false, Planning: boolPtr(true)}},
+			want: true,
+		},
+		{
+			name: "explicit_off_when_not_enterprise",
+			cfg:  config.Config{Agent: config.AgentConfig{Enterprise: false, Planning: boolPtr(false)}},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := agentPlanningEnabled(&tc.cfg); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

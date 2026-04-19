@@ -229,6 +229,9 @@ func (t *ChainRunTool) traceChain(ctx context.Context, eventKind string, fields 
 		ev[k] = v
 	}
 	ev["kind"] = eventKind
+	if n := correlation.TraceLoopIteration(ctx); n > 0 {
+		ev["parent_iteration"] = n
+	}
 	if id := correlation.RequestID(ctx); id != "" {
 		ev["request_id"] = id
 	}

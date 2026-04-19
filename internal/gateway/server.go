@@ -77,9 +77,10 @@ type Server struct {
 }
 
 // NewServer initializes a new Gateway server on the specified port.
-func NewServer(port int) *Server {
+// maxWebSocketClients is passed to the hub (0 = unlimited concurrent WS clients).
+func NewServer(port, maxWebSocketClients int) *Server {
 	return &Server{
-		Hub:  NewHub(),
+		Hub:  NewHub(maxWebSocketClients),
 		Port: port,
 	}
 }
@@ -667,7 +668,23 @@ func serveWs(hub *Hub, logger *zap.Logger, w http.ResponseWriter, r *http.Reques
 		)
 	}
 
-	client.Hub.register <- client
+	ok := make(chan bool, 1)
+	hub.register <- registerOp{client: client, ok: ok}
+	if !<-ok {
+		if logger != nil {
+			logger.Warn("gateway websocket rejected (client cap)",
+				append(correlation.Fields(r.Context()),
+					zap.String("client_id", clientID),
+					zap.Int("max_websocket_clients", hub.MaxWSClients),
+				)...,
+			)
+		}
+		deadline := time.Now().Add(writeWait)
+		msg := websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "gateway: max websocket clients")
+		_ = conn.WriteControl(websocket.CloseMessage, msg, deadline)
+		_ = conn.Close()
+		return
+	}
 
 	go client.writePump()
 	go client.readPump()

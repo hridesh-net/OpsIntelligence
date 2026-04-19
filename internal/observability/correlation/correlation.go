@@ -114,3 +114,20 @@ func Fields(ctx context.Context) []zap.Field {
 	}
 	return fields
 }
+
+type traceLoopIterationKey struct{}
+
+// WithTraceLoopIteration records the agent loop index (1-based) for nested tracing
+// (e.g. chain_run NDJSON lines can cite which master iteration invoked the tool).
+func WithTraceLoopIteration(ctx context.Context, n int) context.Context {
+	if n <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, traceLoopIterationKey{}, n)
+}
+
+// TraceLoopIteration returns the value from WithTraceLoopIteration, or 0.
+func TraceLoopIteration(ctx context.Context) int {
+	v, _ := ctx.Value(traceLoopIterationKey{}).(int)
+	return v
+}

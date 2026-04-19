@@ -129,12 +129,13 @@ func runHeartbeatLoop(ctx context.Context, base *agent.Runner, interval time.Dur
 	}
 }
 
-// agentPlanningEnabled defaults to true when unset (upfront planning on).
+// agentPlanningEnabled honors explicit agent.planning; when nil, planning defaults
+// on for agent.enterprise and off otherwise (lean single-user installs).
 func agentPlanningEnabled(c *config.Config) bool {
-	if c.Agent.Planning == nil {
-		return true
+	if c.Agent.Planning != nil {
+		return *c.Agent.Planning
 	}
-	return *c.Agent.Planning
+	return c.Agent.Enterprise
 }
 
 // agentReflectionEnabled defaults to false when unset (extra LLM call; opt-in).
@@ -170,19 +171,12 @@ func rootCmd() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "opsintelligence",
-		Short: "OpsIntelligence — autonomous DevOps agent",
-		Long: `OpsIntelligence is a team-configurable autonomous DevOps agent with:
-  • Built-in DevOps skill graph: PR review, SonarQube triage, CI/CD regression
-    detection, incident scribing, runbooks (see skills/devops)
-  • gh-pr-review skill: gh pr checkout into disposable worktrees, local lint/test
-    runs, and one-click GitHub "suggestion" blocks via the Reviews API
-  • Smart-prompt chains (pr-review, sonar-triage, cicd-regression,
-    incident-scribe) with built-in self-critique, exposed via chain_run
-  • Policy-driven team overrides under teams/<team>/ and
-    <state_dir>/policies/ (owner-only, read-only by default)
-  • 15+ LLM providers, embeddings, three-tier memory (Working / Episodic /
-    Semantic), MCP clients, cron, webhooks, and messaging channels (Telegram,
-    Discord, Slack, WhatsApp — same adapters as AssistClaw)`,
+		Short: "OpsIntelligence — autonomous DevOps & PR-review agent",
+		Long: `OpsIntelligence is an autonomous teammate for DevOps work—especially PR review—
+plus Sonar/CI triage, incidents, and runbooks. It uses tools and APIs (GitHub, GitLab,
+Jenkins, Sonar, Slack, …), optional smart-prompt chains (pr-review, sonar-triage, …),
+team rules under teams/ and policies/, and the usual agent stack: many LLM providers,
+memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		Version:      version,
 		SilenceUsage: true,
 	}
@@ -218,6 +212,7 @@ func rootCmd() *cobra.Command {
 		datastoreCmd(flags),
 		adminCmd(flags),
 		doctorCmd(flags),
+		guidesCmd(flags),
 		versionCmd(flags),
 		localgemmaCmd(flags),
 	)
@@ -1006,7 +1001,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 				zap.Int("port", cfg.Gateway.Port),
 				zap.String("bind", cfg.Gateway.Bind),
 			)
-			srv := gateway.NewServer(cfg.Gateway.Port)
+			srv := gateway.NewServer(cfg.Gateway.Port, cfg.Gateway.MaxWebSocketClients)
 			srv.Bind = cfg.Gateway.Bind
 			srv.Tailscale.Mode = cfg.Gateway.Tailscale.Mode
 			srv.Token = cfg.Gateway.Token
@@ -1590,6 +1585,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		RunTraceMode:          cfg.Agent.RunTraceMode,
 		ProviderName:          providerNameForCaps,
 		ToolsProfile:          cfg.Security.Profile,
+		Enterprise:            cfg.Agent.Enterprise,
 		EnablePlanning:        agentPlanningEnabled(cfg),
 		EnableReflection:      agentReflectionEnabled(cfg),
 		GatewayPublicBaseURL:  cfg.PublicGatewayBaseURL(),
@@ -1668,9 +1664,15 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// still reusing the same guardrail-wrapped executor as subagent_run.
 	// Async task orchestration. EnsureTaskManager wires the shared
 	// executor used by BOTH subagent_run (sync) and subagent_run_async
-	// (background). Defaults: 8 concurrent tasks, retain last 256 in
-	// memory, 30m per-task timeout.
-	tasks := subSvc.EnsureTaskManager(0, 0, 0)
+	// (background). Zeros keep library defaults (8 concurrent, retain 256, 30m).
+	st := cfg.Agent.SubagentTasks
+	taskTimeout := time.Duration(0)
+	if s := strings.TrimSpace(st.DefaultTimeout); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			taskTimeout = d
+		}
+	}
+	tasks := subSvc.EnsureTaskManager(st.MaxConcurrent, st.RetainLimit, taskTimeout)
 	toolReg.Register(tools.SubAgentCreateTool{S: subSvc})
 	toolReg.Register(tools.SubAgentListTool{S: subSvc})
 	toolReg.Register(tools.SubAgentRunTool{S: subSvc})
@@ -1906,7 +1908,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			zap.Int("pid", os.Getpid()),
 		)
 
-		srv := gateway.NewServer(cfg.Gateway.Port)
+		srv := gateway.NewServer(cfg.Gateway.Port, cfg.Gateway.MaxWebSocketClients)
 		srv.Bind = cfg.Gateway.Bind
 		srv.Tailscale.Mode = cfg.Gateway.Tailscale.Mode
 		srv.Token = cfg.Gateway.Token

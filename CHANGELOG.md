@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-04-19
+
+### Added
+
+- **Enterprise posture (binary installs):** `agent.enterprise`, `agent.subagent_tasks`, `gateway.max_websocket_clients`; planning defaults when enterprise is on; `doc/enterprise-binary-server.md`.
+- **`opsintelligence guides github`:** TUI cheat sheet for GitHub PAT vs webhook HMAC vs `gh` PR reviews.
+- **Dashboard setup guides:** Gateway, DevOps, and Webhooks settings pages show short “where does this credential go” asides; settings landing summarizes GitHub setup paths.
+
+### Changed
+
+- **TUI theme:** Replaced lime-green primary palette with slate + blue/cyan accents; success indicators use cyan instead of green.
+- **GitHub webhooks:** Example YAML and `doc/github-webhooks.md` document CodeRabbit-style PR review flow (`pr-review` + `gh api`); default adapter prompt mentions posting reviews.
+- **`pr-review` render:** Walkthrough plus collapsible Major / Minor / Nitpick sections for GitHub-flavored Markdown.
+
+### Fixed
+
+- **WebSocket hub:** Cap concurrent clients when `max_websocket_clients` is set; synchronous register ack before starting pumps.
+
 ## [0.3.9] — 2026-04-19
 
 ### Added

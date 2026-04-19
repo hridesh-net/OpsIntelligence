@@ -14,10 +14,19 @@ gateway:
   host: "127.0.0.1"
   port: 18789
   token: "${OPSINTEL_GATEWAY_TOKEN}" # set in env, never commit a real token
+  # Enterprise / high fan-in: cap live WebSocket clients (0 = unlimited). See doc/enterprise-binary-server.md
+  # max_websocket_clients: 500
 
 # Agent execution settings
 agent:
   max_iterations: 64
+  # Enterprise: stronger defaults (planning on when planning is omitted; see doc/enterprise-binary-server.md)
+  # enterprise: true
+  # Optional: async sub-agent pool (zeros = built-in defaults: 8 concurrent, retain 256, 30m timeout)
+  # subagent_tasks:
+  #   max_concurrent: 16
+  #   retain_limit: 512
+  #   default_timeout: "45m"
   system_prompt_ext: "" # Extra instructions appended to the global prompt
   # Directory of lazy-loaded markdown skills (INDEX + nodes).
   # Seed with `cp -R <repo>/skills ~/.opsintelligence/` after first install.
@@ -136,7 +145,8 @@ webhooks:
 
   # Router-level knobs shared by every adapter. Saturation returns 503 +
   # Retry-After so the sending platform retries with its own backoff
-  # instead of this process fanning goroutines unbounded.
+  # instead of this process fanning goroutines unbounded. Raise for heavy
+  # enterprise ingress (balance with CPU and agent.subagent_tasks).
   max_concurrent: 10
   timeout: "10m"
 
@@ -181,15 +191,25 @@ webhooks:
       # Missing templates fall back to default_prompt, then a concise
       # built-in auto-summary.
       prompts:
+        # CodeRabbit-style: evidence → pr-review chain → one gh api review (see doc/github-webhooks.md).
         pull_request: |
-          GitHub PR {{.action}}: {{.repository.full_name}}#{{.pull_request.number}}
-          — "{{.pull_request.title}}" by @{{.pull_request.user.login}}
-          Base: {{.pull_request.base.ref}} ← Head: {{.pull_request.head.ref}}
+          delivery_id={{.delivery_id}} event={{.event}} action={{.action}}
 
-          Run `chain_run id="pr-review"` with owner/repo/number above.
-          You may dispatch sub-tasks with `subagent_run_async` /
-          `subagent_run_parallel` to check Sonar + pipeline in parallel.
-          Post the verdict back via the gh-pr-review skill.
+          GitHub pull_request: {{.repository.full_name}}#{{.pull_request.number}}
+          — "{{.pull_request.title}}" by @{{.pull_request.user.login}}
+          PR URL: {{.pull_request.html_url}}
+          Pin reviews to head commit when posting: {{.pull_request.head.sha}}
+
+          Do this in order:
+          1) devops.github.pull_request for {{.repository.full_name}} and number {{.pull_request.number}}.
+          2) devops.github.pr_diff (truncate to ~24k chars for chain_run).
+          3) Optional: subagent_run_parallel for Sonar + CI evidence.
+          4) chain_run id="pr-review" with inputs pr_url, github_pr_json, github_diff, optional github_ci_hint.
+          5) Publish: one POST repos/{{.repository.full_name}}/pulls/{{.pull_request.number}}/reviews
+             (Markdown body with walkthrough + <details> for severity buckets; comments[] for inline Critical/High;
+             commit_id={{.pull_request.head.sha}}; gh api --input review.json). See skills/gh-pr-review/comments.md.
+             If policy forbids unattended writes, write review.json under state_dir and log the path instead of posting.
+          Install skill once: opsintelligence skills install gh-pr-review
         workflow_run: |
           CI run "{{.workflow_run.name}}" finished with
           conclusion={{.workflow_run.conclusion}} on

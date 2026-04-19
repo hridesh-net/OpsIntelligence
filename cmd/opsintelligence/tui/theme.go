@@ -1,5 +1,5 @@
 // Package tui provides the OpsIntelligence terminal UI components.
-// Color palette derived from the lime-green robot logo.
+// Color palette: cool slate base with blue/cyan accents (no green primaries).
 package tui
 
 import "github.com/charmbracelet/lipgloss"
@@ -7,17 +7,17 @@ import "github.com/charmbracelet/lipgloss"
 // ── Palette ───────────────────────────────────────────────────────────────
 
 const (
-	ColorPrimary  = lipgloss.Color("#7CC72C") // logo lime-green
-	ColorNeon     = lipgloss.Color("#AAEB47") // bright neon pop
-	ColorBorder   = lipgloss.Color("#2E4020") // dim green border
-	ColorSurface  = lipgloss.Color("#14180F") // dark card bg
-	ColorBg       = lipgloss.Color("#0D0F0D") // near-black
-	ColorMuted    = lipgloss.Color("#6B7B6B") // dimmed text
-	ColorCyan     = lipgloss.Color("#44CCCC") // tool indicator
-	ColorError    = lipgloss.Color("#E05A4E") // error red
-	ColorWhite    = lipgloss.Color("#E8F0E8") // soft white
-	ColorUserMsg  = lipgloss.Color("#AAEB47") // user bubble
-	ColorAgentMsg = lipgloss.Color("#7CC72C") // agent bubble
+	ColorPrimary  = lipgloss.Color("#5B8DFF") // primary accent (blue)
+	ColorNeon     = lipgloss.Color("#7EC4FF") // bright highlight
+	ColorBorder   = lipgloss.Color("#3A4254") // borders / chrome
+	ColorSurface  = lipgloss.Color("#141821") // panel background
+	ColorBg       = lipgloss.Color("#0B0D12") // near-black
+	ColorMuted    = lipgloss.Color("#8B92A8") // secondary text
+	ColorCyan     = lipgloss.Color("#5EC8E8") // tools / OK dot
+	ColorError    = lipgloss.Color("#E07066") // errors
+	ColorWhite    = lipgloss.Color("#E8EBF4") // primary text
+	ColorUserMsg  = lipgloss.Color("#9BB8FF") // user emphasis
+	ColorAgentMsg = lipgloss.Color("#7EC4FF") // agent emphasis
 )
 
 // ── Base Styles ───────────────────────────────────────────────────────────
@@ -69,8 +69,8 @@ var (
 			BorderForeground(ColorBorder).
 			Padding(0, 1)
 
-	// StatusOK is a green dot for running status.
-	StatusOK = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("●")
+	// StatusOK is a cyan dot for running status (not green).
+	StatusOK = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render("●")
 
 	// StatusErr is a red dot for stopped status.
 	StatusErr = lipgloss.NewStyle().Foreground(ColorError).Bold(true).Render("●")
@@ -99,7 +99,7 @@ func ProgressBar(percent float64, width int) string {
 	bar := ""
 	for i := 0; i < width; i++ {
 		if i < filled {
-			bar += lipgloss.NewStyle().Foreground(ColorPrimary).Render("█")
+			bar += lipgloss.NewStyle().Foreground(ColorCyan).Render("█")
 		} else {
 			bar += lipgloss.NewStyle().Foreground(ColorBorder).Render("░")
 		}

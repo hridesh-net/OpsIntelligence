@@ -22,6 +22,12 @@ GitHub or GitLab.
 > skill — it covers `gh` / `git` commands for checkout + local tests,
 > the GitHub Reviews API, line-level comments, and one-click
 > `suggestion` blocks.
+>
+> **CodeRabbit-style automation**: install `gh`, set `GH_TOKEN` / `OPSINTEL_GITHUB_TOKEN`,
+> run `opsintelligence skills install gh-pr-review`, then wire the GitHub webhook
+> `prompts.pull_request` so the outer agent runs this chain and posts one review
+> (`gh api …/pulls/{n}/reviews`). See [doc/github-webhooks.md](../../doc/github-webhooks.md)
+> (“Gateway exposure”, “GitHub token and gh”, “CodeRabbit-style layout”).
 
 ## Inputs you must collect first
 

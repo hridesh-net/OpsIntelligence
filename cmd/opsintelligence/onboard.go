@@ -1231,7 +1231,7 @@ func runOnboarding(configPath string) (bool, error) {
 		stateDir := filepath.Dir(configPath)
 		dst := localintel.DefaultGGUFPath(stateDir)
 		warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-		okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		okStyle := lipgloss.NewStyle().Foreground(tui.ColorCyan)
 		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 		fmt.Println(dim.Render("  Provisioning local Gemma (bundled copy or public mirrors, no credentials)…"))
@@ -1478,7 +1478,7 @@ func runOnboarding(configPath string) (bool, error) {
 						_ = wa.Connect(context.Background())
 						_ = wa.Stop() // Terminate onboarding connection to avoid conflict with agent
 					}
-					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✔ WhatsApp Linked! Continuing setup..."))
+					fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("✔ WhatsApp Linked! Continuing setup..."))
 				} else {
 					fmt.Printf("Error initializing WhatsApp for pairing: %v\n", err)
 				}
@@ -1985,7 +1985,7 @@ func runOnboarding(configPath string) (bool, error) {
 		return false, err
 	}
 
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✔ Configuration saved!"))
+	fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("✔ Configuration saved!"))
 
 	if ghWebhookEnabled && strings.TrimSpace(ghWebhookSecret) != "" {
 		dimWH := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
@@ -2029,7 +2029,7 @@ func runOnboarding(configPath string) (bool, error) {
 			fmt.Println(dim.Render("  Retry with: opsintelligence service install"))
 			fmt.Println(dim.Render("  On headless Linux, you may need: sudo loginctl enable-linger $USER"))
 		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  ✔ Login service installed (launchd / systemd user)."))
+			fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("  ✔ Login service installed (launchd / systemd user)."))
 		}
 	default:
 		fmt.Println()
@@ -2051,6 +2051,10 @@ func runOnboarding(configPath string) (bool, error) {
 	fmt.Println(dim.Render("    opsintelligence gateway start   │ stop   │ restart"))
 	fmt.Println(dim.Render("    opsintelligence service status          (login auto-start)"))
 	fmt.Println(dim.Render("    opsintelligence status"))
+	fmt.Println()
+	fmt.Println(dim.Render("  GitHub & inbound webhooks:"))
+	fmt.Println(dim.Render("    opsintelligence guides github   — PAT vs webhook secret vs gh"))
+	fmt.Println(dim.Render("    doc/github-webhooks.md"))
 	if len(selectedChannels) > 0 {
 		fmt.Println()
 		fmt.Println(dim.Render("  Channel setup guides:"))
@@ -2121,7 +2125,7 @@ func randomToken(n int) string {
 // starts a detached Plano container listening on port 12000.
 // Returns true if Plano is confirmed reachable after setup.
 func setupPlanoDocker(endpoint string) bool {
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	okLine := lipgloss.NewStyle().Foreground(tui.ColorCyan)
 	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	red := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 
@@ -2132,12 +2136,12 @@ func setupPlanoDocker(endpoint string) bool {
 		fmt.Println(yellow.Render("  Install Docker Desktop: https://docs.docker.com/get-docker/"))
 		return false
 	}
-	fmt.Println(green.Render("✔ Docker found"))
+		fmt.Println(okLine.Render("✔ Docker found"))
 
 	// 2. Check if plano container already running
 	out, _ := exec.Command("docker", "ps", "--filter", "name=plano", "--format", "{{.Names}}").Output()
 	if strings.Contains(string(out), "plano") {
-		fmt.Println(green.Render("  ✔ Plano container already running"))
+		fmt.Println(okLine.Render("  ✔ Plano container already running"))
 		return waitForPlano(endpoint, 5)
 	}
 
@@ -2150,7 +2154,7 @@ func setupPlanoDocker(endpoint string) bool {
 		fmt.Println(red.Render("✗ Pull failed: " + err.Error()))
 		return false
 	}
-	fmt.Println(green.Render("  ✔ Image pulled"))
+	fmt.Println(okLine.Render("  ✔ Image pulled"))
 
 	// 4. Remove any stopped plano container
 	_ = exec.Command("docker", "rm", "-f", "plano").Run()
@@ -2167,12 +2171,12 @@ func setupPlanoDocker(endpoint string) bool {
 		fmt.Println(red.Render("✗ Failed to start: " + string(out)))
 		return false
 	}
-	fmt.Println(green.Render("✔ Container started"))
+	fmt.Println(okLine.Render("✔ Container started"))
 
 	// 6. Wait for readiness
 	fmt.Print("  Waiting for Plano to be ready")
 	if waitForPlano(endpoint, 15) {
-		fmt.Println(" " + green.Render("✔ Ready!"))
+		fmt.Println(" " + okLine.Render("✔ Ready!"))
 		return true
 	}
 	fmt.Println(" " + yellow.Render("⚠ Timed out — Plano may still be starting up"))

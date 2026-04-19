@@ -32,6 +32,26 @@ The dedicated handler solves each of these.
 POST /api/webhook/github          (default; override via webhooks.adapters.github.path)
 ```
 
+## Gateway exposure and TLS
+
+- GitHub must reach a **stable HTTPS URL** (or smee/ngrok for development). Put a reverse proxy (nginx, Caddy, etc.) in front of the gateway when exposing beyond localhost; terminate TLS at the proxy and forward to the gateway bind address.
+- The path is always **`/api/webhook/`** plus the adapter `path` (default **`github`** → `/api/webhook/github`).
+- For production hardening (bind addresses, file limits, WebSocket caps), see [enterprise-binary-server.md](./enterprise-binary-server.md).
+
+## GitHub token and `gh` for posting reviews
+
+Tools under `devops.github.*` are **read-only** evidence fetchers. Posting a PR review (summary + inline comments) uses the **GitHub Pull Request Reviews API** via the **`gh`** CLI, as documented in [`skills/gh-pr-review/`](../skills/gh-pr-review/).
+
+1. Install **`gh`** on the host that runs the OpsIntelligence gateway / webhook runner.
+2. Authenticate once: `gh auth login` **or** set **`GH_TOKEN`** / **`OPSINTEL_GITHUB_TOKEN`** with a PAT that can create reviews on the target repos (typically `repo` for private repositories; follow your org’s machine-user or GitHub App policy).
+3. Install the **`gh-pr-review`** skill into OpsIntelligence so the agent can load the posting workflow:  
+   `opsintelligence skills install gh-pr-review`
+4. Decide **write policy**: unattended `gh api …/pulls/{n}/reviews` from webhook runs is powerful; many teams keep webhook runs read-only and only post after a human confirms in chat. The example `prompts.pull_request` below states both paths.
+
+## CodeRabbit-style layout on GitHub
+
+CodeRabbit’s “walkthrough”, severity buckets, and collapsible sections are **Markdown in the review body** (`<details><summary>…</summary>…</details>`, tables, blockquotes). The shipped **`pr-review`** chain’s **render** step is tuned to emit that shape. For **inline threads** on the Files tab, map Critical/High findings into the JSON `comments[]` array (`path`, `line`, `side: "RIGHT"`, `body`) in a **single** review POST — see [`skills/gh-pr-review/comments.md`](../skills/gh-pr-review/comments.md).
+
 ## Configuration
 
 ```yaml
@@ -53,10 +73,23 @@ webhooks:
         push:                []    # event has no action field
     prompts:
       pull_request: |
-        PR {{.action}} on {{.repository.full_name}}#{{.pull_request.number}}
-        — "{{.pull_request.title}}" by @{{.pull_request.user.login}}.
-        Run `chain_run id="pr-review"`; fan out Sonar / pipeline checks
-        with `subagent_run_parallel` if useful.
+        delivery_id={{.delivery_id}} event={{.event}} action={{.action}}
+
+        GitHub pull_request: {{.repository.full_name}}#{{.pull_request.number}}
+        — "{{.pull_request.title}}" by @{{.pull_request.user.login}}
+        PR URL: {{.pull_request.html_url}}
+        Pin reviews to head commit when posting: {{.pull_request.head.sha}}
+
+        Do this in order:
+        1) devops.github.pull_request for {{.repository.full_name}} and number {{.pull_request.number}}.
+        2) devops.github.pr_diff (truncate to ~24k chars for chain_run).
+        3) Optional: subagent_run_parallel for Sonar + CI evidence.
+        4) chain_run id="pr-review" with inputs pr_url, github_pr_json, github_diff, optional github_ci_hint.
+        5) Publish like CodeRabbit: one POST to repos/{{.repository.full_name}}/pulls/{{.pull_request.number}}/reviews
+           with Markdown body (walkthrough + <details> sections for Major/Minor/Nitpick per pr-review render),
+           event COMMENT or REQUEST_CHANGES, commit_id={{.pull_request.head.sha}}, and comments[] for inline Critical/High only.
+           Use gh api with --input review.json; follow skills/gh-pr-review/comments.md.
+           If your policy forbids unattended writes, write review.json under state_dir and log the path instead of posting.
       workflow_run: |
         {{.workflow_run.name}} → {{.workflow_run.conclusion}} on
         {{.repository.full_name}} ({{.workflow_run.head_branch}}).

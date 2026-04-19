@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
 	"gopkg.in/yaml.v3"
@@ -523,6 +524,8 @@ type GatewayConfig struct {
 	} `yaml:"tls"`
 	Bind      string          `yaml:"bind"` // loopback, lan, tailnet, custom
 	Tailscale TailscaleConfig `yaml:"tailscale"`
+	// MaxWebSocketClients caps concurrent WebSocket connections (dashboard / live clients). 0 = unlimited.
+	MaxWebSocketClients int `yaml:"max_websocket_clients"`
 }
 
 type TailscaleConfig struct {
@@ -721,6 +724,15 @@ type GPIOConfig struct {
 	BinaryPath string `yaml:"binary_path"`
 }
 
+// SubagentTasksConfig tunes the in-process async sub-agent task manager
+// (subagent_run_async, parallel runs, supervision). Zero values keep the
+// library defaults (8 concurrent tasks, retain 256, 30m per-task timeout).
+type SubagentTasksConfig struct {
+	MaxConcurrent  int    `yaml:"max_concurrent"`
+	RetainLimit    int    `yaml:"retain_limit"`
+	DefaultTimeout string `yaml:"default_timeout"` // Go duration string, e.g. "45m"; empty = default 30m
+}
+
 // SmartPromptsConfig augments where smart prompts / chains are loaded from.
 // Markdown and chain YAML use the same layout as <state_dir>/prompts/.
 // Directories are scanned in order after the embedded seed; <state_dir>/prompts
@@ -737,6 +749,11 @@ type AgentConfig struct {
 	ToolsDir        string   `yaml:"tools_dir"`
 	SkillsDir       string   `yaml:"skills_dir"`
 	EnabledSkills   []string `yaml:"enabled_skills"`
+	// Enterprise opts into stronger defaults for high-load single-binary installs.
+	// When true and planning is nil, planning defaults to on; explicit planning always wins.
+	Enterprise bool `yaml:"enterprise"`
+	// SubagentTasks configures limits for async sub-agent runs (see tools.SubAgentSvc.EnsureTaskManager).
+	SubagentTasks SubagentTasksConfig `yaml:"subagent_tasks"`
 	// RunTraceMode controls NDJSON run tracing for every agent turn (CLI, gateway,
 	// channels, webhooks, sub-agents). Empty or "auto" (default): if run_trace_file is
 	// unset, use logs/runtrace.ndjson under state_dir. "on"/"enabled"/"true": same as auto.
@@ -753,7 +770,8 @@ type AgentConfig struct {
 	RunTraceSubagentFile string `yaml:"run_trace_subagent_file"`
 	// Heartbeat schedules periodic synthetic prompts (proactive ticks on a dedicated session).
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
-	// Planning adds an upfront milestone breakdown (extra LLM call). Nil = enabled (default on).
+	// Planning adds an upfront milestone breakdown (extra LLM call). Nil means off
+	// unless agent.enterprise is true (then defaults on). Explicit true/false always wins.
 	Planning *bool `yaml:"planning"`
 	// Reflection adds a self-critique pass when a turn completes without tools. Nil = disabled (saves tokens).
 	Reflection *bool `yaml:"reflection"`
@@ -1234,6 +1252,20 @@ func validate(cfg *Config) error {
 
 	if cfg.Gateway.Port < 1 || cfg.Gateway.Port > 65535 {
 		issues = append(issues, "gateway.port must be between 1 and 65535")
+	}
+	if cfg.Gateway.MaxWebSocketClients < 0 {
+		issues = append(issues, "gateway.max_websocket_clients must be >= 0")
+	}
+	if cfg.Agent.SubagentTasks.MaxConcurrent < 0 {
+		issues = append(issues, "agent.subagent_tasks.max_concurrent must be >= 0")
+	}
+	if cfg.Agent.SubagentTasks.RetainLimit < 0 {
+		issues = append(issues, "agent.subagent_tasks.retain_limit must be >= 0")
+	}
+	if s := strings.TrimSpace(cfg.Agent.SubagentTasks.DefaultTimeout); s != "" {
+		if _, err := time.ParseDuration(s); err != nil {
+			issues = append(issues, fmt.Sprintf("agent.subagent_tasks.default_timeout: invalid duration %q: %v", s, err))
+		}
 	}
 	if cfg.Channels.Outbound.MaxAttempts < 1 {
 		issues = append(issues, "channels.outbound.max_attempts must be >= 1")

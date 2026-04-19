@@ -323,10 +323,18 @@
     if (!o || typeof o !== "object") return "";
     const k = o.kind || "?";
     const parts = [`${k}`];
+    if (o.runner_role) parts.push(`role=${o.runner_role}`);
     if (o.iteration != null && o.iteration !== "") parts.push(`iter=${o.iteration}`);
     if (o.tool) parts.push(`tool=${o.tool}`);
     if (o.chain_id) parts.push(`chain=${o.chain_id}`);
     if (o.run_kind) parts.push(`run=${o.run_kind}`);
+    if (k === "chain_run_complete" && Array.isArray(o.step_prompts) && o.step_prompts.length) {
+      const st = o.step_prompts.join(" → ");
+      parts.push(`steps=${st.length > 100 ? st.slice(0, 100) + "…" : st}`);
+    }
+    if (o.parent_iteration != null && o.parent_iteration !== "") {
+      parts.push(`parent_iter=${o.parent_iteration}`);
+    }
     if (o.finish) parts.push(`finish=${o.finish}`);
     if (k === "model_iteration" && o.model) parts.push(`model=${o.model}`);
     if (k === "model_iteration" && Array.isArray(o.tools_offered)) {
@@ -397,11 +405,19 @@
     body.innerHTML = `
       <div class="placeholder">
         <h2>Settings</h2>
-        <p>Pick a section on the left to view or edit it.</p>
+        <p>Pick a section on the left. Each page includes a short <strong>setup guide</strong> where it helps (Gateway, DevOps, Webhooks).</p>
         <p class="note">
-          Every form here calls the same <code>configsvc</code> the CLI does,
-          so changes show up in <code>opsintelligence.yaml</code> immediately.
+          Every form calls the same <code>configsvc</code> as the CLI — saves go to <code>opsintelligence.yaml</code> on disk.
         </p>
+        <aside class="setup-guide setup-guide-landing" role="note">
+          <h3 class="setup-guide-title">Quick orientation</h3>
+          <ul>
+            <li><strong>GitHub PAT</strong> → <em>DevOps → GitHub</em> (agent tools: PR, diff, Actions).</li>
+            <li><strong>Webhook HMAC secret</strong> → <em>Webhooks → GitHub adapter</em> (not the same as the PAT).</li>
+            <li><strong>CLI cheat sheet</strong> → run <code>opsintelligence guides github</code> on the server.</li>
+            <li><strong>Full webhook doc</strong> → <code>doc/github-webhooks.md</code> in the repo.</li>
+          </ul>
+        </aside>
       </div>`;
   }
 
@@ -420,6 +436,13 @@
       summary:
         "HTTP/WebSocket listener — host, port, bind mode and optional TLS. " +
         "These changes apply on the next gateway restart.",
+      setupGuide: `
+        <h3 class="setup-guide-title">Gateway & inbound traffic</h3>
+        <ul>
+          <li><strong>Dashboard & API</strong> live on <code>host:port</code> (e.g. <code>/dashboard/</code>, <code>/api/v1/</code>).</li>
+          <li><strong>GitHub webhooks</strong> use a <em>different</em> path: <code>/api/webhook/github</code> — GitHub must reach this URL over HTTPS in production.</li>
+          <li>After changing bind or TLS, <strong>restart the gateway</strong> (<code>opsintelligence restart</code> or your supervisor).</li>
+        </ul>`,
       fields: [
         { key: "host", label: "Host", type: "text", help: "Listen address (e.g. 127.0.0.1, 0.0.0.0)." },
         { key: "port", label: "Port", type: "number", min: 1, max: 65535 },
@@ -608,6 +631,13 @@
       summary:
         "First-class DevOps platform integrations. Tokens are write-only — " +
         "leave a field blank to keep the existing value unchanged.",
+      setupGuide: `
+        <h3 class="setup-guide-title">GitHub — which credential?</h3>
+        <ul>
+          <li><strong>Token / token_env here</strong> = Personal Access Token for the <strong>GitHub REST API</strong> (<code>devops.github.*</code> tools: read PR, diff, checks). Typical scope: <code>repo</code> for private repositories.</li>
+          <li><strong>Not</strong> the webhook signing secret — that lives under <strong>Settings → Webhooks</strong> (adapter HMAC).</li>
+          <li><strong>Posting PR reviews</strong> back to GitHub uses the <code>gh</code> CLI + <code>GH_TOKEN</code> / PAT with review permission — see <code>doc/github-webhooks.md</code> and run <code>opsintelligence guides github</code> on the host.</li>
+        </ul>`,
       fields: [
         {
           key: "github",
@@ -753,6 +783,13 @@
 
     webhooks: {
       summary: "Inbound webhook endpoints. Adapters (typed) take precedence over generic mappings.",
+      setupGuide: `
+        <h3 class="setup-guide-title">Webhooks vs DevOps tokens</h3>
+        <ul>
+          <li><strong>Generic webhook token</strong> below applies only to <em>legacy</em> generic mappings (header check), not the GitHub adapter.</li>
+          <li><strong>GitHub adapter → secret</strong> must match GitHub’s webhook <strong>Signing secret</strong> (HMAC). Set the same value in <code>OPSINTEL_GITHUB_WEBHOOK_SECRET</code>.</li>
+          <li>In GitHub: Settings → Webhooks → Payload URL <code>https://&lt;your-host&gt;/api/webhook/github</code>, content type <strong>application/json</strong>.</li>
+        </ul>`,
       fields: [
         { key: "enabled", label: "Enabled", type: "checkbox" },
         {
@@ -851,6 +888,14 @@
       <h2>${escapeHTML(prettySection(section))}</h2>
       <p class="section-summary">${escapeHTML(schema.summary || "")}</p>`;
     root.appendChild(header);
+
+    if (schema.setupGuide) {
+      const guide = document.createElement("aside");
+      guide.className = "setup-guide";
+      guide.setAttribute("role", "note");
+      guide.innerHTML = schema.setupGuide;
+      root.appendChild(guide);
+    }
 
     const form = document.createElement("form");
     form.className = "config-form";

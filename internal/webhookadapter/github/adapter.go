@@ -242,6 +242,9 @@ Inspect the payload below and decide on the right DevOps workflow:
   devops.github.pull_request + devops.github.pr_diff (then optional CI tools),
   then chain_run id="pr-review" with inputs including pr_url, github_pr_json,
   and truncated github_diff (chains cannot call the GitHub API themselves).
+  When policy allows posting back to GitHub, submit one Pull Request Review
+  (body + optional comments[]) via gh api as documented in skills/gh-pr-review/
+  (comments.md); otherwise write review.json for a human to post.
 - workflow_run / check_suite / check_run (failed) → run chain_run id="cicd-regression".
 - issues / issue_comment → summarise and triage.
 - push → check CI status and recent regressions if this is the default branch.

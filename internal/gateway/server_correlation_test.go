@@ -8,7 +8,7 @@ import (
 
 func TestWithCorrelation_GeneratesRequestID(t *testing.T) {
 	t.Helper()
-	s := NewServer(0)
+	s := NewServer(0, 0)
 	handler := s.withCorrelation(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -24,7 +24,7 @@ func TestWithCorrelation_GeneratesRequestID(t *testing.T) {
 
 func TestWithCorrelation_PreservesIncomingRequestID(t *testing.T) {
 	t.Helper()
-	s := NewServer(0)
+	s := NewServer(0, 0)
 	handler := s.withCorrelation(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

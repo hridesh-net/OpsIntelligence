@@ -30,6 +30,12 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/system"
 )
 
+// enterprisePosturePrompt is appended when Config.Enterprise is set (binary / high-load installs).
+const enterprisePosturePrompt = `## Enterprise posture
+- Decompose large goals into milestones, gather evidence with tools before conclusions, and use **chain_run** for packaged flows (pr-review, sonar-triage, …) once you have real inputs.
+- Fan out independent work with **subagent_run** / **subagent_run_parallel** when it reduces wall-clock time; keep one coherent thread when work is tightly coupled.
+- Prefer **devops.\*** and repository facts over guesses; stay **read-only** on GitHub/GitLab/Jenkins/Sonar unless the human clearly confirmed a write in the same turn.`
+
 // ─────────────────────────────────────────────
 // Tool interface
 // ─────────────────────────────────────────────
@@ -111,6 +117,8 @@ type Config struct {
 	ActiveSkillsContext string
 	EnablePlanning      bool
 	EnableReflection    bool
+	// Enterprise opts into a compact system-prompt posture for high-load installs.
+	Enterprise bool
 	EmbeddingModel      string
 	SessionID           string // The persistent session ID for this runner
 	ChannelID           string // The message channel ID (e.g. "slack")
@@ -625,6 +633,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		if len(toolCalls) == 0 {
 			toolCalls = extractMarkdownBash(assistantContent)
 		}
+		r.normalizeToolCallNames(toolCalls)
 
 		if strings.TrimSpace(assistantContent) == "" && len(toolCalls) > 0 {
 			assistantContent = "[Activating tools...]"
@@ -796,39 +805,49 @@ func stripXMLFunctionBlocks(text string) string {
 
 // executeTool runs a single tool call and returns the result string.
 func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (result string) {
+	resolved := r.resolveCatalogToolName(tc.ToolName)
+	inputJSON, err := json.Marshal(tc.ToolInput)
+	if err != nil {
+		result = fmt.Sprintf("Error marshalling tool input: %v", err)
+		return result
+	}
+
 	start := time.Now()
 	defer func() {
 		if r.tracePath(ctx) == "" {
 			return
 		}
 		ok := result != "" && !strings.HasPrefix(result, "Error") && !strings.HasPrefix(result, "[Security]")
-		r.emitTrace(ctx, "tool_done", map[string]any{
+		m := map[string]any{
 			"iteration":    r.traceLoopIteration,
-			"tool":         tc.ToolName,
+			"tool":         resolved,
 			"ms":           time.Since(start).Milliseconds(),
 			"ok":           ok,
 			"result_chars": len(result),
-		})
+		}
+		if resolved != tc.ToolName && tc.ToolName != "" {
+			m["requested_tool"] = tc.ToolName
+		}
+		r.emitTrace(ctx, "tool_done", m)
 	}()
 
-	tool, ok := r.tools.Get(tc.ToolName)
-	if !ok {
-		r.log.Warn("tool not found", zap.String("tool", tc.ToolName))
-		result = fmt.Sprintf("Error: tool %q not found", tc.ToolName)
-		return result
+	if r.tracePath(ctx) != "" {
+		m := map[string]any{
+			"iteration":   r.traceLoopIteration,
+			"tool":        resolved,
+			"input_bytes": len(inputJSON),
+		}
+		if resolved != tc.ToolName && tc.ToolName != "" {
+			m["requested_tool"] = tc.ToolName
+		}
+		r.emitTrace(ctx, "tool_call", m)
 	}
 
-	inputJSON, err := json.Marshal(tc.ToolInput)
-	if err != nil {
-		result = fmt.Sprintf("Error marshalling tool input: %v", err)
+	tool, ok := r.tools.Get(resolved)
+	if !ok {
+		r.log.Warn("tool not found", zap.String("tool", resolved), zap.String("requested_tool", tc.ToolName))
+		result = fmt.Sprintf("Error: tool %q not found", resolved)
 		return result
-	}
-	if r.tracePath(ctx) != "" {
-		r.emitTrace(ctx, "tool_call", map[string]any{
-			"iteration":   r.traceLoopIteration,
-			"tool":        tc.ToolName,
-			"input_bytes": len(inputJSON),
-		})
 	}
 
 	// ── Guardrail: pre-execution tool check ──────────────────────────────
@@ -837,14 +856,14 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 		if stateDir == "" {
 			stateDir = r.workspaceDir
 		}
-		check := r.guardrail.CheckToolCall(tc.ToolName, string(inputJSON), stateDir, r.workspaceDir)
+		check := r.guardrail.CheckToolCall(resolved, string(inputJSON), stateDir, r.workspaceDir)
 		if r.auditLog != nil && len(check.Findings) > 0 {
 			r.auditLog.WriteGuardrailEvent(r.sessionID, r.channelID, check)
 		}
 		if check.Blocked() {
 			r.log.Warn("guardrail blocked tool call",
 				r.logFields(ctx,
-					zap.String("tool", tc.ToolName),
+					zap.String("tool", resolved),
 					zap.String("reason", check.Message),
 				)...,
 			)
@@ -854,7 +873,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 		if check.Action == security.ActionWarn {
 			r.log.Warn("guardrail warning on tool call",
 				r.logFields(ctx,
-					zap.String("tool", tc.ToolName),
+					zap.String("tool", resolved),
 					zap.String("warning", check.Message),
 				)...,
 			)
@@ -863,27 +882,28 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 
 	r.log.Info("tool call",
 		r.logFields(ctx,
-			zap.String("tool", tc.ToolName),
+			zap.String("tool", resolved),
 			zap.String("input", truncate(string(inputJSON), 200)),
 		)...,
 	)
 
 	// Record tool usage for session inertia (boosts graph neighbours next turn).
 	if r.catalog != nil {
-		r.catalog.RecordUsage(tc.ToolName)
+		r.catalog.RecordUsage(resolved)
 	}
 
 	t0 := time.Now()
 	if r.mediaFn != nil {
 		ctx = context.WithValue(ctx, channels.MediaFnKey, r.mediaFn)
 	}
+	ctx = correlation.WithTraceLoopIteration(ctx, r.traceLoopIteration)
 	var execErr error
 	result, execErr = tool.Execute(ctx, inputJSON)
 	dur := time.Since(t0)
 	if execErr != nil {
 		r.log.Error("tool execution failed",
 			r.logFields(ctx,
-				zap.String("tool", tc.ToolName),
+				zap.String("tool", resolved),
 				zap.Error(execErr),
 			)...,
 		)
@@ -899,14 +919,14 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 	if r.auditLog != nil {
 		r.auditLog.WriteToolCall(
 			r.sessionID, r.channelID, "", // actor resolved by channel layer
-			tc.ToolName, inputJSON, result, dur,
+			resolved, inputJSON, result, dur,
 			security.CheckResult{Action: security.ActionAllow},
 		)
 	}
 
 	r.log.Info("tool result",
 		r.logFields(ctx,
-			zap.String("tool", tc.ToolName),
+			zap.String("tool", resolved),
 			zap.String("result", truncate(result, 200)),
 		)...,
 	)
@@ -946,7 +966,8 @@ func (r *Runner) buildRequestV3(ctx context.Context, query string) *provider.Com
 			zap.Bool("shadow_only", r.cfg.Palace.ShadowOnly),
 		)
 	}
-	tools := r.selectTools(query)
+	base := r.filterTools(r.selectTools(query))
+	tools := r.mergeToolsNeededForHistory(base)
 	return &provider.CompletionRequest{
 		Model:        r.cfg.Model,
 		Messages:     r.convertMessages(r.working.Messages()),
@@ -955,6 +976,41 @@ func (r *Runner) buildRequestV3(ctx context.Context, query string) *provider.Com
 		MaxTokens:    8096,
 		Stream:       true,
 	}
+}
+
+// mergeToolsNeededForHistory adds tool definitions for names that appear in working-memory
+// tool_use turns but were dropped from the current graph selection. This keeps Bedrock's
+// alias map aligned with conversation history (avoids unmapped devops_github_* names).
+func (r *Runner) mergeToolsNeededForHistory(selected []provider.ToolDef) []provider.ToolDef {
+	if r.tools == nil {
+		return selected
+	}
+	have := make(map[string]struct{}, len(selected)+8)
+	for _, d := range selected {
+		have[d.Name] = struct{}{}
+	}
+	out := append([]provider.ToolDef(nil), selected...)
+	for _, m := range r.working.Messages() {
+		for _, p := range m.Parts {
+			if p.Type != provider.ContentTypeToolUse {
+				continue
+			}
+			name := r.resolveCatalogToolName(strings.TrimSpace(p.ToolName))
+			if name == "" {
+				continue
+			}
+			if _, ok := have[name]; ok {
+				continue
+			}
+			t, ok := r.tools.Get(name)
+			if !ok {
+				continue
+			}
+			out = append(out, t.Definition())
+			have[name] = struct{}{}
+		}
+	}
+	return out
 }
 
 func (r *Runner) selectTools(query string) []provider.ToolDef {
@@ -1077,65 +1133,42 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 	if personaFromWorkspace != "" {
 		identityBlock = personaFromWorkspace
 	} else {
-		identityBlock = `You are OpsIntelligence — an autonomous DevOps agent specialised for PR review, SonarQube triage, CI/CD regression detection, incident response, and runbook execution. You operate under team-specific policies (policies/*, POLICIES.md, RULES.md) and prefer delegating multi-step reasoning to named smart-prompt chains (see chain_run / chain_list and the Smart Prompts Index). Default posture is read-only: never deploy, merge, cancel a pipeline, silence a Sonar rule, or write to owner-only policy paths without an in-turn "yes" from a human.`
+		identityBlock = `You are **OpsIntelligence** — an autonomous DevOps agent. Your main jobs are **PR review**, **pipelines/CI**, **Sonar**, **incidents**, and **runbooks**. Pull facts with tools (especially devops.*), answer in plain language, stay **read-only** on GitHub/GitLab/Jenkins/Sonar/Slack unless the human clearly confirms a write in the same turn. Follow team Markdown under teams/* and owner policies under POLICIES.md / policies/ in the state directory.`
 	}
 
 	base := identityBlock + `
 
 ` + hwStr + `
 
-## Available Tools — USE THEM, don't just describe what to do
+## Available tools
 
 ` + toolTable + `
 
-## Critical Rules
+## How you work
+- **Ship outcomes, not homework:** when someone asks for something, **do it** with tools. Do not hand them long shell blocks to run—you use ` + "`bash`" + `, file tools, and ` + "`devops.*`" + `.
+- **PR review:** smart chains only see text you give them. For a GitHub PR URL: parse owner/repo/number → ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (trim diff ~24k) → optional CI/status tools → ` + "`chain_run`" + ` with ` + "`id\":\"pr-review`" + ` and inputs ` + "`github_pr_json`" + `, ` + "`github_diff`" + `, etc. Use ` + "`chain_list`" + ` if you need chain ids.
+- **Other flows:** ` + "`chain_run`" + ` for ` + "`sonar-triage`" + `, ` + "`cicd-regression`" + `, ` + "`incident-scribe`" + ` when they match the task—still gather evidence with tools first when the chain needs real data.
+- **Tone:** verdict or status first, then short evidence and links. No filler, no narrating hidden startup phases.
 
-**Product identity:** This runtime is **OpsIntelligence**. Use **IDENTITY.md** / **SOUL.md** for persona name and tone; do not claim a different product or runtime name unless those files explicitly define one.
-**Core behavior authority:** When **SOUL.md** exists, it is the highest-priority source for behavior, values, and deep capability posture.
-**Identity authority:** Use **IDENTITY.md** for identity role, name, and evolving traits/style over time.
-**User profile authority:** Use **USER.md** for user-specific preferences/context.
-**Conversation quality:** Sound human, grounded, and reliable. Do not narrate hidden internals such as startup phases, file-loading progress, or tool activation unless the user explicitly asks for technical trace output. Default to outcome-first answers.
+## Policies
+- **SOUL.md / IDENTITY.md / USER.md** in the state directory (when present) define name and team context. This runtime is always OpsIntelligence.
+- **Owner-only:** never create or overwrite ` + "`POLICIES.md`" + `, ` + "`RULES.md`" + `, or files under ` + "`policies/`" + ` with tools.
 
-**Owner-only policies (hard rule):** ` + "`POLICIES.md`" + `, ` + "`RULES.md`" + `, and everything under ` + "`policies/`" + ` in the state directory are written only by the human operator on disk. You may ` + "`read_file`" + ` them to follow rules; you must not use ` + "`write_file`" + `, ` + "`edit`" + `, ` + "`apply_patch`" + `, ` + "`env`" + ` write_file, or ` + "`bash`" + ` to create, overwrite, or shell-edit those paths (attempts are blocked).
+## Remember preferences
+- Update **IDENTITY.md** and **USER.md** at the state root in the same turn when the human agrees a name or preference—chat alone does not survive restart.
+- Avatars / shareable HTML: **workspace/public/** (gateway serves **/workspace/...** when running).
 
-**IMPORTANT: When a user asks you to DO something, DO IT using your tools.**
-**CRITICAL: Do NOT output markdown code blocks expecting the user to run them. You MUST use the ` + "`write_file`" + ` or ` + "`edit`" + ` tools to save files and the ` + "`bash`" + ` tool to execute commands.**
+## Fresh facts
+- ` + "`web_search`" + ` to discover or verify current information; ` + "`web_fetch`" + ` when you already have the URL. For time-sensitive or version-specific questions, use the web tools—do not guess from training data alone.
 
-### Persist identity and user profile
-- **IDENTITY.md** and **USER.md** live in the state directory root (same folder as **SOUL.md**), not under **workspace/public/**.
-- When you choose a **name**, **emoji**, **vibe**, or the user states **their** name/preferences, **update the file in the same turn** with ` + "`edit`" + ` or ` + "`write_file`" + `. Chat text alone does **not** persist across restarts — only files do.
-- **Avatars** for browser links: put images in **workspace/public/** (e.g. **workspace/public/avatar.png**); the user can open them at the gateway **/workspace/...** URL if the gateway is running.
+## Workspace layout
+Root: ` + ws + `
+- Persona & rules: ` + ws + `/SOUL.md, ` + ws + `/IDENTITY.md, ` + ws + `/USER.md, ` + ws + `/AGENTS.md
+- Memory: ` + ws + `/MEMORY.md, daily ` + ws + `/memory/` + today + `.md
+- Public HTTP: ` + ws + `/workspace/public/
 
-### When to use web_search vs web_fetch
-- **` + "`web_search`" + `** — use when you need to FIND information: latest docs, current prices, news, "what is X", "how to do Y". This searches DuckDuckGo and returns a list of results with snippets. **No API key required.**
-- **` + "`web_fetch`" + `** — use when you already HAVE a URL and want to read that specific page.
-- **NEVER answer from training knowledge alone when the user asks about something time-sensitive, version-specific, or real-world current. Always call ` + "`web_search`" + ` first.**
-
-## Common Workflows
-
-### DevOps fast paths (prefer these; chains are cheaper than improvising)
-- "Review PR X" / "should we merge Y" (GitHub URL): **Smart-prompt chains run without tools** — they only see text you pass in. **Do not** call ` + "`chain_run`" + ` with only ` + "`pr_url`" + ` and expect the chain to hit the GitHub API. Instead: (1) Parse owner, repo, and number from the URL. (2) Call ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (truncate the diff to ~24k chars for the prompt). Optionally call ` + "`devops.github.workflow_runs`" + ` / ` + "`devops.github.commit_status`" + ` and paste short summaries into ` + "`github_ci_hint`" + `. (3) Call ` + "`chain_run`" + ` with ` + "`{\"id\":\"pr-review\",\"inputs\":{\"pr_url\":<url>,\"github_pr_json\":<string from pull_request>,\"github_diff\":<string from pr_diff>,\"github_ci_hint\":<optional>}}`" + `. (4) After the verdict, follow the ` + "`gh-pr-review`" + ` skill to post back to GitHub if asked.
-- "Why is the pipeline red / what regressed?" → ` + "`chain_run`" + ` with ` + "`id=\"cicd-regression\"`" + ` and ` + "`inputs.platform`" + ` ("github"|"gitlab"|"jenkins") + ` + "`inputs.target`" + `.
-- "Sonar quality gate / triage new-code issues" → ` + "`chain_run`" + ` with ` + "`id=\"sonar-triage\"`" + ` and ` + "`inputs.project_key`" + `.
-- "Incident just paged / prod is down" → ` + "`chain_run`" + ` with ` + "`id=\"incident-scribe\"`" + `, then ` + "`message`" + ` the brief to Slack. Never take write actions without a human "yes".
-- Use ` + "`chain_list`" + ` at runtime if the id you want isn't in the Smart Prompts Index.
-
-### Generic building blocks
-- "Research X" or "Look up X" → call ` + "`web_search`" + `, then ` + "`web_fetch`" + ` on relevant URLs
-- "Create a file" → ` + "`write_file`" + `
-- "Edit a specific line" → ` + "`edit`" + ` (str-replace, faster than rewriting the whole file)
-- "Run command" → ` + "`bash`" + `
-- "Search code" → ` + "`grep`" + `
-- "Start a dev server in background" → ` + "`process`" + ` (start)
-- "Schedule a task" → ` + "`cron`" + `
-
-## Workspace layout (state directory)
-Root path: ` + ws + `
-- **Persona & rules:** ` + ws + `/SOUL.md, ` + ws + `/IDENTITY.md, ` + ws + `/USER.md, ` + ws + `/AGENTS.md (at this root — not inside workspace/public)
-- Global memory: ` + ws + `/MEMORY.md
-- Daily log: ` + ws + `/memory/` + today + `.md
-- **Public HTTP files (dashboards, avatars for shareable URLs):** ` + ws + `/workspace/public/
-Use ` + "`write_file`" + ` / ` + "`edit`" + ` to record important insights and profile updates.`
+### Other one-offs
+- Research → ` + "`web_search`" + ` then ` + "`web_fetch`" + `. Files → ` + "`write_file`" + ` / ` + "`edit`" + `. Commands → ` + "`bash`" + `. Search repo → ` + "`grep`" + `. Background server → ` + "`process`" + `. Schedules → ` + "`cron`" + `.`
 
 	var dashboardHint string
 	if r.cfg.GatewayPublicBaseURL != "" {
@@ -1154,15 +1187,16 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 	var parts []string
 	parts = append(parts, base+dashboardHint)
 
-	if r.channelID == "slack" {
-		parts = append(parts, "CHANNEL: Slack. Keep replies concise. Use bullet points and mrkdwn formatting. Show only the most important output snippets — not full file contents. When sharing diffs or logs, use short code blocks and link to the source (PR, pipeline, Sonar issue).")
-	}
-
-	// Messaging surfaces: never leak chain-of-thought markup or wrong product name
-	if r.channelID != "" {
-		parts = append(parts, `## User-visible messages (this channel)
-- Reply in natural language only. Do **not** include raw XML-style blocks such as `+"`<planning>`"+`, `+"`</planning>`"+`, `+"`<details>`"+`, execution-plan scaffolding, or internal checklists in the text the user reads.
-- You are running under **OpsIntelligence**. Use **IDENTITY.md** / **SOUL.md** for your name and vibe; stay consistent with the product identity above.`)
+	if ch := strings.TrimSpace(r.channelID); ch != "" {
+		var chExtra string
+		switch strings.ToLower(ch) {
+		case "slack":
+			chExtra = "\n- **Slack:** short replies, mrkdwn, small snippets—link out to PRs/pipelines for detail."
+		case "whatsapp":
+			chExtra = "\n- **WhatsApp:** short paragraphs; avoid dumping huge logs or raw diffs in one message."
+		}
+		parts = append(parts, `## Messages on this channel
+- Write what the human should read: clear language only. Do **not** paste internal scaffolding (`+"`<planning>`"+`, `+"`<function=`"+`, long XML tool dumps, or giant checklists) into the user-visible reply.`+chExtra)
 	}
 
 	if r.cfg.SystemPrompt != "" {
@@ -1210,6 +1244,10 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 
 	if strings.TrimSpace(r.cfg.ExtensionPromptAppend) != "" {
 		parts = append(parts, strings.TrimSpace(r.cfg.ExtensionPromptAppend))
+	}
+
+	if r.cfg.Enterprise {
+		parts = append(parts, enterprisePosturePrompt)
 	}
 
 	if strings.TrimSpace(r.localIntelScratch) != "" {
@@ -1435,6 +1473,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		if len(toolCalls) == 0 {
 			toolCalls = extractMarkdownBash(assistantContent)
 		}
+		r.normalizeToolCallNames(toolCalls)
 		if strings.TrimSpace(assistantContent) == "" && len(toolCalls) > 0 {
 			assistantContent = "[Activating tools...]"
 		}
@@ -1657,7 +1696,7 @@ func legacySlashCommandStub(cmd string) string {
 	stubs := map[string]string{
 		"/stop":           "Stopping mid-stream isn’t supported on this channel. After the reply finishes, use `/reset` or `/new` to clear context.",
 		"/usage":          "Usage/cost toggles: use `/status` for session size. Detailed token accounting is in host logs, not chat yet.",
-		"/think":          "Thinking levels: OpsIntelligence uses `agent.planning` / `agent.reflection` in opsintelligence.yaml (not a per-chat `/think` toggle).",
+		"/think":          "Extra reasoning passes: set `agent.planning` / `agent.reflection` in opsintelligence.yaml (both off by default; not a per-chat `/think` toggle).",
 		"/verbose":        "Verbose mode: planning/reflection UI is for CLI/web; messaging channels keep replies compact.",
 		"/fast":           "Fast mode: not a separate chat toggle — tune model and `agent.planning` in config.",
 		"/reasoning":      "Reasoning visibility: not configurable per chat here; use the gateway/CLI for internal UI if enabled.",

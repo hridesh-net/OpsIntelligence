@@ -24,7 +24,7 @@ var robotLines = []string{
 
 // RenderBanner renders the full splash banner: robot + info block side by side.
 func RenderBanner(ver, sessionID string, providers, skillsCount int) string {
-	// Robot — lime green
+	// Robot — accent blue
 	robotStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
 	glowStyle := lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
 
@@ -52,6 +52,7 @@ func RenderBanner(ver, sessionID string, providers, skillsCount int) string {
 		"",
 		Muted.Render("  Type your message, Enter to send"),
 		Muted.Render("  ESC or Ctrl+C to quit"),
+		Muted.Render("  opsintelligence guides github  —  GitHub / webhook creds"),
 	}
 
 	var infoSB strings.Builder

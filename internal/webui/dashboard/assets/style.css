@@ -10,7 +10,7 @@
   --accent: #7aa7ff;
   --accent-strong: #4f7fe0;
   --danger: #ff6b6b;
-  --ok: #4ecb71;
+  --ok: #5ec8e8;
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -455,6 +455,43 @@ button.ghost:hover {
   font-size: 13px;
 }
 
+.setup-guide {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  font-size: 13px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
+.setup-guide-landing {
+  margin-top: 12px;
+}
+
+.setup-guide-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.setup-guide ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.setup-guide li {
+  margin: 6px 0;
+}
+
+.setup-guide code {
+  font-size: 12px;
+}
+
 .config-form {
   display: flex;
   flex-direction: column;
@@ -627,7 +664,7 @@ button.ghost.danger:hover {
 }
 
 .toast.toast-ok {
-  border-color: rgba(78, 203, 113, 0.5);
+  border-color: rgba(94, 200, 232, 0.45);
 }
 
 .toast.toast-warn {

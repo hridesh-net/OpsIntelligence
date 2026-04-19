@@ -17,12 +17,12 @@ func PulseBorder(frame int) lipgloss.Color {
 	return ColorNeon
 }
 
-// GradientWord renders a short string with a horizontal green→cyan→neon sweep.
+// GradientWord renders a short string with a blue→cyan sweep across characters.
 func GradientWord(s string) string {
 	if s == "" {
 		return ""
 	}
-	palette := []lipgloss.Color{ColorPrimary, ColorCyan, ColorNeon, ColorCyan, ColorPrimary}
+	palette := []lipgloss.Color{ColorPrimary, ColorNeon, ColorCyan, ColorNeon, ColorPrimary}
 	var b strings.Builder
 	i := 0
 	for _, r := range s {
