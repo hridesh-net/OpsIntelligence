@@ -21,7 +21,11 @@ import (
 // Tools are only returned for providers whose config is enabled and has the
 // minimum credentials to operate. Callers should register the returned tools
 // on the shared ToolRegistry at startup.
-func DevOpsTools(cfg config.DevOpsConfig) []agent.Tool {
+//
+// prov and model are the active LLM provider and model ID used by tools that
+// call the LLM internally (e.g. devops.github.review_pr). Pass nil/empty to
+// disable those tools.
+func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) []agent.Tool {
 	httpc := &http.Client{Timeout: 20 * time.Second}
 	var out []agent.Tool
 	if cfg.GitHub.Enabled && cfg.GitHub.Token != "" {
@@ -38,6 +42,7 @@ func DevOpsTools(cfg config.DevOpsConfig) []agent.Tool {
 			&githubSubmitReviewTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubReviewPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg, prov: prov, model: model},
 		)
 	}
 	if cfg.GitLab.Enabled && cfg.GitLab.Token != "" && cfg.GitLab.BaseURL != "" {

@@ -1190,7 +1190,7 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 
 ## How you work
 - **Ship outcomes, not homework:** when someone asks for something, **do it** with tools. Do not hand them long shell blocks to run—you use ` + "`bash`" + `, file tools, and ` + "`devops.*`" + `.
-- **PR review:** smart chains only see text you give them. For a GitHub PR URL: parse owner/repo/number → ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (trim diff ~24k) → optional CI/status tools → ` + "`chain_run`" + ` with ` + "`id\":\"pr-review`" + ` and inputs ` + "`github_pr_json`" + `, ` + "`github_diff`" + `, etc. Use ` + "`chain_list`" + ` if you need chain ids.
+- **PR review:** smart chains only see text you give them. For a GitHub PR URL: parse owner/repo/number → ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (trim diff ~24k) → optional CI/status tools → ` + "`chain_run`" + ` with ` + "`id\":\"pr-review`" + ` and inputs ` + "`github_pr_json`" + `, ` + "`github_diff`" + `, etc. The chain returns a JSON payload (event + body + comments[]); pass it directly to ` + "`devops.github.submit_review`" + ` to post inline line-level comments — do NOT use ` + "`devops.github.pr_comment`" + ` when comments[] is non-empty. Use ` + "`chain_list`" + ` if you need chain ids.
 - **Other flows:** ` + "`chain_run`" + ` for ` + "`sonar-triage`" + `, ` + "`cicd-regression`" + `, ` + "`incident-scribe`" + ` when they match the task—still gather evidence with tools first when the chain needs real data.
 - **Tone:** verdict or status first, then short evidence and links. No filler, no narrating hidden startup phases.
 

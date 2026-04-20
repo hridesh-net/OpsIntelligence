@@ -107,7 +107,7 @@ func (l *Library) ListChains() []*Chain {
 // Example output:
 //
 //	Smart Prompts:
-//	  - chain:pr-review       End-to-end PR/MR review (gather→analyze→critique→render)
+//	  - chain:pr-review       End-to-end PR/MR review (gather→analyze→critique→render→post)
 //	  - chain:sonar-triage    SonarQube triage (fetch→classify→recommend)
 //	  - prompt:self-critique  Reflect on a draft and flag missing evidence
 func (l *Library) Index() string {

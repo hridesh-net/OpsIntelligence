@@ -35,6 +35,19 @@ It pairs with two other OpsIntelligence pieces:
   `devops.github.pr_diff`, then call `chain_run` with those strings in
   `inputs` (see `skills/devops/pr-review.md`). Then come back here to **post** them.
 
+> **Choose your path before starting**
+>
+> | Condition | Path |
+> |-----------|------|
+> | `gh` is installed and authenticated on the host (`gh auth status` exits 0) | Use the full workflow below (Phases 1–6). `gh` gives you local test runs, worktrees, and richer CLI output. |
+> | `gh` is **not** available (chat, WhatsApp, headless agent, remote server) | **Skip Phases 3–4.** Use the API-only path: `devops.github.pull_request` → `devops.github.pr_diff` → `devops.github.submit_review`. No shell, no binary, no local files needed. Jump straight to **Phase 5**. |
+>
+> **To detect `gh` availability at runtime:**
+> ```bash
+> command -v gh &>/dev/null && gh auth status &>/dev/null && echo "gh available" || echo "use API path"
+> ```
+> If that command cannot be run (pure API context), assume `gh` is unavailable and go directly to Phase 5.
+
 > **Safety posture**: this skill is **read-only by default** on GitHub.
 > Pushing fixes, approving, merging, re-running CI, and closing PRs are
 > all WRITE actions and must be triggered by an explicit human "yes" in
@@ -163,7 +176,12 @@ gh api "repos/$REPO/pulls/$PR/files" \
 Flag a **large-change** warning when additions > 400 lines; ask the
 author for a split rationale before a detailed review.
 
-### Phase 4 — Run the code locally  [WRITE — local only]
+### Phase 4 — Run the code locally  [WRITE — local only, OPTIONAL, requires `gh`]
+
+> **Skip this phase** if `gh` is not available or you cannot run shell commands
+> (chat, WhatsApp, headless agent). Line-level reviews do not require a local
+> checkout — build the `comments[]` array from `devops.github.pr_diff` output
+> alone and jump to Phase 5.
 
 Check out the PR branch into a disposable worktree so you do not
 disturb the user's current work:

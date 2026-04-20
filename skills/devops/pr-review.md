@@ -9,25 +9,55 @@ Use this node when the user asks "review PR X", "should we merge Y", or
 "what's blocking #123". The workflow is the same whether the source is
 GitHub or GitLab.
 
-> **Fast path**: the `pr-review` chain runs **without tools** (LLM-only
+> **Chain steps**: the `pr-review` chain runs **without tools** (LLM-only
 > steps). The **outer agent** must call GitHub DevOps tools first, then
-> pass evidence into the chain, for example:
-> `chain_run` with
-> `{"id": "pr-review", "inputs": {"pr_url": "<url>", "github_pr_json": "<output of devops.github.pull_request>", "github_diff": "<truncated devops.github.pr_diff>", "github_ci_hint": "optional summary"}}`.
-> The chain then implements gather → analyze → critique → render with a
-> built-in self-critique pass.
+> pass evidence into the chain:
 >
-> **Fast path (posting the review back to GitHub)**: once the chain has
-> produced a verdict, you MUST call **`devops.github.submit_review`** to natively
-> post a structured review, including line-level comments and `suggestion` blocks,
-> directly to the PR using the configured `devops.github` PAT. No `gh` binary,
-> bash script, or local file checkout is required for this! For simple top-level
-> conversation replies without line comments, you can also use `devops.github.pr_comment`.
+> ```
+> chain_run {
+>   “id”: “pr-review”,
+>   “inputs”: {
+>     “pr_url”:          “<url>”,
+>     “github_pr_json”:  “<output of devops.github.pull_request>”,
+>     “github_diff”:     “<truncated devops.github.pr_diff>”,
+>     “github_ci_hint”:  “optional CI summary”
+>   }
+> }
+> ```
+>
+> The chain runs **gather → analyze → critique → render → post** (five steps).
+> The final `post` step returns a **structured JSON payload** with three keys:
+>
+> | Key        | Contents |
+> |------------|---------|
+> | `event`    | `”APPROVE”`, `”REQUEST_CHANGES”`, or `”COMMENT”` |
+> | `body`     | Top-level Markdown summary (Verdict, Walkthrough, Evidence, Confidence) |
+> | `comments` | Array of `{path, line, side, body}` — one entry per inline finding |
+>
+> **Posting the review back to GitHub — REQUIRED steps**:
+>
+> 1. Parse the JSON payload from the `post` step.
+> 2. Call **`devops.github.submit_review`** with:
+>    - `owner`, `repo`, `number` — from the PR URL / metadata
+>    - `event` — from the payload
+>    - `body` — from the payload
+>    - `comments` — the full `comments[]` array from the payload
+>
+>    This posts the verdict body **plus** all inline line-level comments in
+>    one atomic request — exactly like CodeRabbit. No `gh` binary or local
+>    checkout is needed.
+>
+> 3. For a top-level-only reply (no inline comments), you may use
+>    `devops.github.pr_comment` instead — but prefer `submit_review` whenever
+>    the chain found at least one grounded `path:line` finding.
+>
+> **Never** post the rendered Markdown as a flat `pr_comment` when the `post`
+> payload contains a non-empty `comments[]` — that loses all inline context.
 >
 > **CodeRabbit-style automation**: install `gh`, set `GH_TOKEN` / `OPSINTEL_GITHUB_TOKEN`,
 > run `opsintelligence skills install gh-pr-review`, then wire the GitHub webhook
-> `prompts.pull_request` so the outer agent runs this chain and posts one review
-> (`gh api …/pulls/{n}/reviews`). See [doc/github-webhooks.md](../../doc/github-webhooks.md)
+> `prompts.pull_request` so the outer agent runs this chain and posts one review.
+> See [doc/github-webhooks.md](../../doc/github-webhooks.md)
 > (“Gateway exposure”, “GitHub token and gh”, “CodeRabbit-style layout”).
 
 ## Inputs you must collect first
@@ -69,31 +99,19 @@ fabricating results.
    `large-change` and ask for a split rationale).
 5. Tests exist for every new branch in business logic.
 
-## Output format
+## Output format (what the user sees after posting)
+
+Once `devops.github.submit_review` succeeds, summarise to the user:
 
 ```
-## Verdict
-Ship / Hold — one line with the single most important reason.
-
-## Evidence
-- CI: <status> (<run URL>)
-- Sonar: <gate> (<project link>)
-- Size: +<adds> / -<dels> across <N> files
-
-## Blockers
-- <path>:<line> — <why it's a blocker> — <concrete fix>.
-
-## Must-fix
-- …
-
-## Nits
-- …
-
-## Links
-- PR: <url>
-- CI run: <url>
-- Sonar: <url>
+Posted review on <owner/repo>#<N>:
+- Verdict: Ship | Hold | Hold-with-fixes
+- Inline comments: <N> (across <files>)
+- Review URL: <html_url from submit_review response>
 ```
+
+The detailed findings live as GitHub inline comments directly on the diff —
+do not repeat them in full in the chat reply.
 
 ## Never do
 
@@ -103,6 +121,10 @@ Ship / Hold — one line with the single most important reason.
   from tool output.
 - Paste secrets or tokens found in a diff; truncate to 4 chars and
   recommend rotation.
+- Post the full Markdown review as a flat `devops.github.pr_comment`
+  when the `post` chain step returned a non-empty `comments[]`. Use
+  `devops.github.submit_review` with `comments` instead — it posts the
+  same verdict body plus all inline findings in one request.
 
 ---
 

@@ -68,9 +68,16 @@ this graph):
 - **`devops.github.pr_comment`** — post Markdown on the PR conversation
   thread using the gateway’s GitHub token (no `gh` binary). Use when the user
   asked to comment on the PR from chat/WhatsApp.
-- [`gh-pr-review`](../gh-pr-review/SKILL.md) — `gh pr checkout`, worktrees,
-  local lint/test, the GitHub **Reviews** API, line comments, and
-  ```suggestion``` blocks when `gh` is available on the host.
+- [`gh-pr-review`](../gh-pr-review/SKILL.md) — full PR review workflow. **If `gh` is
+  installed and authenticated on the host** (`command -v gh && gh auth status`), use
+  the `gh`-based path for local checkout, worktrees, lint/test runs, and richer CLI
+  output. **If `gh` is not available** (chat, WhatsApp, headless), use the API-only
+  path inside the same skill: `devops.github.pull_request` → `devops.github.pr_diff`
+  → `devops.github.submit_review` (posts body + inline comments + suggestions
+  atomically via PAT, no binary needed). See the skill's path-selection table.
+- **`devops.github.submit_review`** — the direct write tool for line-level reviews
+  when `gh` is absent. Also usable alongside `gh` when you want a single atomic API
+  call instead of shelling out.
 - [`github`](../github/SKILL.md) — generic `gh` CLI cheat-sheet for
   everything that isn't PR-review-specific.
 - [`gh-issues`](../gh-issues/SKILL.md) — auto-triage and auto-fix

@@ -130,6 +130,37 @@ func (c *Client) GetPullRequestDiff(ctx context.Context, owner, repo string, num
 	return buf.String(), nil
 }
 
+// PRFile describes a single changed file in a pull request.
+type PRFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // added, removed, modified, renamed
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Changes   int    `json:"changes"`
+	Patch     string `json:"patch,omitempty"` // unified diff fragment; absent for binary files
+}
+
+// GetPullRequestFiles returns the list of files changed in a PR, each with
+// its per-file unified diff patch. Callers can use the patch to derive valid
+// line numbers for inline review comments.
+func (c *Client) GetPullRequestFiles(ctx context.Context, owner, repo string, number int) ([]PRFile, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?per_page=100", c.cfg.BaseURL, owner, repo, number)
+	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var files []PRFile
+	if err := json.Unmarshal(buf.Bytes(), &files); err != nil {
+		return nil, fmt.Errorf("github: decode pr files: %w", err)
+	}
+	return files, nil
+}
+
 // WorkflowRun is a trimmed Actions run payload.
 type WorkflowRun struct {
 	ID           int64  `json:"id"`

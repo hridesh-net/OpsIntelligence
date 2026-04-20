@@ -1491,7 +1491,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 	}
 
-	for _, t := range tools.DevOpsTools(cfg.DevOps) {
+	for _, t := range tools.DevOpsTools(cfg.DevOps, p, modelInfo.ID) {
 		toolReg.Register(t)
 		log.Info("devops tool registered", zap.String("tool", t.Definition().Name))
 	}

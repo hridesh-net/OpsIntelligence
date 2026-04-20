@@ -38,7 +38,7 @@ func NewChainRunTool(r *prompts.Runner, tracePath string) *ChainRunTool {
 // Definition is the schema advertised to the LLM.
 func (t *ChainRunTool) Definition() provider.ToolDef {
 	desc := "Run a named smart-prompt chain or single meta prompt. " +
-		"Chains are curated multi-step reasoning pipelines (e.g. pr-review: gather→analyze→critique→render). " +
+		"Chains are curated multi-step reasoning pipelines (e.g. pr-review: gather→analyze→critique→render→post). " +
 		"Pass the chain/prompt id and a JSON inputs object (e.g. {\"pr_url\": \"...\"}). " +
 		"Returns the final rendered output plus a per-step trace. " +
 		"Use `opsintelligence prompts ls` or the Smart Prompts Index at the top of your system prompt to discover available ids."

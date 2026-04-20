@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] — 2026-04-20
+
+### Added
+
+- **Deep PR Review Integration**: Added new prompt libraries (`prompts/pr-review/post.md`) and dedicated PR tools (`devops_review_pr.go`) to significantly expand the autonomous agent's context and capabilities for performing line-by-line PR reviews. 
+- Integrated these capabilities directly into the core GitHub client (`internal/devops/github/github.go`) allowing reviews to securely function on private/org repositories without checking out code manually.
+
 ## [0.3.16] — 2026-04-20
 
 ### Changed
