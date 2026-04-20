@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] — 2026-04-20
+
+### Changed
+
+- **PR Review Skills:** Updated `pr-review.md` and `gh-pr-review/SKILL.md` to instruct the agent to use the native `devops.github.submit_review` tool instead of attempting to look for a local environment checkout. This ensures the assistant correctly posts line-by-line comments directly to GitHub using the diff provided via API.
+
 ## [0.3.15] — 2026-04-20
 
 ### Fixed
