@@ -218,9 +218,11 @@ per finding:
 
 | Kind             | What it is                                    | How you post it                     |
 | ---------------- | --------------------------------------------- | ----------------------------------- |
-| Review **body**  | High-level summary, verdict                   | `gh pr review --body`              |
-| **Line comment** | Concern on a specific line range              | `gh api pulls/{n}/reviews` w/ body |
-| **Suggestion**   | A one-click apply-able patch on a line range | ```` ```suggestion ``` ```` block  |
+| Review **body**  | High-level summary, verdict                   | `devops.github.submit_review` (event=COMMENT/APPROVE) |
+| **Line comment** | Concern on a specific line range              | `devops.github.submit_review` with `comments` array   |
+| **Suggestion**   | A one-click apply-able patch on a line range | `devops.github.submit_review` with `suggestion` block |
+
+> **IMPORTANT**: If your interface only supports native tools (e.g., chat), **do not try to find files or `gh` locally**. Use the **`devops.github.submit_review`** tool. Construct the review JSON carefully based on the output of `devops.github.pr_diff` — the diff provides both filenames and line numbers.
 
 **Draft the whole review in one JSON body**, then submit it as a single
 review — never drip-post individual comments. This matches the UI's
