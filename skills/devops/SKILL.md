@@ -13,10 +13,11 @@ metadata:
 
 # DevOps — Map of Content
 
-This is the entry node for the built-in DevOps graph. The graph is **read-only
-by default** on every surface (PRs, pipelines, Sonar, Jenkins). Any write
-action (approve, merge, retry, redeploy, silence a finding) requires explicit
-human confirmation in the same turn.
+This is the entry node for the built-in DevOps graph. Evidence tools are
+**read-only** (PR metadata, diff, CI, Sonar, Jenkins). **`devops.github.pr_comment`**
+posts a PR conversation comment using the configured GitHub PAT when the user
+asks to publish feedback on the PR. Heavier writes (merge, approve, dismiss
+reviews, deploy) still require explicit human confirmation in the same turn.
 
 ## How to use this graph
 
@@ -30,8 +31,9 @@ human confirmation in the same turn.
    - [[incidents]] — triage a production incident from page to postmortem.
    - [[runbooks]] — execute or author a runbook safely.
 3. Use the `devops.*` tools registered in the tool catalog to fetch evidence
-   (PRs, pipelines, jobs, issues, quality gates). Quote sources; never invent
-   IDs, SHAs, or run numbers.
+   (PRs, pipelines, jobs, quality gates) and, when appropriate, post a PR
+   comment via `devops.github.pr_comment`. Quote sources; never invent IDs,
+   SHAs, or run numbers.
 4. Prefer delegating multi-step reasoning to a named **smart prompt chain**
    via the `chain_run` tool. Chains are bounded, self-critiquing pipelines
    and cost far fewer tokens than improvising the whole flow inline:
@@ -52,9 +54,8 @@ human confirmation in the same turn.
 
 ## Safety posture
 
-- Read-only by default. Never trigger a deploy, cancel a production
-  pipeline, merge a PR, or silence a Sonar rule without an in-turn "yes"
-  from a human.
+- Do not trigger a deploy, cancel a production pipeline, merge a PR, or
+  silence a Sonar rule without an in-turn "yes" from a human.
 - Summarize logs, do not quote them verbatim — they may contain PII.
 - Respect owner-only paths under the state dir (`POLICIES.md`, `RULES.md`,
   `policies/`). You may read them; you may not write to them.
@@ -64,11 +65,12 @@ human confirmation in the same turn.
 Built-in standalone skills the agent can invoke directly (alongside
 this graph):
 
-- [`gh-pr-review`](../gh-pr-review/SKILL.md) — post a review back to
-  GitHub: `gh pr checkout`, disposable worktrees, local lint/test runs,
-  the GitHub Reviews API, line-level comments, and one-click
-  ```suggestion``` blocks. Use this after the `pr-review` chain
-  produces a verdict.
+- **`devops.github.pr_comment`** — post Markdown on the PR conversation
+  thread using the gateway’s GitHub token (no `gh` binary). Use when the user
+  asked to comment on the PR from chat/WhatsApp.
+- [`gh-pr-review`](../gh-pr-review/SKILL.md) — `gh pr checkout`, worktrees,
+  local lint/test, the GitHub **Reviews** API, line comments, and
+  ```suggestion``` blocks when `gh` is available on the host.
 - [`github`](../github/SKILL.md) — generic `gh` CLI cheat-sheet for
   everything that isn't PR-review-specific.
 - [`gh-issues`](../gh-issues/SKILL.md) — auto-triage and auto-fix

@@ -57,6 +57,27 @@ func TestGetPullRequestDiff(t *testing.T) {
 	}
 }
 
+func TestCreateIssueComment(t *testing.T) {
+	t.Parallel()
+	c, srv := newTestClient(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method: %s", r.Method)
+		}
+		if !strings.HasPrefix(r.URL.Path, "/repos/acme/api/issues/42/comments") {
+			t.Fatalf("path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 99, "html_url": "https://github.com/acme/api/issues/42#issuecomment-99"})
+	})
+	defer srv.Close()
+	out, err := c.CreateIssueComment(context.Background(), "acme", "api", 42, "## OK\nShip it.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "html_url") || !strings.Contains(out, "issues/42#issuecomment") {
+		t.Fatalf("unexpected: %s", out)
+	}
+}
+
 func TestListWorkflowRuns(t *testing.T) {
 	t.Parallel()
 	c, srv := newTestClient(func(w http.ResponseWriter, r *http.Request) {

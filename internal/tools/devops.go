@@ -34,6 +34,7 @@ func DevOpsTools(cfg config.DevOpsConfig) []agent.Tool {
 			&githubListPRsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubGetPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubPRDiffTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubPRCommentTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 		)
@@ -217,6 +218,58 @@ func (t *githubPRDiffTool) Definition() provider.ToolDef {
 			Required: []string{"repo", "number"},
 		},
 	}
+}
+
+type githubPRCommentTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubPRCommentTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.github.pr_comment",
+		Description: "Post a Markdown comment on a GitHub pull request (conversation tab) using the configured devops GitHub token. " +
+			"Use after the user explicitly asks to comment or post the review on the PR; requires a PAT with permission to create issue comments on the repo. " +
+			"For formal file-level reviews with approve/request-changes, prefer `gh api` (see gh-pr-review skill) when `gh` is available.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner":  map[string]any{"type": "string", "description": "Org/user (default: devops.github.default_org)."},
+				"repo":   map[string]any{"type": "string", "description": "Repository name."},
+				"number": map[string]any{"type": "integer", "description": "Pull request number (same as issue number for this API)."},
+				"body":   map[string]any{"type": "string", "description": "GitHub-flavored Markdown comment body (max ~32KiB)."},
+			},
+			Required: []string{"repo", "number", "body"},
+		},
+	}
+}
+
+func (t *githubPRCommentTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner, Repo, Body string
+		Number             int
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", err
+	}
+	if a.Owner == "" {
+		a.Owner = t.defaultOrg
+	}
+	if a.Owner == "" {
+		return "", fmt.Errorf("owner is required (no default_org configured)")
+	}
+	if a.Number < 1 {
+		return "", fmt.Errorf("number must be a positive PR number")
+	}
+	const maxBody = 32 * 1024
+	body := a.Body
+	if len(body) > maxBody {
+		body = body[:maxBody] + "\n\n_(comment truncated for API size)_"
+	}
+	if strings.TrimSpace(body) == "" {
+		return "", fmt.Errorf("body is required")
+	}
+	return t.c.CreateIssueComment(ctx, a.Owner, a.Repo, a.Number, body)
 }
 
 func (t *githubPRDiffTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {

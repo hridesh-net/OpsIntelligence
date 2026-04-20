@@ -1,9 +1,8 @@
 // Package github provides a minimal GitHub REST v3 client used by
 // OpsIntelligence for PR review and GitHub Actions workflow monitoring.
 //
-// The client is intentionally narrow: read-mostly endpoints required by
-// agent tools. For write operations the agent should shell out to `gh`
-// with explicit human approval or use MCP.
+// Read endpoints cover evidence gathering; a small write path exists for
+// posting PR/issue conversation comments when the agent has an explicit tool call.
 package github
 
 import (
@@ -204,6 +203,42 @@ func (c *Client) GetCombinedStatus(ctx context.Context, owner, repo, ref string)
 }
 
 // Ping calls /user (or /rate_limit) to confirm credentials.
+// CreateIssueComment posts a comment on a GitHub issue or pull request (PRs use the issues API).
+// body should be GitHub-flavored Markdown. Returns JSON with html_url and id on success.
+func (c *Client) CreateIssueComment(ctx context.Context, owner, repo string, issueNumber int, body string) (string, error) {
+	if issueNumber < 1 {
+		return "", fmt.Errorf("github: issue number must be >= 1")
+	}
+	payload := map[string]string{"body": body}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.cfg.BaseURL, owner, repo, issueNumber)
+	req, err := c.newRequest(ctx, http.MethodPost, u, raw)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return "", err
+	}
+	var out struct {
+		ID      int64  `json:"id"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		return "", fmt.Errorf("github: decode issue comment: %w", err)
+	}
+	b, err := json.Marshal(map[string]any{"id": out.ID, "html_url": out.HTMLURL})
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	u := c.cfg.BaseURL + "/rate_limit"
 	req, err := c.newRequest(ctx, http.MethodGet, u, nil)

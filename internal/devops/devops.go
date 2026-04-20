@@ -3,8 +3,8 @@
 //
 // Each subpackage exposes a thin HTTP client with narrow methods that cover
 // the read-mostly workflow the agent needs (list PRs / MRs, read pipeline
-// status, check a quality gate). Writes (merge, retrigger, resolve) stay
-// behind MCP or explicit human approval by design.
+// status, check a quality gate). A few explicit agent tools perform writes
+// (e.g. GitHub PR conversation comments) using the same configured tokens.
 //
 // All clients are safe for concurrent use and respect context cancellation.
 package devops

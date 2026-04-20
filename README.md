@@ -34,9 +34,10 @@ generic defaults.
 ## What this is not
 
 - It is **not** an autonomous deployment bot. OpsIntelligence is
-  **read-only by default** on every surface. Merging a PR, retrying a
-  pipeline, rolling back, silencing a Sonar rule — all require explicit
-  human confirmation in the same turn.
+  **read-only by default** on every surface (merge, pipeline writes, Sonar
+  rule changes need an explicit in-turn “yes”). Posting a **PR conversation
+  comment** is available via `devops.github.pr_comment` when `devops.github`
+  is configured with a PAT that allows it.
 - It is **not** a general consumer assistant. OpsIntelligence focuses on
   DevOps workflows; messaging uses the same **in-process channel adapters as
   AssistClaw** (Telegram, Discord, Slack, WhatsApp) plus the **REST/WebSocket

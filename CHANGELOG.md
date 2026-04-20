@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.13] — 2026-04-20
+
+### Added
+
+- **GitHub PR conversation comments from chat:** new `devops.github.pr_comment` tool posts Markdown comments to pull request conversation threads using the configured `devops.github` PAT (no `gh` binary required on channel/webhook hosts).
+- **Tool graph coverage for PR review intent:** `devops.github.pr_comment` is now seeded/connected as a companion after `pull_request` and `pr_diff` evidence steps so agents can publish feedback when asked.
+
+### Changed
+
+- **DevOps guidance and templates:** `skills/devops/*`, webhook docs, README posture text, and the default SOUL template now document the narrow `pr_comment` write path while keeping heavier writes (approve/merge/deploy) behind explicit human confirmation.
+- **GitHub client posture docs:** package comments now describe read-mostly behavior with explicit narrow write support for PR/issue conversation comments.
+
+### Fixed
+
+- **Regression in PR feedback automation:** agents no longer need to fall back to "cannot comment from this interface" when no host `gh` is available; they can post conversation comments through the native devops GitHub tool surface.
+
 ## [0.3.12] — 2026-04-19
 
 ### Added

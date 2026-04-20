@@ -18,10 +18,11 @@ GitHub or GitLab.
 > built-in self-critique pass.
 >
 > **Fast path (posting the review back to GitHub)**: once the chain has
-> produced a verdict, follow the [`gh-pr-review`](../gh-pr-review/SKILL.md)
-> skill — it covers `gh` / `git` commands for checkout + local tests,
-> the GitHub Reviews API, line-level comments, and one-click
-> `suggestion` blocks.
+> produced a verdict, either call **`devops.github.pr_comment`** (uses the
+> configured `devops.github` PAT — conversation-tab Markdown, no `gh` binary)
+> when the user asked to comment on the PR, **or** follow the
+> [`gh-pr-review`](../gh-pr-review/SKILL.md) skill for `gh api` Reviews API,
+> line-level comments, and `suggestion` blocks when `gh` is installed.
 >
 > **CodeRabbit-style automation**: install `gh`, set `GH_TOKEN` / `OPSINTEL_GITHUB_TOKEN`,
 > run `opsintelligence skills install gh-pr-review`, then wire the GitHub webhook

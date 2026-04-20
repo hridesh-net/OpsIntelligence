@@ -40,7 +40,7 @@ POST /api/webhook/github          (default; override via webhooks.adapters.githu
 
 ## GitHub token and `gh` for posting reviews
 
-Tools under `devops.github.*` are **read-only** evidence fetchers. Posting a PR review (summary + inline comments) uses the **GitHub Pull Request Reviews API** via the **`gh`** CLI, as documented in [`skills/gh-pr-review/`](../skills/gh-pr-review/).
+Most `devops.github.*` tools are **read-only** evidence fetchers. **`devops.github.pr_comment`** posts a Markdown comment on the PR conversation thread using the same **devops GitHub PAT** (no `gh` binary). A full **review** (approve / request-changes, line-level threads) still uses the **Pull Request Reviews API** via **`gh api`**, as in [`skills/gh-pr-review/`](../skills/gh-pr-review/).
 
 1. Install **`gh`** on the host that runs the OpsIntelligence gateway / webhook runner.
 2. Authenticate once: `gh auth login` **or** set **`GH_TOKEN`** / **`OPSINTEL_GITHUB_TOKEN`** with a PAT that can create reviews on the target repos (typically `repo` for private repositories; follow your org’s machine-user or GitHub App policy).
