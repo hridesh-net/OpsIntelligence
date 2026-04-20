@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,5 +114,80 @@ func TestDoJSONErrorMessage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Fatalf("expected 401 in error: %v", err)
+	}
+}
+
+func TestCreateReviewWithInlineComments(t *testing.T) {
+	t.Parallel()
+	c, srv := newTestClient(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method: %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/api/pulls/42/reviews" {
+			t.Fatalf("path: %s", r.URL.Path)
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		var in ReviewRequest
+		if err := json.Unmarshal(raw, &in); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if in.Event != "REQUEST_CHANGES" {
+			t.Fatalf("event: %s", in.Event)
+		}
+		if in.Body == "" {
+			t.Fatal("expected non-empty review body")
+		}
+		if len(in.Comments) != 2 {
+			t.Fatalf("comments: %d", len(in.Comments))
+		}
+		if in.Comments[0].Path != "internal/orders/handler.go" || in.Comments[0].Line != 88 || in.Comments[0].Side != "RIGHT" {
+			t.Fatalf("unexpected first comment: %+v", in.Comments[0])
+		}
+		if in.Comments[1].StartLine != 40 || in.Comments[1].Line != 44 || in.Comments[1].StartSide != "RIGHT" {
+			t.Fatalf("unexpected multiline comment: %+v", in.Comments[1])
+		}
+		_ = json.NewEncoder(w).Encode(ReviewResponse{
+			ID:          123,
+			HTMLURL:     "https://github.com/acme/api/pull/42#pullrequestreview-123",
+			State:       "CHANGES_REQUESTED",
+			SubmittedAt: "2026-04-20T14:00:00Z",
+		})
+	})
+	defer srv.Close()
+
+	resp, err := c.CreateReview(context.Background(), "acme", "api", 42, ReviewRequest{
+		Event: "REQUEST_CHANGES",
+		Body:  "Blocking concerns found.",
+		Comments: []ReviewComment{
+			{Path: "internal/orders/handler.go", Body: "Guard nil before use.", Line: 88},
+			{Path: "internal/orders/service.go", Body: "Suggestion for this block.", StartLine: 40, Line: 44, Side: "RIGHT"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ID != 123 || !strings.Contains(resp.HTMLURL, "pullrequestreview-123") {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestCreateReviewRejectsInvalidCommentRange(t *testing.T) {
+	t.Parallel()
+	c := New(Config{Token: "tok", BaseURL: "https://api.github.com"}, nil)
+	_, err := c.CreateReview(context.Background(), "acme", "api", 42, ReviewRequest{
+		Event: "COMMENT",
+		Body:  "Looks mostly good.",
+		Comments: []ReviewComment{
+			{Path: "foo.go", Body: "invalid range", StartLine: 22, Line: 22},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "start_line") {
+		t.Fatalf("expected start_line error, got: %v", err)
 	}
 }

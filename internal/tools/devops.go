@@ -35,6 +35,7 @@ func DevOpsTools(cfg config.DevOpsConfig) []agent.Tool {
 			&githubGetPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubPRDiffTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubPRCommentTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubSubmitReviewTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 		)
@@ -230,7 +231,7 @@ func (t *githubPRCommentTool) Definition() provider.ToolDef {
 		Name: "devops.github.pr_comment",
 		Description: "Post a Markdown comment on a GitHub pull request (conversation tab) using the configured devops GitHub token. " +
 			"Use after the user explicitly asks to comment or post the review on the PR; requires a PAT with permission to create issue comments on the repo. " +
-			"For formal file-level reviews with approve/request-changes, prefer `gh api` (see gh-pr-review skill) when `gh` is available.",
+			"For formal file-level reviews with approve/request-changes AND inline line comments, prefer `devops.github.submit_review` instead — it posts the review + all inline comments atomically.",
 		InputSchema: provider.ToolParameter{
 			Type: "object",
 			Properties: map[string]any{
@@ -270,6 +271,186 @@ func (t *githubPRCommentTool) Execute(ctx context.Context, input json.RawMessage
 		return "", fmt.Errorf("body is required")
 	}
 	return t.c.CreateIssueComment(ctx, a.Owner, a.Repo, a.Number, body)
+}
+
+// githubSubmitReviewTool posts a formal PR review (APPROVE / REQUEST_CHANGES /
+// COMMENT or draft) in a single request, optionally with inline line-level
+// comments. Mirrors the gh-pr-review skill's post-review.sh payload shape so
+// the chain/skill markdown templates keep working without shelling out to `gh`.
+type githubSubmitReviewTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubSubmitReviewTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.github.submit_review",
+		Description: "Submit a formal GitHub pull-request review (APPROVE | REQUEST_CHANGES | COMMENT), optionally with inline line-level comments and ```suggestion``` blocks. " +
+			"Mirrors the gh-pr-review skill payload so a single call posts the verdict body + all inline suggestions atomically. " +
+			"Each `comments[]` entry targets `path` + `line` (side defaults to RIGHT); use `start_line`+`start_side` for multi-line ranges. " +
+			"Use after the user explicitly asks to post the review; the configured GitHub token needs `pull_requests: write` on the repo.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner":     map[string]any{"type": "string", "description": "Org/user (default: devops.github.default_org)."},
+				"repo":      map[string]any{"type": "string", "description": "Repository name."},
+				"number":    map[string]any{"type": "integer", "description": "Pull request number."},
+				"event":     map[string]any{"type": "string", "description": "APPROVE | REQUEST_CHANGES | COMMENT."},
+				"body":      map[string]any{"type": "string", "description": "Top-level review body (Markdown)."},
+				"commit_id": map[string]any{"type": "string", "description": "Optional commit SHA the review is against. Defaults to the PR's current HEAD when omitted."},
+				"comments": map[string]any{
+					"type":        "array",
+					"description": "Optional inline review comments. Each entry must include path, body and line; side defaults to RIGHT.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"path":       map[string]any{"type": "string", "description": "File path as it appears in the PR diff."},
+							"body":       map[string]any{"type": "string", "description": "Comment body (Markdown). May include a ```suggestion``` block."},
+							"line":       map[string]any{"type": "integer", "description": "Line number in the new file (RIGHT) or original file (LEFT)."},
+							"side":       map[string]any{"type": "string", "description": "LEFT | RIGHT. Defaults to RIGHT."},
+							"start_line": map[string]any{"type": "integer", "description": "For multi-line comments: first line of the range (must be < line)."},
+							"start_side": map[string]any{"type": "string", "description": "For multi-line comments: LEFT | RIGHT. Defaults to side."},
+						},
+						"required": []string{"path", "body", "line"},
+					},
+				},
+			},
+			Required: []string{"repo", "number", "event", "body"},
+		},
+	}
+}
+
+func (t *githubSubmitReviewTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner    string                 `json:"owner"`
+		Repo     string                 `json:"repo"`
+		Number   int                    `json:"number"`
+		Event    string                 `json:"event"`
+		Body     string                 `json:"body"`
+		CommitID string                 `json:"commit_id"`
+		Comments []github.ReviewComment `json:"comments"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", fmt.Errorf("submit_review: invalid input: %w", err)
+	}
+	if a.Owner == "" {
+		a.Owner = t.defaultOrg
+	}
+	if a.Owner == "" {
+		return "", fmt.Errorf("owner is required (no default_org configured)")
+	}
+	if a.Repo == "" {
+		return "", fmt.Errorf("repo is required")
+	}
+	if a.Number < 1 {
+		return "", fmt.Errorf("number must be a positive PR number")
+	}
+
+	// Normalise verdict + side casing so the LLM can be sloppy with case.
+	event := strings.ToUpper(strings.TrimSpace(a.Event))
+	switch event {
+	case "APPROVE", "REQUEST_CHANGES", "COMMENT":
+		// ok
+	default:
+		return "", fmt.Errorf("event must be one of APPROVE, REQUEST_CHANGES, COMMENT; got %q", a.Event)
+	}
+
+	// Top-level body constraints + truncation for safety.
+	const maxBody = 60 * 1024
+	body := a.Body
+	if len(body) > maxBody {
+		body = body[:maxBody] + "\n\n_(review body truncated for API size)_"
+	}
+	if strings.TrimSpace(body) == "" {
+		return "", fmt.Errorf("body is required")
+	}
+
+	// Cap the number of inline comments to stay well under GitHub's review
+	// payload ceiling and avoid accidental comment storms.
+	const maxComments = 200
+	if len(a.Comments) > maxComments {
+		return "", fmt.Errorf("too many inline comments (%d > %d); split into multiple reviews", len(a.Comments), maxComments)
+	}
+
+	// Per-comment normalisation + validation.
+	const maxCommentBody = 32 * 1024
+	comments := make([]github.ReviewComment, 0, len(a.Comments))
+	for i, cm := range a.Comments {
+		if strings.TrimSpace(cm.Path) == "" {
+			return "", fmt.Errorf("comments[%d]: path is required", i)
+		}
+		if strings.TrimSpace(cm.Body) == "" {
+			return "", fmt.Errorf("comments[%d] (%s): body is required", i, cm.Path)
+		}
+		if cm.Line < 1 && cm.Position < 1 {
+			return "", fmt.Errorf("comments[%d] (%s): line (or position) must be a positive integer", i, cm.Path)
+		}
+		side := strings.ToUpper(strings.TrimSpace(cm.Side))
+		switch side {
+		case "", "LEFT", "RIGHT":
+			// ok (empty means GitHub defaults to RIGHT when line is set)
+		default:
+			return "", fmt.Errorf("comments[%d] (%s): side must be LEFT, RIGHT, or empty; got %q", i, cm.Path, cm.Side)
+		}
+		if side == "" && cm.Line > 0 {
+			side = "RIGHT"
+		}
+		cm.Side = side
+
+		startSide := strings.ToUpper(strings.TrimSpace(cm.StartSide))
+		switch startSide {
+		case "", "LEFT", "RIGHT":
+			// ok
+		default:
+			return "", fmt.Errorf("comments[%d] (%s): start_side must be LEFT, RIGHT, or empty; got %q", i, cm.Path, cm.StartSide)
+		}
+		if cm.StartLine > 0 {
+			if cm.StartLine >= cm.Line {
+				return "", fmt.Errorf("comments[%d] (%s): start_line (%d) must be less than line (%d)", i, cm.Path, cm.StartLine, cm.Line)
+			}
+			if startSide == "" {
+				startSide = side
+			}
+		}
+		cm.StartSide = startSide
+
+		if len(cm.Body) > maxCommentBody {
+			cm.Body = cm.Body[:maxCommentBody] + "\n\n_(comment truncated for API size)_"
+		}
+		comments = append(comments, cm)
+	}
+
+	rev := github.ReviewRequest{
+		CommitID: strings.TrimSpace(a.CommitID),
+		Body:     body,
+		Event:    event,
+		Comments: comments,
+	}
+	resp, err := t.c.CreateReview(ctx, a.Owner, a.Repo, a.Number, rev)
+	if err != nil {
+		return "", err
+	}
+
+	summary := struct {
+		ID          int64  `json:"id"`
+		HTMLURL     string `json:"html_url"`
+		State       string `json:"state"`
+		SubmittedAt string `json:"submitted_at"`
+		Event       string `json:"event"`
+		Comments    int    `json:"comments"`
+	}{
+		ID:          resp.ID,
+		HTMLURL:     resp.HTMLURL,
+		State:       resp.State,
+		SubmittedAt: resp.SubmittedAt,
+		Event:       event,
+		Comments:    len(comments),
+	}
+	b, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (t *githubPRDiffTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {

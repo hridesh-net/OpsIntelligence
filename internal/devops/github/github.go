@@ -268,3 +268,121 @@ func (c *Client) newRequest(ctx context.Context, method, u string, body []byte) 
 	r.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	return r, nil
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pull request reviews (line-level comments + suggestion blocks + verdict)
+// ─────────────────────────────────────────────────────────────────────────
+
+// ReviewComment is a single line- or range-level review comment.
+//
+// Set Line (and optionally Side) for a single-line comment, or
+// StartLine + StartSide + Line + Side for a multi-line range. Body may
+// contain GitHub-flavored Markdown, including a ```suggestion``` fenced
+// block the author can apply with one click.
+//
+// Reference:
+// https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request
+type ReviewComment struct {
+	Path      string `json:"path"`
+	Body      string `json:"body"`
+	Line      int    `json:"line,omitempty"`
+	Side      string `json:"side,omitempty"`       // LEFT | RIGHT (default RIGHT when Line > 0)
+	StartLine int    `json:"start_line,omitempty"` // multi-line: must be < Line
+	StartSide string `json:"start_side,omitempty"` // multi-line: LEFT | RIGHT (defaults to Side)
+	Position  int    `json:"position,omitempty"`   // legacy; prefer Line
+}
+
+// ReviewRequest is the payload for POST /repos/{o}/{r}/pulls/{n}/reviews.
+//
+// Event must be one of "APPROVE", "REQUEST_CHANGES", "COMMENT", or empty.
+// An empty Event saves the review as a PENDING draft that a human can
+// submit from the GitHub UI.
+type ReviewRequest struct {
+	CommitID string          `json:"commit_id,omitempty"`
+	Body     string          `json:"body,omitempty"`
+	Event    string          `json:"event,omitempty"`
+	Comments []ReviewComment `json:"comments,omitempty"`
+}
+
+// ReviewResponse is the subset of the created-review payload we surface.
+type ReviewResponse struct {
+	ID          int64  `json:"id"`
+	HTMLURL     string `json:"html_url"`
+	State       string `json:"state"`
+	SubmittedAt string `json:"submitted_at"`
+}
+
+// CreateReview submits a pull-request review in a single request. It posts
+// a top-level body plus any number of line- or range-level comments and
+// returns the created review record.
+//
+// Validates the payload before sending to surface the usual misuse (bad
+// event, missing body on REQUEST_CHANGES/COMMENT, comment without line,
+// start_line >= line) as a typed error rather than an opaque 422 from the
+// API.
+func (c *Client) CreateReview(ctx context.Context, owner, repo string, number int, rev ReviewRequest) (*ReviewResponse, error) {
+	if number < 1 {
+		return nil, fmt.Errorf("github: pr number must be >= 1")
+	}
+	switch rev.Event {
+	case "", "APPROVE", "REQUEST_CHANGES", "COMMENT":
+	default:
+		return nil, fmt.Errorf("github: invalid event %q (expected APPROVE|REQUEST_CHANGES|COMMENT or empty for draft)", rev.Event)
+	}
+	if (rev.Event == "REQUEST_CHANGES" || rev.Event == "COMMENT") && strings.TrimSpace(rev.Body) == "" {
+		return nil, fmt.Errorf("github: body is required when event is %s", rev.Event)
+	}
+	for i := range rev.Comments {
+		cc := &rev.Comments[i]
+		if strings.TrimSpace(cc.Path) == "" {
+			return nil, fmt.Errorf("github: comments[%d] missing path", i)
+		}
+		if strings.TrimSpace(cc.Body) == "" {
+			return nil, fmt.Errorf("github: comments[%d] missing body", i)
+		}
+		if cc.Position == 0 && cc.Line <= 0 {
+			return nil, fmt.Errorf("github: comments[%d] requires line (or legacy position)", i)
+		}
+		if cc.Side == "" && cc.Line > 0 {
+			cc.Side = "RIGHT"
+		}
+		switch cc.Side {
+		case "", "LEFT", "RIGHT":
+		default:
+			return nil, fmt.Errorf("github: comments[%d] invalid side %q (expected LEFT or RIGHT)", i, cc.Side)
+		}
+		if cc.StartLine > 0 {
+			if cc.StartLine >= cc.Line {
+				return nil, fmt.Errorf("github: comments[%d] start_line (%d) must be < line (%d)", i, cc.StartLine, cc.Line)
+			}
+			if cc.StartSide == "" {
+				cc.StartSide = cc.Side
+			}
+			switch cc.StartSide {
+			case "LEFT", "RIGHT":
+			default:
+				return nil, fmt.Errorf("github: comments[%d] invalid start_side %q", i, cc.StartSide)
+			}
+		}
+	}
+	raw, err := json.Marshal(rev)
+	if err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews", c.cfg.BaseURL, owner, repo, number)
+	req, err := c.newRequest(ctx, http.MethodPost, u, raw)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var out ReviewResponse
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		return nil, fmt.Errorf("github: decode review: %w", err)
+	}
+	return &out, nil
+}
