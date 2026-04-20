@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] — 2026-04-20
+
+### Fixed
+
+- **GitHub PR tools:** correctly parse `owner/repo` from the `repo` parameter instead of erroneously falling back to `defaultOrg`, preventing `404 Not Found` API errors when agents pass the full repository path.
+
 ## [0.3.13] — 2026-04-20
 
 ### Added

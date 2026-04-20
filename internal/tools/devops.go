@@ -117,11 +117,10 @@ func (t *githubGetPRTool) Execute(ctx context.Context, input json.RawMessage) (s
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
-	}
-	if a.Owner == "" {
-		return "", fmt.Errorf("owner is required (no default_org configured)")
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	if a.Number < 1 {
 		return "", fmt.Errorf("number must be a positive PR number")
@@ -180,11 +179,10 @@ func (t *githubListPRsTool) Execute(ctx context.Context, input json.RawMessage) 
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
-	}
-	if a.Owner == "" {
-		return "", fmt.Errorf("owner is required (no default_org configured)")
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	prs, err := t.c.ListPullRequests(ctx, a.Owner, a.Repo, a.State)
 	if err != nil {
@@ -253,11 +251,10 @@ func (t *githubPRCommentTool) Execute(ctx context.Context, input json.RawMessage
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
-	}
-	if a.Owner == "" {
-		return "", fmt.Errorf("owner is required (no default_org configured)")
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	if a.Number < 1 {
 		return "", fmt.Errorf("number must be a positive PR number")
@@ -333,14 +330,10 @@ func (t *githubSubmitReviewTool) Execute(ctx context.Context, input json.RawMess
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", fmt.Errorf("submit_review: invalid input: %w", err)
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
-	}
-	if a.Owner == "" {
-		return "", fmt.Errorf("owner is required (no default_org configured)")
-	}
-	if a.Repo == "" {
-		return "", fmt.Errorf("repo is required")
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	if a.Number < 1 {
 		return "", fmt.Errorf("number must be a positive PR number")
@@ -461,8 +454,10 @@ func (t *githubPRDiffTool) Execute(ctx context.Context, input json.RawMessage) (
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	diff, err := t.c.GetPullRequestDiff(ctx, a.Owner, a.Repo, a.Number)
 	if err != nil {
@@ -501,8 +496,10 @@ func (t *githubWorkflowRunsTool) Execute(ctx context.Context, input json.RawMess
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	runs, err := t.c.ListWorkflowRuns(ctx, a.Owner, a.Repo, a.Branch)
 	if err != nil {
@@ -548,8 +545,10 @@ func (t *githubCombinedStatusTool) Execute(ctx context.Context, input json.RawMe
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	if a.Owner == "" {
-		a.Owner = t.defaultOrg
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
 	}
 	cs, err := t.c.GetCombinedStatus(ctx, a.Owner, a.Repo, a.Ref)
 	if err != nil {
@@ -779,4 +778,27 @@ func short(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func resolveOwnerRepo(owner, repo, defaultOrg string) (string, string, error) {
+	if strings.Contains(repo, "/") {
+		parts := strings.SplitN(repo, "/", 2)
+		if owner == "" {
+			owner = strings.TrimSpace(parts[0])
+		}
+		repo = strings.TrimSpace(parts[1])
+	}
+	if owner == "" {
+		owner = defaultOrg
+	}
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	
+	if owner == "" {
+		return "", "", fmt.Errorf("owner is required (no default_org configured)")
+	}
+	if repo == "" {
+		return "", "", fmt.Errorf("repo is required")
+	}
+	return owner, repo, nil
 }
