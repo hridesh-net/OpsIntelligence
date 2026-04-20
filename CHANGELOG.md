@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.18] — 2026-04-20
+
+### Added
+
+- **Agent Tool Graph Updates**: Exposed the new `devops.github.review_pr` and `devops.github.submit_review` tools to the agent's intent-routing graph (`tool_graph.go`). The execution graph now perfectly prioritizes the single-call `review_pr` approach, falls back to `submit_review` if needed, and reserves `pr_comment` for simple chat messaging.
+- **CLI Support**: Updated `opsintelligence tools` list with detailed explanations for the three distinct PR commenting tools.
+
 ## [0.3.17] — 2026-04-20
 
 ### Added

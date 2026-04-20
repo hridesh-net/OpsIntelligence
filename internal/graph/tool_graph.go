@@ -75,7 +75,7 @@ var intentSeeds = map[Intent][]string{
 	IntentSchedule:      {"cron", "bash"},
 	IntentCommunicate:   {"message"},
 	IntentSystem:        {"env", "process", "bash", "subagent_run", "subagent_create", "subagent_list"},
-	IntentPRReview:      {"chain_run", "devops.github.list_prs", "devops.github.pull_request", "devops.github.pr_diff", "devops.github.pr_comment", "devops.gitlab.list_mrs", "bash", "read_file"},
+	IntentPRReview:      {"devops.github.review_pr", "chain_run", "devops.github.list_prs", "devops.github.pull_request", "devops.github.pr_diff", "devops.github.submit_review", "devops.github.pr_comment", "devops.gitlab.list_mrs", "bash", "read_file"},
 	IntentSonar:         {"chain_run", "devops.sonar.quality_gate", "devops.sonar.issues"},
 	IntentCICD:          {"chain_run", "devops.github.workflow_runs", "devops.github.commit_status", "devops.gitlab.pipelines", "devops.jenkins.job_status", "bash"},
 	IntentIncident:      {"chain_run", "devops.github.workflow_runs", "message", "memory_search", "bash"},
@@ -146,14 +146,25 @@ func NewToolGraph() *ToolGraph {
 		{from: "chain_list", to: "chain_run", typ: EdgeCompanion},
 
 		// PR review cluster: chains + GitHub/GitLab evidence + bash for local
-		// checkout/tests + read_file for spot inspection + message for posting.
+		// checkout/tests + read_file for spot inspection.
+		//
+		// Preferred write paths (highest → lowest priority):
+		//   1. devops.github.review_pr   — single-call: fetch + LLM-analyze + inline submit
+		//   2. devops.github.submit_review — atomic inline review (event+body+comments[])
+		//   3. devops.github.pr_comment  — flat general comment only (no inline lines)
 		{from: "chain_run", to: "devops.github.list_prs", typ: EdgeCompanion},
 		{from: "chain_run", to: "devops.github.pull_request", typ: EdgeCompanion},
 		{from: "chain_run", to: "devops.github.pr_diff", typ: EdgeCompanion},
 		{from: "chain_run", to: "devops.gitlab.list_mrs", typ: EdgeCompanion},
+		{from: "devops.github.list_prs", to: "devops.github.review_pr", typ: EdgeCompanion},
 		{from: "devops.github.list_prs", to: "devops.github.pr_diff", typ: EdgeCompanion},
-		{from: "devops.github.pull_request", to: "devops.github.pr_comment", typ: EdgeCompanion},
-		{from: "devops.github.pr_diff", to: "devops.github.pr_comment", typ: EdgeCompanion},
+		{from: "devops.github.pull_request", to: "devops.github.submit_review", typ: EdgeCompanion},
+		{from: "devops.github.pull_request", to: "devops.github.review_pr", typ: EdgeCompanion},
+		{from: "devops.github.pr_diff", to: "devops.github.submit_review", typ: EdgePrerequisite},
+		{from: "devops.github.pr_diff", to: "devops.github.review_pr", typ: EdgeCompanion},
+		{from: "devops.github.submit_review", to: "devops.github.pr_comment", typ: EdgeFallback},
+		{from: "devops.github.pull_request", to: "devops.github.pr_comment", typ: EdgeFallback},
+		{from: "devops.github.pr_diff", to: "devops.github.pr_comment", typ: EdgeFallback},
 		{from: "devops.github.pr_diff", to: "read_file", typ: EdgeCompanion},
 		{from: "devops.github.pr_diff", to: "bash", typ: EdgeCompanion},
 		{from: "devops.github.list_prs", to: "bash", typ: EdgeDomain},
