@@ -39,6 +39,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+
 // Server represents the Gateway HTTP and WebSocket server.
 type Server struct {
 	Hub        *Hub
@@ -56,6 +57,11 @@ type Server struct {
 	Gmail      *automation.GmailWatcher
 	Voice      *voice.Daemon
 	Logger     *zap.Logger
+
+	// PRReview is the optional PR review pool monitor. When set, the gateway
+	// mounts GET /api/v1/pr-reviews, GET /api/v1/pr-reviews/{id}/events,
+	// and POST /api/v1/pr-reviews/{id}/cancel.
+	PRReview *prReviewAdapter
 
 	// WebhookAdapters is the typed, pluggable webhook-adapter registry
 	// (see internal/webhookadapter). When non-nil and non-empty the
@@ -211,6 +217,13 @@ func (s *Server) Start() error {
 	// ── API: Status ───────────────────────────────────────────────────────────
 	mux.HandleFunc("/api/status", auth(s.withCorrelation(s.handleStatus)))
 	mux.HandleFunc("/metrics", auth(s.withCorrelation(s.handleMetrics)))
+
+	// ── API: PR Review pool ───────────────────────────────────────────────────
+	if s.PRReview != nil {
+		mux.HandleFunc("/api/v1/pr-reviews", auth(s.withCorrelation(s.PRReview.handleList)))
+		mux.HandleFunc("/api/v1/pr-reviews/", auth(s.withCorrelation(s.PRReview.handleDetail)))
+	}
+
 
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
 	mux.HandleFunc("/api/chat", auth(s.withCorrelation(s.handleChat)))

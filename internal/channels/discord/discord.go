@@ -115,7 +115,11 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	if body == "" {
 		return nil, adapter.NewChannelError(adapter.ErrorKindPermanent, "discord: empty outbound body", nil)
 	}
-	sent, err := c.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Content: body})
+	send := &discordgo.MessageSend{Content: body}
+	if msg.ReplyToID != "" {
+		send.Reference = &discordgo.MessageReference{MessageID: msg.ReplyToID}
+	}
+	sent, err := c.session.ChannelMessageSendComplex(channelID, send)
 	if err != nil {
 		return nil, adapter.NewChannelError(adapter.ErrorKindRetryable, "discord send", err)
 	}

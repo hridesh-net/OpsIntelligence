@@ -106,6 +106,9 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	opts := []slack.MsgOption{slack.MsgOptionText(body, false)}
 	if threadTS != "" {
 		opts = append(opts, slack.MsgOptionTS(threadTS))
+	} else if msg.ReplyToID != "" {
+		// ReplyToID carries the original message ts; post as a thread reply.
+		opts = append(opts, slack.MsgOptionTS(msg.ReplyToID))
 	}
 	_, ts, err := c.client.PostMessageContext(ctx, chID, opts...)
 	if err != nil {

@@ -164,6 +164,14 @@ type PalaceConfig struct {
 	LogDecisions        bool
 }
 
+// PRReviewDispatcher is implemented by tools.PRReviewCmdHandler. The interface lives in
+// the agent package to avoid a circular import (tools → agent → tools).
+type PRReviewDispatcher interface {
+	// Dispatch parses PR links from commandText and launches one isolated goroutine per PR.
+	// Results are posted back to the originating channel message (originMsgID) when ready.
+	Dispatch(ctx context.Context, commandText, channelID, sessionID, originMsgID string, replyFn channels.StreamingReplyFunc)
+}
+
 // Runner is the main agent execution loop.
 type Runner struct {
 	cfg           Config
@@ -212,6 +220,11 @@ type Runner struct {
 
 	// traceLoopIteration is the current agent loop index (1-based) for run_trace tool_call/tool_done.
 	traceLoopIteration int
+
+	// prReview handles /pr-review: slash commands with parallel isolated review goroutines.
+	prReview PRReviewDispatcher
+	// originMsgID is the inbound message ID set per-dispatch; used by /pr-review to post threaded replies.
+	originMsgID string
 }
 
 // WithSystemPromptAugmentor installs a per-turn callback whose return value
@@ -380,7 +393,15 @@ func (r *Runner) WithSession(sessionID string) *Runner {
 		modelRegistry:         r.modelRegistry,
 		palaceRouter:          r.palaceRouter,
 		systemPromptAugmentor: r.systemPromptAugmentor,
+		prReview:              r.prReview,
 	}
+}
+
+// WithPRReview wires a PRReviewDispatcher so that /pr-review: slash commands trigger
+// parallel isolated PR reviews that post results back to the originating channel message.
+func (r *Runner) WithPRReview(h PRReviewDispatcher) *Runner {
+	r.prReview = h
+	return r
 }
 
 // SessionID returns the current session ID.
@@ -1634,6 +1655,7 @@ func (r *Runner) HandleChannelMessage(ctx context.Context, msg channels.Message,
 	sessionRunner := r.WithSession(msg.SessionID)
 	sessionRunner.channelID = msg.ChannelID
 	sessionRunner.mediaFn = mediaFn
+	sessionRunner.originMsgID = msg.ID
 
 	// Intercept chat commands (first line starting with /); see channels.SlashCommandLine.
 	if line := channels.SlashCommandLine(msg); line != "" {
@@ -1792,9 +1814,17 @@ func (r *Runner) HandleChatCommand(ctx context.Context, text string, replyFn cha
 	if len(parts) == 0 {
 		return false
 	}
-	cmd := normalizeSlashCommand(strings.ToLower(parts[0]))
+	cmd := normalizeSlashCommand(strings.ToLower(strings.TrimRight(parts[0], ":")))
 
 	switch cmd {
+	case "/pr-review":
+		if r.prReview == nil {
+			_ = replyFn("PR review is not configured. Enable `devops.github` in opsintelligence.yaml.")
+			return true
+		}
+		r.prReview.Dispatch(ctx, text, r.channelID, r.sessionID, r.originMsgID, replyFn)
+		return true
+
 	case "/reset":
 		r.working.Clear()
 		_ = replyFn("✨ Session memory cleared. Starting fresh!")
@@ -1944,6 +1974,7 @@ func (r *Runner) HandleChatCommand(ctx context.Context, text string, replyFn cha
 		cmds += "• `/model` `[provider/id]` — show current; changing needs yaml + restart\n"
 		cmds += "• `/models` `[filter]` — catalog; optional substring filter\n"
 		cmds += "• `/tools` `[verbose]` — tool names (+ optional one-line descriptions)\n"
+		cmds += "• `/pr-review: <url> [url2 …]` — review one or more GitHub PRs in parallel (isolated per-PR sub-process, results posted as threaded replies)\n"
 		cmds += "• `/skills` `/subagents` `/sessions` `/forget` `/reset` `/new` `/auto`\n\n"
 		cmds += "*Legacy / alternate names* (reply explains OpsIntelligence equivalent)\n"
 		cmds += "`/stop` `/usage` `/think` `/t` `/verbose` `/v` `/fast` `/reasoning` `/reason` `/elevated` `/elev` `/exec` `/queue` `/config` `/mcp` `/plugins` `/plugin` `/debug` `/approve` `/allowlist` `/tasks` `/export` `/export-session` `/bash` `/btw` `/session` `/focus` `/unfocus` `/agents` `/activation` `/send` `/restart` `/tts` `/acp` `/skill` `/steer` `/tell` `/kill`\n"

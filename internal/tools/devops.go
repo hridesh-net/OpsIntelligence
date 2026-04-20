@@ -17,6 +17,32 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
 
+// NewReviewFn returns a ReviewFn backed by devops.github.review_pr for use with PRReviewCmdHandler.
+// Returns nil when GitHub integration is not configured.
+func NewReviewFn(cfg config.DevOpsConfig, prov provider.Provider, model string) ReviewFn {
+	if !cfg.GitHub.Enabled || cfg.GitHub.Token == "" {
+		return nil
+	}
+	httpc := &http.Client{Timeout: 20 * time.Second}
+	gh := github.New(github.Config{
+		Token:      cfg.GitHub.Token,
+		BaseURL:    cfg.GitHub.BaseURL,
+		DefaultOrg: cfg.GitHub.DefaultOrg,
+	}, httpc)
+	tool := &githubReviewPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg, prov: prov, model: model}
+	return func(ctx context.Context, owner, repo string, number int) (string, error) {
+		input, err := json.Marshal(map[string]any{
+			"owner":  owner,
+			"repo":   repo,
+			"number": number,
+		})
+		if err != nil {
+			return "", err
+		}
+		return tool.Execute(ctx, input)
+	}
+}
+
 // DevOpsTools returns the agent tools for each enabled DevOps integration.
 // Tools are only returned for providers whose config is enabled and has the
 // minimum credentials to operate. Callers should register the returned tools

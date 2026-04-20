@@ -279,6 +279,10 @@ type GitHubConfig struct {
 	Token      string `yaml:"token"`       // inline token (prefer TokenEnv for secrets)
 	TokenEnv   string `yaml:"token_env"`   // e.g. GITHUB_TOKEN
 	DefaultOrg string `yaml:"default_org"` // e.g. acme; used for short-hand repo queries
+
+	// PRReviewWorkers is the max number of /pr-review tasks that run concurrently.
+	// Excess tasks queue until a slot frees. 0 → default of 4.
+	PRReviewWorkers int `yaml:"pr_review_workers"`
 }
 
 // GitLabConfig configures GitLab access for MR review and pipeline monitoring.

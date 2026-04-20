@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] — 2026-04-20
+
+### Added
+
+- **Configurable PR Review Pool**: The number of parallel PR review sub-agents is now controlled by `devops.github.pr_review_workers` in the config (default 4). Tasks beyond the limit queue and are picked up automatically when a slot frees.
+- **Pool monitoring in agent system prompt**: The master agent's ambient context now shows active PR reviews (task ID, status, elapsed, last event) every turn via a system prompt augmentor — oversight is automatic, not polled.
+- **Agent monitoring tools**: `pr_review_tasks`, `pr_review_cancel`, and `pr_review_events` are now registered in the agent tool registry when GitHub is configured, enabling the agent to list, inspect, and cancel review tasks directly.
+- **Gateway REST API**: `GET /api/v1/pr-reviews`, `GET /api/v1/pr-reviews/{id}/events?since=N`, and `POST /api/v1/pr-reviews/{id}/cancel` — all auth-gated, JSON responses.
+- **CLI subcommand**: `opsintelligence pr-reviews [list|events|cancel]` hits the running gateway to list tasks, stream event logs, or cancel reviews without opening a browser.
+
+### Fixed
+
+- `pr_review_tools.go`: fixed a pre-existing compile error where `b.WriteString` was erroneously called with three arguments (a strconv leftover).
+
 ## [0.3.18] — 2026-04-20
 
 ### Added

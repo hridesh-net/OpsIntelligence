@@ -15,6 +15,14 @@ type ChannelSender interface {
 	SendText(ctx context.Context, sessionID, text string) error
 }
 
+// ChannelReplier is optionally implemented by channels that support reply-to-message
+// (Discord message references, Slack threads, Telegram reply, WhatsApp quote-reply).
+// PRReviewCmdHandler prefers ReplyTo over SendText when posting review results back to the
+// originating message, so results arrive as threaded replies rather than standalone messages.
+type ChannelReplier interface {
+	ReplyTo(ctx context.Context, sessionID, messageID, text string) error
+}
+
 // MessageTool lets the agent proactively send a message to a connected channel.
 type MessageTool struct {
 	// Senders is a map of channelID → ChannelSender (registered at startup).

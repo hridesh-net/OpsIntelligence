@@ -80,6 +80,20 @@ func (s reliableToolSender) SendText(ctx context.Context, sessionID, text string
 	return err
 }
 
+// ReplyTo implements tools.ChannelReplier: posts text as a native reply to messageID
+// (Discord message reference, Slack thread, Telegram reply, etc.).
+func (s reliableToolSender) ReplyTo(ctx context.Context, sessionID, messageID, text string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("session_id is required for outbound channel sends")
+	}
+	_, err := s.rs.Send(ctx, chadapter.OutboundMessage{
+		SessionID: sessionID,
+		Text:      text,
+		ReplyToID: messageID,
+	})
+	return err
+}
+
 // defaultHeartbeatPrompt matches AGENTS.md guidance for periodic heartbeat polls.
 const defaultHeartbeatPrompt = `Read HEARTBEAT.md if it exists in your workspace (state directory). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
 
@@ -215,6 +229,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		guidesCmd(flags),
 		versionCmd(flags),
 		localgemmaCmd(flags),
+		prReviewsCmd(flags), // pr-review pool monitoring + control
 	)
 	return root
 }
@@ -1721,6 +1736,39 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return "## Active Sub-Agents (live)\n" + board
 	})
 
+	// ── /pr-review command handler ────────────────────────────────────
+	// Wire up parallel PR review if GitHub integration is configured.
+	// channelSenders is a live map — entries are added when each channel
+	// starts below, so the handler will see them once channels are active.
+	//
+	// PRReviewWorkers is read from devops.github.pr_review_workers (default 4).
+	// Excess PR review tasks queue automatically; workers are picked up as
+	// slots free. The handler is stored in the server so the gateway API
+	// and dashboard can inspect and cancel tasks.
+	var prReviewHandler *tools.PRReviewCmdHandler
+	if reviewFn := tools.NewReviewFn(cfg.DevOps, p, modelInfo.ID); reviewFn != nil {
+		prReviewHandler = tools.NewPRReviewCmdHandler(
+			reviewFn,
+			channelSenders,
+			cfg.DevOps.GitHub.PRReviewWorkers,
+			log,
+		)
+		runner = runner.WithPRReview(prReviewHandler)
+		// Expose monitoring + cancellation to the master agent.
+		toolReg.Register(tools.PRReviewTasksTool{H: prReviewHandler})
+		toolReg.Register(tools.PRReviewCancelTool{H: prReviewHandler})
+		toolReg.Register(tools.PRReviewEventsTool{H: prReviewHandler})
+		catalog = tools.NewCatalog(toolReg, toolGraph)
+		runner = runner.WithCatalog(catalog)
+		// Inject active PR review panel into the master agent's ambient context.
+		runner = runner.WithSystemPromptAugmentor(func(_ context.Context) string {
+			return prReviewHandler.Dashboard()
+		})
+		log.Info("pr-review pool active",
+			zap.Int("max_workers", cfg.DevOps.GitHub.PRReviewWorkers),
+		)
+	}
+
 	// ── Cron Daemon ───────────────────────────────────────────────────
 	var cronJobs []cron.Job
 	for _, j := range cfg.Cron {
@@ -1930,6 +1978,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv.Version = version
 		srv.Config = cfg
 		srv.Logger = log
+		srv.PRReview = gateway.NewPRReviewAdapter(prReviewHandler) // exposes /api/v1/pr-reviews on the dashboard
 		if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
 			return err
 		} else if waReg != nil {
