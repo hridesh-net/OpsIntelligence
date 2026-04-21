@@ -96,6 +96,9 @@ func NewPRReviewCmdHandler(reviewFn ReviewFn, senders map[string]ChannelSender, 
 				h.Log.Error("pr review failed", zap.String("pr", pr.Raw), zap.Error(err))
 			}
 			h.report(taskID, "error", fmt.Sprintf("review failed: %v", err))
+		} else if isSkippedResult(result) {
+			h.report(taskID, "skipped", fmt.Sprintf("review skipped for %s (draft PR — set allow_draft_review: true to review drafts)", pr.Raw))
+			body = fmt.Sprintf("**PR Review skipped: %s**\n\nThis PR is a draft. Set `allow_draft_review: true` in config to review draft PRs.", pr.Raw)
 		} else {
 			h.report(taskID, "done", "review submitted to GitHub")
 			body = fmt.Sprintf("**PR Review: %s**\n\n%s", pr.Raw, result)
@@ -209,6 +212,16 @@ func (h *PRReviewCmdHandler) report(taskID, phase, msg string) {
 	if h.mgr != nil {
 		_ = h.mgr.Report(taskID, phase, msg, subagents.KindProgress)
 	}
+}
+
+// isSkippedResult returns true when the review tool returned a JSON skip notice
+// (e.g. draft PR with allow_draft_review: false). This prevents marking the
+// task as "review submitted" when nothing was actually posted.
+func isSkippedResult(result string) bool {
+	var v struct {
+		Skipped bool `json:"skipped"`
+	}
+	return json.Unmarshal([]byte(result), &v) == nil && v.Skipped
 }
 
 func (h *PRReviewCmdHandler) sendResult(ctx context.Context, channelID, sessionID, originMsgID, text string) {

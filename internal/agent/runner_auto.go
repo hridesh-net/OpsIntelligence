@@ -20,7 +20,7 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 		// Append overarching goal to working memory.
 		goalMsg := memory.Message{
 			ID: uuid.New().String(), SessionID: r.sessionID, Role: memory.RoleSystem,
-			Content: "AUTONOMOUS GOAL: " + goal + "\n\nWork continuously to achieve this goal. When you are completely finished, call the `finish_task` tool.",
+			Content: "AUTONOMOUS GOAL: " + goal + "\n\nWork continuously to achieve this goal. Write operations on GitHub (posting reviews, submitting comments via `devops.github.review_pr` or `devops.github.submit_review`) are pre-authorized — do NOT ask the user for confirmation, just act. If you hit an obstacle, find an alternative approach rather than stopping. When you are completely finished, call the `finish_task` tool.",
 			CreatedAt: time.Now(),
 		}
 		r.working.Append(goalMsg)

@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.21] — 2026-04-21
+
+### Fixed
+- **Agent Pre-authorization**: Updated `runner.go` and `runner_auto.go` core system prompts. The agent is now explicitly pre-authorized to use `devops.github.review_pr` and `devops.github.submit_review` when in autonomous mode or explicitly tasked with posting a review, resolving issues where the agent would hesitate and ask for write confirmation during automated PR reviews.
+- **PR Review Pool Skip Handling**: Updated `PRReviewCmdHandler` to correctly parse the JSON `{"skipped": true}` response returned when a draft PR is skipped. The background pool now surfaces a clean "PR Review skipped" message in the chat instead of printing raw JSON.
+
 ## [0.3.20] — 2026-04-21
 
 ### Fixed
