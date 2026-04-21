@@ -283,6 +283,11 @@ type GitHubConfig struct {
 	// PRReviewWorkers is the max number of /pr-review tasks that run concurrently.
 	// Excess tasks queue until a slot frees. 0 → default of 4.
 	PRReviewWorkers int `yaml:"pr_review_workers"`
+
+	// AllowDraftReview controls whether draft PRs are reviewed.
+	// Default false: draft PRs return a skipped result (no error, no post).
+	// Set to true to review draft PRs as normal.
+	AllowDraftReview bool `yaml:"allow_draft_review"`
 }
 
 // GitLabConfig configures GitLab access for MR review and pipeline monitoring.

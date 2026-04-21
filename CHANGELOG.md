@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.20] — 2026-04-21
+
+### Fixed
+- **PR Review Drafts**: Draft PRs no longer cause a hard task failure in the background pool. They now return cleanly as `skipped` to ensure tasks complete successfully while logging the reason.
+- **Configurable Draft Reviews**: Added `devops.github.allow_draft_review` to `opsintelligence.yaml` (default: `false`). Set to `true` to force reviews on draft PRs.
+- **Inline Comments Limitation**: Fixed an issue where the agent would incorrectly claim it "cannot post inline comments" due to a lack of explicit instructions. The `pr-review` skill prompt now explicitly confirms this capability and instructs the agent to diagnose HTTP 403 (insufficient PAT scope) instead of giving up.
+
 ## [0.3.19] — 2026-04-20
 
 ### Added

@@ -24,10 +24,11 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 type githubReviewPRTool struct {
-	c          *github.Client
-	defaultOrg string
-	prov       provider.Provider
-	model      string
+	c                *github.Client
+	defaultOrg       string
+	prov             provider.Provider
+	model            string
+	allowDraftReview bool // from devops.github.allow_draft_review
 }
 
 func (t *githubReviewPRTool) Definition() provider.ToolDef {
@@ -104,8 +105,17 @@ func (t *githubReviewPRTool) Execute(ctx context.Context, input json.RawMessage)
 	if pr.State == "closed" {
 		return "", fmt.Errorf("review_pr: PR #%d is already closed", a.Number)
 	}
-	if pr.Draft {
-		return "", fmt.Errorf("review_pr: PR #%d is a draft — skipping review", a.Number)
+	if pr.Draft && !t.allowDraftReview {
+		// Return a clean informational result (not an error) so the task
+		// status shows "completed" rather than "failed". The review pool
+		// will still log that it was skipped.
+		out := map[string]any{
+			"skipped": true,
+			"reason":  fmt.Sprintf("PR #%d is a draft — no review posted (set allow_draft_review: true in config to review drafts)", a.Number),
+			"pr_url":  pr.HTMLURL,
+		}
+		b, _ := json.Marshal(out)
+		return string(b), nil
 	}
 
 	// ── Step 2: fetch per-file diffs ─────────────────────────────────────────

@@ -54,6 +54,13 @@ GitHub or GitLab.
 > **Never** post the rendered Markdown as a flat `pr_comment` when the `post`
 > payload contains a non-empty `comments[]` — that loses all inline context.
 >
+> **You ALWAYS have inline comment capability** via `devops.github.submit_review`.
+> **Never tell the user you cannot post inline comments** — always attempt it.
+> If the call fails, diagnose the error:
+> - HTTP 403 → PAT lacks `pull_requests: write` scope on that repo. Tell the user.
+> - HTTP 404 → wrong owner/repo/number — re-check URL parsing.
+> - Any other error → quote it verbatim so the user can act.
+>
 > **CodeRabbit-style automation**: install `gh`, set `GH_TOKEN` / `OPSINTEL_GITHUB_TOKEN`,
 > run `opsintelligence skills install gh-pr-review`, then wire the GitHub webhook
 > `prompts.pull_request` so the outer agent runs this chain and posts one review.

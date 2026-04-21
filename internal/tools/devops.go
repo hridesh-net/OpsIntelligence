@@ -29,7 +29,13 @@ func NewReviewFn(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 		BaseURL:    cfg.GitHub.BaseURL,
 		DefaultOrg: cfg.GitHub.DefaultOrg,
 	}, httpc)
-	tool := &githubReviewPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg, prov: prov, model: model}
+	tool := &githubReviewPRTool{
+		c:                gh,
+		defaultOrg:       cfg.GitHub.DefaultOrg,
+		prov:             prov,
+		model:            model,
+		allowDraftReview: cfg.GitHub.AllowDraftReview,
+	}
 	return func(ctx context.Context, owner, repo string, number int) (string, error) {
 		input, err := json.Marshal(map[string]any{
 			"owner":  owner,
@@ -68,7 +74,13 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 			&githubSubmitReviewTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
-			&githubReviewPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg, prov: prov, model: model},
+			&githubReviewPRTool{
+				c:                gh,
+				defaultOrg:       cfg.GitHub.DefaultOrg,
+				prov:             prov,
+				model:            model,
+				allowDraftReview: cfg.GitHub.AllowDraftReview,
+			},
 		)
 	}
 	if cfg.GitLab.Enabled && cfg.GitLab.Token != "" && cfg.GitLab.BaseURL != "" {
