@@ -177,6 +177,16 @@ func RunSetupWizard(ctx context.Context, opts SetupOptions) (*SetupResult, error
 
 type spinnerDoneMsg struct{ err error }
 
+// RunWithSpinner is the exported variant for callers outside this package.
+func RunWithSpinner(ctx context.Context, label string, fn func() error) (bool, error) {
+	return runWithSpinner(ctx, label, fn)
+}
+
+// RunMemPalaceSetup is the exported variant so onboard.go can reuse the logic.
+func RunMemPalaceSetup(ctx context.Context, opts SetupOptions) error {
+	return runMemPalaceSetup(ctx, opts)
+}
+
 func runWithSpinner(ctx context.Context, label string, fn func() error) (bool, error) {
 	type result struct {
 		err error

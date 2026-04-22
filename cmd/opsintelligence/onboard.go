@@ -478,6 +478,7 @@ func runOnboarding(configPath string) (bool, error) {
 		planoPowerfulModel string
 		localIntelEnabled  bool
 		localIntelGGUF     string
+		memPalaceEnabled   bool
 		// DevOps YAML (optional; omitted when skipped so merge preserves existing)
 		githubToken        string
 		githubTokenEnv     string
@@ -1234,9 +1235,11 @@ func runOnboarding(configPath string) (bool, error) {
 		okStyle := lipgloss.NewStyle().Foreground(tui.ColorCyan)
 		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
-		fmt.Println(dim.Render("  Provisioning local Gemma (bundled copy or public mirrors, no credentials)…"))
 		if src, ok := discoverBundledGGUF(dst); ok {
-			if err := copyFileAtomic(src, dst); err != nil {
+			ok2, err := tui.RunWithSpinner(context.Background(), "Copying bundled Gemma model", func() error {
+				return copyFileAtomic(src, dst)
+			})
+			if !ok2 || err != nil {
 				fmt.Println(warnStyle.Render("  ⚠ Bundled Gemma copy failed: " + err.Error()))
 				fmt.Println(dim.Render("  You can run: opsintelligence local-intel setup"))
 				localIntelEnabled, localIntelGGUF = false, ""
@@ -1246,23 +1249,62 @@ func runOnboarding(configPath string) (bool, error) {
 				fmt.Println(okStyle.Render("  ✔ Local Gemma prepared from packaged model"))
 			}
 		} else {
-			fmt.Println(dim.Render("  Downloading Gemma GGUF (may take several minutes; progress below)…"))
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
-			defer cancel()
-			res, err := localintel.BootstrapGGUF(ctx, localintel.BootstrapOptions{
-				StateDir: stateDir,
-				GGUFPath: dst,
-				Progress: os.Stderr,
+			gemmaCtx, gemmaCancel := context.WithTimeout(context.Background(), 90*time.Minute)
+			defer gemmaCancel()
+			var gemmaRes localintel.BootstrapResult
+			ok2, err := tui.RunWithSpinner(gemmaCtx, "Downloading Gemma GGUF (~3 GiB, please wait)", func() error {
+				var berr error
+				gemmaRes, berr = localintel.BootstrapGGUF(gemmaCtx, localintel.BootstrapOptions{
+					StateDir: stateDir,
+					GGUFPath: dst,
+					Progress: nil,
+				})
+				return berr
 			})
-			if err != nil {
+			if !ok2 || err != nil {
 				fmt.Println(warnStyle.Render("  ⚠ Local Gemma download skipped: " + err.Error()))
 				fmt.Println(dim.Render("  Run later: opsintelligence local-intel setup"))
 				localIntelEnabled, localIntelGGUF = false, ""
 			} else {
-				localIntelGGUF = res.Path
+				localIntelGGUF = gemmaRes.Path
 				localIntelEnabled = true
 				fmt.Println(okStyle.Render("  ✔ Local Gemma downloaded and prepared"))
 			}
+		}
+	}
+
+	// MemPalace setup — optional hierarchical memory via Python PyPI package.
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).
+		Render("  MemPalace (structured memory)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
+		Render("  Requires Python 3.9+. Skip safely — you can run `opsintelligence quickstart` later.\n"))
+
+	var setupMP bool
+	mpForm := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Set up MemPalace now?").
+			Description("Creates a Python venv and installs the mempalace PyPI package.").
+			Value(&setupMP),
+	)).WithTheme(theme)
+	_ = mpForm.Run()
+
+	if setupMP {
+		stateDir := filepath.Dir(configPath)
+		mpOpts := tui.SetupOptions{StateDir: stateDir}
+		ok2, err := tui.RunWithSpinner(context.Background(), "Installing MemPalace", func() error {
+			return tui.RunMemPalaceSetup(context.Background(), mpOpts)
+		})
+		warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+		okStyle := lipgloss.NewStyle().Foreground(tui.ColorCyan)
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		if !ok2 || err != nil {
+			fmt.Println(warnStyle.Render("  ⚠ MemPalace setup failed: " + err.Error()))
+			fmt.Println(dim.Render("  Retry with: opsintelligence quickstart"))
+			memPalaceEnabled = false
+		} else {
+			memPalaceEnabled = true
+			fmt.Println(okStyle.Render("  ✔ MemPalace installed and initialised"))
 		}
 	}
 
@@ -1731,6 +1773,14 @@ func runOnboarding(configPath string) (bool, error) {
 	}
 	sb.WriteString("\n")
 
+	if memPalaceEnabled {
+		stateDir := filepath.Dir(configPath)
+		sb.WriteString("mempalace:\n")
+		sb.WriteString("  enabled: true\n")
+		sb.WriteString(fmt.Sprintf("  state_dir: %q\n", filepath.Join(stateDir, "mempalace")))
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("providers:\n")
 	writeProv := func(e provEntry) {
 		name := e.provider
@@ -2020,6 +2070,14 @@ func runOnboarding(configPath string) (bool, error) {
 			fmt.Println(dim.Render("  • Dev fallback: make install EXTRA_TAGS=opsintelligence_localgemma"))
 			fmt.Println(dim.Render("  • Or: go build -tags fts5,opsintelligence_localgemma -o opsintelligence ./cmd/opsintelligence"))
 		}
+	}
+	if memPalaceEnabled {
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  MemPalace — next steps"))
+		fmt.Println(dim.Render("  • Venv and world initialised — the agent will recall from it automatically."))
+		fmt.Println(dim.Render("  • Add memories manually: opsintelligence mempalace store"))
+		fmt.Println(dim.Render("  • Inspect stored knowledge: opsintelligence mempalace recall <query>"))
 	}
 
 	// ── Auto-start on login (no prompt; idempotent on macOS/Linux) ────────────

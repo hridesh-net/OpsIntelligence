@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.23] — 2026-04-22
+
+### Added
+- **MemPalace Onboarding**: Added optional MemPalace setup to the `onboard` flow, including automatic Python venv creation and package installation.
+- **Onboarding UX**: Integrated terminal spinners for long-running onboarding tasks such as downloading/copying the Gemma GGUF model and installing MemPalace.
+
+### Changed
+- **TUI Refactor**: Exported spinner and MemPalace setup primitives to allow reuse across CLI onboarding and quickstart commands.
+
 ## [0.3.22] — 2026-04-22
 
 ### Added
