@@ -28,7 +28,7 @@ func init() {
 // accepts as native bool).
 type Dialect struct{}
 
-func (Dialect) Name() string         { return datastore.DriverSQLite }
+func (Dialect) Name() string           { return datastore.DriverSQLite }
 func (Dialect) Rebind(q string) string { return q }
 func (Dialect) BoolExpr(b bool) string {
 	if b {

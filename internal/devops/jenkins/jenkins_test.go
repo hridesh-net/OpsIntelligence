@@ -38,10 +38,10 @@ func TestGetJob(t *testing.T) {
 func TestEncodeJobPath(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
-		"foo":            "job/foo",
-		"foo/bar":        "job/foo/job/bar",
-		"foo/bar baz":    "job/foo/job/bar%20baz",
-		"/a/b/":          "job/a/job/b",
+		"foo":         "job/foo",
+		"foo/bar":     "job/foo/job/bar",
+		"foo/bar baz": "job/foo/job/bar%20baz",
+		"/a/b/":       "job/a/job/b",
 	}
 	for in, want := range tests {
 		if got := encodeJobPath(in); got != want {

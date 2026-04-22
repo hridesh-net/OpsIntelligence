@@ -99,18 +99,18 @@ func (m *Manager) syncFile(ctx context.Context, registry *embeddings.Registry, w
 	sourceType, palace, wing, room, tags := inferTaxonomy(relPath)
 	for i, c := range chunks {
 		doc := Document{
-			ID:        fmt.Sprintf("%s#L%d-%d", relPath, c.StartLine, c.EndLine),
-			Source:    relPath,
-			Content:   c.Content,
-			Hash:      hash, // Use the full file hash for all chunks
+			ID:         fmt.Sprintf("%s#L%d-%d", relPath, c.StartLine, c.EndLine),
+			Source:     relPath,
+			Content:    c.Content,
+			Hash:       hash, // Use the full file hash for all chunks
 			SourceType: sourceType,
-			Palace:    palace,
-			Wing:      wing,
-			Room:      room,
-			Tags:      tags,
-			Model:     resp.Model,
-			Embedding: resp.Embeddings[i],
-			CreatedAt: time.Now(),
+			Palace:     palace,
+			Wing:       wing,
+			Room:       room,
+			Tags:       tags,
+			Model:      resp.Model,
+			Embedding:  resp.Embeddings[i],
+			CreatedAt:  time.Now(),
 		}
 		if err := m.Semantic.Index(ctx, doc); err != nil {
 			return fmt.Errorf("index chunk %d of %s: %w", i, relPath, err)

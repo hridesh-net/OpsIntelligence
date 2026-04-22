@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.22] — 2026-04-22
+
+### Added
+- **A2A Task Management**: Implemented task store in the gateway server to track, poll (`tasks/get`), and cancel (`tasks/cancel`) streaming Agent-to-Agent requests.
+- **Fact Check Tool**: Added the `fact_check` tool to the core agent catalog for verifying information accuracy.
+
+### Changed
+- **Streaming Contexts**: Updated the agent runner to support task-scoped cancellation via `context.Context` in `RunStream`, enabling clean interruption of long-running agent tasks.
+
 ## [0.3.21] — 2026-04-21
 
 ### Fixed

@@ -489,15 +489,15 @@ type providerKey struct {
 }
 
 var providerKeys = []providerKey{
-	providerKey{
+	{
 		wsc.WSC_SECURITY_PROVIDER_ANTIVIRUS,
 		"av",
 	},
-	providerKey{
+	{
 		wsc.WSC_SECURITY_PROVIDER_ANTISPYWARE,
 		"antispy",
 	},
-	providerKey{
+	{
 		wsc.WSC_SECURITY_PROVIDER_FIREWALL,
 		"firewall",
 	},

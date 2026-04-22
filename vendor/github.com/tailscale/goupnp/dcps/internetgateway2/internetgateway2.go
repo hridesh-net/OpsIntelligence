@@ -123,7 +123,6 @@ func (client *WANIPConnection1) SetConnectionType(ctx context.Context, NewConnec
 	return
 }
 
-//
 // Return values:
 //
 // * NewPossibleConnectionTypes: allowed values: Unconfigured, IP_Routed, IP_Bridged
@@ -298,7 +297,6 @@ func (client *WANIPConnection1) SetWarnDisconnectDelay(ctx context.Context, NewW
 	return
 }
 
-//
 // Return values:
 //
 // * NewConnectionStatus: allowed values: Unconfigured, Connected, Disconnected
@@ -446,7 +444,6 @@ func (client *WANIPConnection1) GetNATRSIPStatus(ctx context.Context) (NewRSIPAv
 	return
 }
 
-//
 // Return values:
 //
 // * NewProtocol: allowed values: TCP, UDP
@@ -950,7 +947,6 @@ func (client *WANIPConnection2) SetWarnDisconnectDelay(ctx context.Context, NewW
 	return
 }
 
-//
 // Return values:
 //
 // * NewConnectionStatus: allowed values: Unconfigured, Connecting, Connected, PendingDisconnect, Disconnecting, Disconnected
@@ -1098,7 +1094,6 @@ func (client *WANIPConnection2) GetNATRSIPStatus(ctx context.Context) (NewRSIPAv
 	return
 }
 
-//
 // Return values:
 //
 // * NewProtocol: allowed values: TCP, UDP
@@ -1590,7 +1585,6 @@ func (client *WANPPPConnection1) SetConnectionType(ctx context.Context, NewConne
 	return
 }
 
-//
 // Return values:
 //
 // * NewPossibleConnectionTypes: allowed values: Unconfigured, IP_Routed, DHCP_Spoofed, PPPoE_Bridged, PPTP_Relay, L2TP_Relay, PPPoE_Relay
@@ -1795,7 +1789,6 @@ func (client *WANPPPConnection1) SetWarnDisconnectDelay(ctx context.Context, New
 	return
 }
 
-//
 // Return values:
 //
 // * NewConnectionStatus: allowed values: Unconfigured, Connected, Disconnected
@@ -2103,7 +2096,6 @@ func (client *WANPPPConnection1) GetNATRSIPStatus(ctx context.Context) (NewRSIPA
 	return
 }
 
-//
 // Return values:
 //
 // * NewProtocol: allowed values: TCP, UDP

@@ -81,15 +81,15 @@ func (c *Client) QualityGate(ctx context.Context, projectKey string) (*QualityGa
 
 // Issue is a trimmed Sonar issue payload.
 type Issue struct {
-	Key      string `json:"key"`
-	Rule     string `json:"rule"`
-	Severity string `json:"severity"` // BLOCKER, CRITICAL, MAJOR, MINOR, INFO
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Project  string `json:"project"`
+	Key       string `json:"key"`
+	Rule      string `json:"rule"`
+	Severity  string `json:"severity"` // BLOCKER, CRITICAL, MAJOR, MINOR, INFO
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Project   string `json:"project"`
 	Component string `json:"component"`
-	Type     string `json:"type"` // BUG, VULNERABILITY, CODE_SMELL
-	Line     int    `json:"line"`
+	Type      string `json:"type"` // BUG, VULNERABILITY, CODE_SMELL
+	Line      int    `json:"line"`
 }
 
 // IssueSearch is the trimmed response payload.
@@ -127,13 +127,13 @@ func (c *Client) SearchIssues(ctx context.Context, projectKey string, extra url.
 
 // Hotspot is a trimmed security hotspot payload.
 type Hotspot struct {
-	Key              string `json:"key"`
-	Component        string `json:"component"`
-	SecurityCategory string `json:"securityCategory"`
+	Key                      string `json:"key"`
+	Component                string `json:"component"`
+	SecurityCategory         string `json:"securityCategory"`
 	VulnerabilityProbability string `json:"vulnerabilityProbability"`
-	Status           string `json:"status"`
-	Line             int    `json:"line"`
-	Message          string `json:"message"`
+	Status                   string `json:"status"`
+	Line                     int    `json:"line"`
+	Message                  string `json:"message"`
 }
 
 // HotspotSearch is the trimmed response.

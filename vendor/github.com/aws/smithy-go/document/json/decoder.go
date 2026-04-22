@@ -23,14 +23,14 @@ type Decoder struct {
 // If toValue is not a compatible type, or an error occurs while decoding DecodeJSONInterface will return an error.
 //
 // The supported input JSON types are:
-//   bool -> JSON boolean
-//   float64 -> JSON number
-//   json.Number -> JSON number
-//   string -> JSON string
-//   []interface{} -> JSON array
-//   map[string]interface{} -> JSON object
-//   nil -> JSON null
 //
+//	bool -> JSON boolean
+//	float64 -> JSON number
+//	json.Number -> JSON number
+//	string -> JSON string
+//	[]interface{} -> JSON array
+//	map[string]interface{} -> JSON object
+//	nil -> JSON null
 func (d *Decoder) DecodeJSONInterface(input interface{}, toValue interface{}) error {
 	if document.IsNoSerde(toValue) {
 		return fmt.Errorf("unsupported type: %T", toValue)

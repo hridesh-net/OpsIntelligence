@@ -140,15 +140,15 @@ type scanFn func(dest ...any) error
 
 func scanUser(scan scanFn, mapErr func(error) error) (*datastore.User, error) {
 	var (
-		u          datastore.User
-		email      sql.NullString
-		display    sql.NullString
-		password   sql.NullString
-		totp       sql.NullString
-		status     string
-		issuer     sql.NullString
-		subject    sql.NullString
-		lastLogin  sql.NullTime
+		u         datastore.User
+		email     sql.NullString
+		display   sql.NullString
+		password  sql.NullString
+		totp      sql.NullString
+		status    string
+		issuer    sql.NullString
+		subject   sql.NullString
+		lastLogin sql.NullTime
 	)
 	if err := scan(
 		&u.ID, &u.Username, &email, &display, &password, &totp,

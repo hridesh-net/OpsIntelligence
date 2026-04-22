@@ -12,17 +12,17 @@ import (
 
 // API key wire format.
 //
-//	opi_<key_id>_<secret>
+//		opi_<key_id>_<secret>
 //
-// - `opi` is a fixed identifier so accidental leaks (log lines, git
-//   history) can be grep'd for and invalidated fleet-wide.
-// - `<key_id>` is an 8-char base32-ish public identifier persisted in
-//   APIKey.KeyID. It is NOT secret; it is what the user sees in the
-//   dashboard ("opi_x7k2fe8p_…") and what we index on for revoke +
-//   audit logs.
-// - `<secret>` is 32 random URL-safe base64 bytes (~43 chars). Only
-//   its argon2id hash is persisted; the plaintext is shown exactly
-//   once, at creation time, then discarded.
+//	  - `opi` is a fixed identifier so accidental leaks (log lines, git
+//	    history) can be grep'd for and invalidated fleet-wide.
+//	  - `<key_id>` is an 8-char base32-ish public identifier persisted in
+//	    APIKey.KeyID. It is NOT secret; it is what the user sees in the
+//	    dashboard ("opi_x7k2fe8p_…") and what we index on for revoke +
+//	    audit logs.
+//	  - `<secret>` is 32 random URL-safe base64 bytes (~43 chars). Only
+//	    its argon2id hash is persisted; the plaintext is shown exactly
+//	    once, at creation time, then discarded.
 const (
 	APIKeyPrefix    = "opi_"
 	apiKeyIDLen     = 8

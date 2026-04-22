@@ -26,10 +26,10 @@ type StatusInfo struct {
 	MCPEnabled    bool
 	MCPTransport  string
 	// GatewayBase is e.g. http://127.0.0.1:18790 (for dashboard / health hints).
-	GatewayBase   string
-	GatewayBind   string
-	RunTraceFile  string
-	RunTraceMode  string
+	GatewayBase  string
+	GatewayBind  string
+	RunTraceFile string
+	RunTraceMode string
 }
 
 // ─────────────────────────────────────────────

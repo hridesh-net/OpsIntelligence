@@ -62,7 +62,7 @@ func (gw *GmailWatcher) run(ctx context.Context) {
 			// In a real implementation, we'd point this to our /api/webhook/gmail endpoint
 			// For now, this is a placeholder for the external process management logic
 			cmd := exec.CommandContext(ctx, "gog", args...)
-			
+
 			if err := cmd.Run(); err != nil {
 				if ctx.Err() != nil {
 					return

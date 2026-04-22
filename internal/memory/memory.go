@@ -50,19 +50,19 @@ type Message struct {
 
 // Document is a chunk of content stored in semantic memory.
 type Document struct {
-	ID        string    `json:"id"`
-	Source    string    `json:"source"` // file path, URL, session ID, etc.
-	Content   string    `json:"content"`
-	Hash      string    `json:"hash,omitempty"`
-	SourceType string   `json:"source_type,omitempty"`
-	Palace    string    `json:"palace,omitempty"`
-	Wing      string    `json:"wing,omitempty"`
-	Room      string    `json:"room,omitempty"`
-	Tags      []string  `json:"tags,omitempty"`
-	Model     string    `json:"model,omitempty"` // embedding model that generated this vector
-	Embedding []float32 `json:"embedding,omitempty"`
-	Score     float32   `json:"score,omitempty"` // similarity score (populated on search)
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Source     string    `json:"source"` // file path, URL, session ID, etc.
+	Content    string    `json:"content"`
+	Hash       string    `json:"hash,omitempty"`
+	SourceType string    `json:"source_type,omitempty"`
+	Palace     string    `json:"palace,omitempty"`
+	Wing       string    `json:"wing,omitempty"`
+	Room       string    `json:"room,omitempty"`
+	Tags       []string  `json:"tags,omitempty"`
+	Model      string    `json:"model,omitempty"` // embedding model that generated this vector
+	Embedding  []float32 `json:"embedding,omitempty"`
+	Score      float32   `json:"score,omitempty"` // similarity score (populated on search)
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Lesson represents a "corrective memory" entry.
@@ -654,9 +654,9 @@ func (m *SemanticMemory) ListSources(ctx context.Context) ([]string, error) {
 
 // Manager provides a single interface over all memory tiers.
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*WorkingMemory
-	budget   int
+	mu           sync.RWMutex
+	sessions     map[string]*WorkingMemory
+	budget       int
 	chunkSize    int
 	chunkOverlap int
 
@@ -731,12 +731,12 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	}
 
 	return &Manager{
-		sessions: make(map[string]*WorkingMemory),
-		budget:   cfg.WorkingTokenBudget,
-		chunkSize: cfg.ChunkSize,
+		sessions:     make(map[string]*WorkingMemory),
+		budget:       cfg.WorkingTokenBudget,
+		chunkSize:    cfg.ChunkSize,
 		chunkOverlap: cfg.ChunkOverlap,
-		Episodic: episodic,
-		Semantic: semantic,
+		Episodic:     episodic,
+		Semantic:     semantic,
 	}, nil
 }
 

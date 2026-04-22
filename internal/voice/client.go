@@ -29,7 +29,7 @@ func (c *Client) STT(audioData []byte, format string) (string, error) {
 		format = "wav"
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/stt", c.cfg.ServicePort)
-	
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("format", format)
@@ -71,16 +71,16 @@ func (c *Client) STT(audioData []byte, format string) (string, error) {
 
 func (c *Client) TTS(text string, voiceRefPath string) ([]byte, error) {
 	url := fmt.Sprintf("http://127.0.0.1:%d/tts", c.cfg.ServicePort)
-	
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("text", text)
-	
+
 	// Option for reference audio (cloning)
 	if voiceRefPath != "" {
 		// Implement later if needed
 	}
-	
+
 	writer.Close()
 
 	req, err := http.NewRequest("POST", url, body)
@@ -106,7 +106,7 @@ func (c *Client) TTS(text string, voiceRefPath string) ([]byte, error) {
 
 func (c *Client) TTSDiscord(text string) ([][]byte, error) {
 	url := fmt.Sprintf("http://127.0.0.1:%d/tts/discord", c.cfg.ServicePort)
-	
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("text", text)
@@ -136,7 +136,7 @@ func (c *Client) TTSDiscord(text string) ([][]byte, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, err
 	}
-	
+
 	var out [][]byte
 	for _, p := range res.Packets {
 		dec, err := base64.StdEncoding.DecodeString(p)

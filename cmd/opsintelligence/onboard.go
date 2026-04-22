@@ -479,25 +479,25 @@ func runOnboarding(configPath string) (bool, error) {
 		localIntelEnabled  bool
 		localIntelGGUF     string
 		// DevOps YAML (optional; omitted when skipped so merge preserves existing)
-		githubToken       string
-		githubTokenEnv    string
-		githubBaseURL     string
-		githubDefaultOrg  string
-		gitlabURL         string
-		gitlabToken       string
-		gitlabTokenEnv    string
-		jenkinsURL        string
-		jenkinsUser       string
-		jenkinsToken      string
-		jenkinsTokenEnv   string
+		githubToken        string
+		githubTokenEnv     string
+		githubBaseURL      string
+		githubDefaultOrg   string
+		gitlabURL          string
+		gitlabToken        string
+		gitlabTokenEnv     string
+		jenkinsURL         string
+		jenkinsUser        string
+		jenkinsToken       string
+		jenkinsTokenEnv    string
 		sonarURL           string
 		sonarToken         string
 		sonarTokenEnv      string
 		sonarProjectPrefix string
 		activeTeam         string
-		configureDevOps   bool
-		ghWebhookEnabled  bool
-		ghWebhookSecret   string
+		configureDevOps    bool
+		ghWebhookEnabled   bool
+		ghWebhookSecret    string
 	)
 
 	theme := huh.ThemeBase()
@@ -2147,7 +2147,7 @@ func setupPlanoDocker(endpoint string) bool {
 		fmt.Println(yellow.Render("  Install Docker Desktop: https://docs.docker.com/get-docker/"))
 		return false
 	}
-		fmt.Println(okLine.Render("✔ Docker found"))
+	fmt.Println(okLine.Render("✔ Docker found"))
 
 	// 2. Check if plano container already running
 	out, _ := exec.Command("docker", "ps", "--filter", "name=plano", "--format", "{{.Names}}").Output()

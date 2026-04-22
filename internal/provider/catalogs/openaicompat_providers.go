@@ -36,7 +36,10 @@ func MistralModels(prov string) []provider.ModelInfo {
 // DeepSeekModels for api.deepseek.com.
 func DeepSeekModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"deepseek-chat", "DeepSeek Chat", 64000, 8192},
 		{"deepseek-reasoner", "DeepSeek Reasoner (R1)", 64000, 8192},
 	}
@@ -46,7 +49,10 @@ func DeepSeekModels(prov string) []provider.ModelInfo {
 // PerplexityModels for api.perplexity.ai (OpenAI-compatible).
 func PerplexityModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"sonar", "Sonar", 127072, 8192},
 		{"sonar-pro", "Sonar Pro", 200000, 8192},
 		{"sonar-reasoning", "Sonar Reasoning", 127072, 8192},
@@ -58,7 +64,10 @@ func PerplexityModels(prov string) []provider.ModelInfo {
 // NVIDIAModels for integrate.api.nvidia.com (curated; discovery augments).
 func NVIDIAModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"meta/llama-3.1-405b-instruct", "Llama 3.1 405B Instruct", 131072, 8192},
 		{"meta/llama-3.1-70b-instruct", "Llama 3.1 70B Instruct", 131072, 8192},
 		{"meta/llama-3.1-8b-instruct", "Llama 3.1 8B Instruct", 131072, 8192},
@@ -70,7 +79,10 @@ func NVIDIAModels(prov string) []provider.ModelInfo {
 // CohereModels for api.cohere.com v2-compatible chat.
 func CohereModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"command-r-plus", "Command R+", 128000, 4096},
 		{"command-r", "Command R", 128000, 4096},
 		{"command-a-reasoning-08-2025", "Command A Reasoning", 256000, 8192},
@@ -81,7 +93,10 @@ func CohereModels(prov string) []provider.ModelInfo {
 // TogetherModels fallback list when /v1/models is empty.
 func TogetherModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Instruct Turbo", 131072, 8192},
 		{"meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", "Llama 3.1 405B Instruct Turbo", 131072, 8192},
 		{"Qwen/Qwen2.5-72B-Instruct-Turbo", "Qwen 2.5 72B Instruct Turbo", 131072, 8192},
@@ -92,7 +107,10 @@ func TogetherModels(prov string) []provider.ModelInfo {
 // OpenRouterModels fallback rows when the API returns few models.
 func OpenRouterModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}
-	rows := []struct{ id, name string; ctx, max int }{
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
 		{"openai/gpt-4o", "OpenAI GPT-4o", 128000, 16384},
 		{"openai/gpt-4o-mini", "OpenAI GPT-4o Mini", 128000, 16384},
 		{"anthropic/claude-3.5-sonnet", "Anthropic Claude 3.5 Sonnet", 200000, 8192},

@@ -195,11 +195,11 @@ func (t *githubReviewPRTool) Execute(ctx context.Context, input json.RawMessage)
 	}
 
 	out := map[string]any{
-		"review_id":       resp.ID,
-		"review_url":      resp.HTMLURL,
-		"verdict":         event,
-		"inline_comments": len(comments),
-		"findings_total":  len(findings),
+		"review_id":        resp.ID,
+		"review_url":       resp.HTMLURL,
+		"verdict":          event,
+		"inline_comments":  len(comments),
+		"findings_total":   len(findings),
 		"findings_skipped": len(skipped),
 	}
 	b, _ := json.Marshal(out)

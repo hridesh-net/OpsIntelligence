@@ -18,6 +18,7 @@ var coreSlugs = []string{
 	"list_dir",
 	"grep",
 	"memory_search",
+	"fact_check",
 	"web_search",
 	// discovery tools — always on so the agent can find anything
 	"find_tools",

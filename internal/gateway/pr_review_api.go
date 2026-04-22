@@ -47,7 +47,7 @@ func NewPRReviewAdapter(h *tools.PRReviewCmdHandler) *prReviewAdapter {
 // ── /api/v1/pr-reviews ───────────────────────────────────────────────────────
 
 type prReviewListResponse struct {
-	MaxConcurrent int              `json:"max_concurrent"`
+	MaxConcurrent int                `json:"max_concurrent"`
 	Tasks         []prReviewTaskJSON `json:"tasks"`
 }
 

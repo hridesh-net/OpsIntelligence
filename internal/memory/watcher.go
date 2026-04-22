@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opsintelligence/opsintelligence/internal/embeddings"
 	"github.com/fsnotify/fsnotify"
+	"github.com/opsintelligence/opsintelligence/internal/embeddings"
 )
 
 // Watch scans the workspaceDir for changes and updates the memory index in real-time.

@@ -8,8 +8,8 @@
 //   - GET  /dashboard/login          → password / OIDC sign-in form
 //   - GET  /dashboard/app#/overview  → signed-in dashboard
 //   - GET  /dashboard/app#/settings/<section>
-//                                   → live editor backed by
-//                                     /api/v1/config/<section>
+//     → live editor backed by
+//     /api/v1/config/<section>
 //
 // The dashboard talks to the gateway only over the public auth/config
 // JSON APIs — no privileged direct access. Session cookies, CSRF and

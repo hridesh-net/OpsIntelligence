@@ -61,17 +61,17 @@ func TestChannelError_kindAndWrapping(t *testing.T) {
 func TestInboundEvent_fields(t *testing.T) {
 	t.Helper()
 	ev := InboundEvent{
-		ID:        "m1",
-		ChannelID: "telegram",
-		SessionID: "tg:1",
-		OccurredAt: time.Now().UTC(),
-		Sender:    SenderRef{ID: "u1", Username: "a"},
-		Recipient: RecipientRef{ID: "c1", Kind: "dm"},
-		Text:      "hello",
-		Parts:     []provider.ContentPart{{Type: provider.ContentTypeText, Text: "hello"}},
-		ThreadRef: &ThreadRef{ID: "t1"},
+		ID:          "m1",
+		ChannelID:   "telegram",
+		SessionID:   "tg:1",
+		OccurredAt:  time.Now().UTC(),
+		Sender:      SenderRef{ID: "u1", Username: "a"},
+		Recipient:   RecipientRef{ID: "c1", Kind: "dm"},
+		Text:        "hello",
+		Parts:       []provider.ContentPart{{Type: provider.ContentTypeText, Text: "hello"}},
+		ThreadRef:   &ThreadRef{ID: "t1"},
 		Attachments: []Attachment{{ID: "f1", Kind: "image", MimeType: "image/png"}},
-		Metadata:  map[string]string{"raw_chat_id": "1"},
+		Metadata:    map[string]string{"raw_chat_id": "1"},
 	}
 	if ev.Parts[0].Text != "hello" {
 		t.Fatal("parts")

@@ -26,11 +26,11 @@ var (
 
 // Channel implements [channels.Channel] and [adapter.Adapter] for Slack Socket Mode.
 type Channel struct {
-	client    *socketmode.Client
-	stopCh    chan struct{}
-	stopOnce  sync.Once
-	dmMode    string
-	allowFrom []string
+	client       *socketmode.Client
+	stopCh       chan struct{}
+	stopOnce     sync.Once
+	dmMode       string
+	allowFrom    []string
 	reliableSend *adapter.ReliableSender
 }
 

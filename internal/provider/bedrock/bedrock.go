@@ -122,7 +122,7 @@ func (p *Provider) ValidateModel(ctx context.Context, modelID string) error {
 			return nil
 		}
 	}
-	
+
 	return &provider.ProviderError{
 		Provider:   providerName,
 		StatusCode: http.StatusNotFound,

@@ -212,6 +212,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		mempalaceCmd(flags),
 		toolsCmd(flags),
 		localIntelCmd(flags),
+		quickstartCmd(flags),
 		extensionsCmd(flags),
 		gatewayCmd(flags),
 		onboardCmd(flags),
@@ -1509,6 +1510,19 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 	}
 
+	// Register fact_check: anti-hallucination tool that grounds claims against semantic memory.
+	// Only active when an embedding provider is configured.
+	if _, hasEmbed := embedReg.Default(); hasEmbed {
+		toolReg.Register(tools.FactCheckTool{
+			EmbedFn: func(embedCtx context.Context, text string) ([]float32, error) {
+				return embedReg.EmbedQuery(embedCtx, text)
+			},
+			SearchFn: func(searchCtx context.Context, vec []float32, limit int) ([]memory.Document, error) {
+				return memMgr.Semantic.SearchWithModel(searchCtx, vec, limit)
+			},
+		})
+	}
+
 	for _, t := range tools.DevOpsTools(cfg.DevOps, p, modelInfo.ID) {
 		toolReg.Register(t)
 		log.Info("devops tool registered", zap.String("tool", t.Definition().Name))
@@ -2027,7 +2041,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	}
 
 	// Interactive REPL mode
-	return runREPL(ctx, runner, log)
+	return runREPL(ctx, runner, modelInfo.ID, log)
 }
 
 // extractBundledSkills copies the repo's skills/ directory into destDir (bundled dir).
@@ -2474,7 +2488,7 @@ func (h *cliStreamHandler) OnError(err error) { h.done <- err }
 
 // runREPL launches the interactive agent REPL.
 // It now uses the futuristic bubbletea TUI from cmd/opsintelligence/tui.
-func runREPL(ctx context.Context, r *agent.Runner, log *zap.Logger) error {
+func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger) error {
 	// Count providers and skills for the banner
 	providerCount := 1 // at least one is configured or we wouldn't be here
 	skillCount := 0
@@ -2490,7 +2504,7 @@ func runREPL(ctx context.Context, r *agent.Runner, log *zap.Logger) error {
 
 	// Wrap agent.Runner as tui.AgentRunner
 	a := &agentRunnerAdapter{runner: r}
-	return tui.RunREPL(ctx, a, version, providerCount, skillCount)
+	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID)
 }
 
 // agentRunnerAdapter wraps agent.Runner to satisfy tui.AgentRunner.
@@ -2499,22 +2513,36 @@ type agentRunnerAdapter struct {
 }
 
 func (a *agentRunnerAdapter) SessionID() string { return a.runner.SessionID() }
-func (a *agentRunnerAdapter) Run(ctx context.Context, msg string) (*tui.RunResult, error) {
-	res, err := a.runner.Run(ctx, memory.Message{
+
+// RunStream dispatches the user message via agent.Runner.RunStream and bridges
+// agent.StreamHandler events to tui.AgentStreamHandler.
+func (a *agentRunnerAdapter) RunStream(ctx context.Context, msg string, handler tui.AgentStreamHandler) {
+	a.runner.RunStream(ctx, memory.Message{
 		ID:        uuid.New().String(),
 		SessionID: a.runner.SessionID(),
 		Role:      memory.RoleUser,
 		Content:   msg,
 		CreatedAt: time.Now(),
-	})
-	if err != nil || res == nil {
-		return nil, err
+	}, &runnerStreamBridge{h: handler})
+}
+
+// runnerStreamBridge adapts agent.StreamHandler → tui.AgentStreamHandler.
+type runnerStreamBridge struct{ h tui.AgentStreamHandler }
+
+func (b *runnerStreamBridge) OnToken(t string)                       { b.h.OnToken(t) }
+func (b *runnerStreamBridge) OnToolCall(n string, i json.RawMessage) { b.h.OnToolCall(n, i) }
+func (b *runnerStreamBridge) OnToolResult(n, r string)               { b.h.OnToolResult(n, r) }
+func (b *runnerStreamBridge) OnDone(res *agent.RunResult) {
+	if res == nil {
+		b.h.OnDone(nil)
+		return
 	}
-	return &tui.RunResult{
+	b.h.OnDone(&tui.RunResult{
 		Iterations: res.Iterations,
 		Usage:      struct{ TotalTokens int }{TotalTokens: res.Usage.TotalTokens},
-	}, nil
+	})
 }
+func (b *runnerStreamBridge) OnError(err error) { b.h.OnError(err) }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

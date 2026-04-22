@@ -43,7 +43,7 @@ func New(cfg Config, httpClient devops.HTTPDoer) *Client {
 type Job struct {
 	Name          string `json:"name"`
 	URL           string `json:"url"`
-	Color         string `json:"color"`   // blue=success, red=failed, yellow=unstable, aborted, etc.
+	Color         string `json:"color"` // blue=success, red=failed, yellow=unstable, aborted, etc.
 	Buildable     bool   `json:"buildable"`
 	LastBuild     *Build `json:"lastBuild"`
 	LastCompleted *Build `json:"lastCompletedBuild"`
@@ -53,7 +53,7 @@ type Job struct {
 type Build struct {
 	Number    int    `json:"number"`
 	URL       string `json:"url"`
-	Result    string `json:"result"`    // SUCCESS, FAILURE, UNSTABLE, ABORTED
+	Result    string `json:"result"` // SUCCESS, FAILURE, UNSTABLE, ABORTED
 	Building  bool   `json:"building"`
 	Duration  int64  `json:"duration"`  // ms
 	Timestamp int64  `json:"timestamp"` // epoch ms

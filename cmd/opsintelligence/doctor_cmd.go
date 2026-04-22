@@ -388,4 +388,3 @@ func pingSlack(ctx context.Context, cfg *config.Config, channelTimeout time.Dura
 		Message:  "Slack: token prefixes OK; auth.test succeeded (workspace + socket credentials).",
 	}}
 }
-

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,46 +16,59 @@ import (
 )
 
 // ─────────────────────────────────────────────
-// Tea Messages
+// Public interfaces
 // ─────────────────────────────────────────────
 
-type agentTokenMsg string
-type agentToolMsg string
-type agentDoneMsg struct{ iterations, tokens int }
-type agentErrMsg error
-
-// pulseMsg drives a slow border / header pulse independent of the spinner.
-type pulseMsg struct{}
-
-// ─────────────────────────────────────────────
-// Agent interface (matches agent.StreamHandler + agent.Runner)
-// ─────────────────────────────────────────────
-
-// RunResult mirrors agent.RunResult for independence from agent package.
+// RunResult mirrors agent.RunResult without creating an import cycle.
 type RunResult struct {
 	Iterations int
 	Usage      struct{ TotalTokens int }
 }
 
-// AgentStreamHandler is the interface the REPL bridge must satisfy.
-// It matches agent.StreamHandler exactly.
+// AgentStreamHandler receives streaming events from the runner.
+// Matches agent.StreamHandler exactly so the adapter in main.go is trivial.
 type AgentStreamHandler interface {
 	OnToken(token string)
 	OnToolCall(name string, input json.RawMessage)
+	OnToolResult(name, result string)
 	OnDone(result *RunResult)
+	OnError(err error)
 }
 
-// AgentRunner is the minimal surface area of agent.Runner needed by the REPL.
+// AgentRunner is the minimal surface the REPL needs from agent.Runner.
 type AgentRunner interface {
 	SessionID() string
-	Run(ctx context.Context, userMessage string) (*RunResult, error)
+	// RunStream dispatches the message and calls handler events as they arrive.
+	// It must not block the caller; the TUI calls it from a goroutine.
+	RunStream(ctx context.Context, msg string, handler AgentStreamHandler)
 }
 
 // ─────────────────────────────────────────────
-// REPL Model
+// Internal Tea messages
 // ─────────────────────────────────────────────
 
-// REPLModel is the bubbletea model for the interactive REPL.
+type agentTokenMsg string
+type agentToolCallMsg struct{ name, snippet string }
+type agentToolResultMsg struct{ name, snippet string }
+type agentDoneMsg struct{ iterations, tokens int }
+type agentErrMsg struct{ err error }
+type pulseMsg struct{}
+
+// ─────────────────────────────────────────────
+// toolEvent — one tool call + its result
+// ─────────────────────────────────────────────
+
+type toolEvent struct {
+	name    string
+	input   string // short param snippet
+	result  string // first line of result
+	pending bool   // result not yet received
+}
+
+// ─────────────────────────────────────────────
+// REPL model
+// ─────────────────────────────────────────────
+
 type REPLModel struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,33 +78,46 @@ type REPLModel struct {
 	textarea textarea.Model
 	spinner  spinner.Model
 
-	history     []string
-	tokenBuf    string
-	currentTool string
-	thinking    bool
-	width       int
-	height      int
-	ready       bool
-	pulseFrame  int
-	sessionID   string
-	version     string
+	// Chat history — rendered, ready for viewport
+	history []string
 
-	// sendMsg is set by RunREPL so the Update loop can call it.
+	// Current streaming turn
+	tokenBuf    string
+	activeTools []toolEvent
+	thinking    bool
+
+	// Input recall (↑ key)
+	sentMessages []string
+	historyIdx   int // -1 = not in recall mode
+
+	// UI dimensions / state
+	width      int
+	height     int
+	ready      bool
+	pulseFrame int
+	sessionID  string
+	version    string
+	modelName  string // shown in footer
+
 	sendMsg func(line string)
 }
 
-// NewREPLModel creates a configured REPL model. sendMsg is called when the
-// user presses Enter; it must dispatch the message to the agent asynchronously.
-func NewREPLModel(ctx context.Context, runner AgentRunner, sessionID, ver string, sendMsg func(string)) *REPLModel {
+// NewREPLModel constructs the model. sendMsg is invoked on Enter; it must not block.
+func NewREPLModel(
+	ctx context.Context,
+	runner AgentRunner,
+	sessionID, ver, modelName string,
+	sendMsg func(string),
+) *REPLModel {
 	ctx, cancel := context.WithCancel(ctx)
 
 	ta := textarea.New()
-	ta.Placeholder = "Message OpsIntelligence..."
+	ta.Placeholder = "Message OpsIntelligence…"
 	ta.Focus()
 	ta.SetWidth(80)
 	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetKeys("ctrl+j") // Ctrl+J = newline; Enter = send
+	ta.KeyMap.InsertNewline.SetKeys("ctrl+j")
 	ta.CharLimit = 4096
 
 	sp := spinner.New()
@@ -98,36 +125,45 @@ func NewREPLModel(ctx context.Context, runner AgentRunner, sessionID, ver string
 	sp.Style = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 
 	return &REPLModel{
-		ctx:       ctx,
-		cancel:    cancel,
-		runner:    runner,
-		textarea:  ta,
-		spinner:   sp,
-		sendMsg:   sendMsg,
-		sessionID: sessionID,
-		version:   ver,
+		ctx:        ctx,
+		cancel:     cancel,
+		runner:     runner,
+		textarea:   ta,
+		spinner:    sp,
+		sendMsg:    sendMsg,
+		sessionID:  sessionID,
+		version:    ver,
+		modelName:  modelName,
+		historyIdx: -1,
 	}
 }
 
 func pulseCmd() tea.Cmd {
-	return tea.Tick(480*time.Millisecond, func(time.Time) tea.Msg {
-		return pulseMsg{}
-	})
+	return tea.Tick(480*time.Millisecond, func(time.Time) tea.Msg { return pulseMsg{} })
 }
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
 
 func (m *REPLModel) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, m.spinner.Tick, pulseCmd())
 }
+
+// ─────────────────────────────────────────────
+// Update
+// ─────────────────────────────────────────────
 
 func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 
+	// ── Resize ─────────────────────────────────
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		vpH := m.height - 10 // header row + chat + input chrome
+		vpH := m.height - inputAreaHeight(m.height)
 		if vpH < 4 {
 			vpH = 4
 		}
@@ -140,55 +176,122 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.textarea.SetWidth(m.width - 8)
 
+	// ── Keyboard ───────────────────────────────
 	case tea.KeyMsg:
 		switch msg.Type {
+
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.cancel()
 			return m, tea.Quit
 
+		// Ctrl+L — clear history
+		case tea.KeyCtrlL:
+			m.history = nil
+			m.tokenBuf = ""
+			m.activeTools = nil
+			m.refreshViewport()
+
+		// Enter — send message
 		case tea.KeyEnter:
 			if !m.thinking {
 				line := strings.TrimSpace(m.textarea.Value())
 				if line != "" {
-					m.appendHistory(UserPrefix.Render("You ›") + " " + line)
+					m.sentMessages = append(m.sentMessages, line)
+					m.historyIdx = -1
+					m.appendHistory(renderUserMsg(line))
+					m.appendHistory("")
 					m.textarea.Reset()
 					m.thinking = true
 					m.tokenBuf = ""
-					m.currentTool = ""
+					m.activeTools = nil
 					m.refreshViewport()
 					if m.sendMsg != nil {
 						m.sendMsg(line)
 					}
 				}
 			}
+
+		// ↑ — recall previous message when textarea is empty
+		case tea.KeyUp:
+			if !m.thinking && m.textarea.Value() == "" && len(m.sentMessages) > 0 {
+				if m.historyIdx == -1 {
+					m.historyIdx = len(m.sentMessages) - 1
+				} else if m.historyIdx > 0 {
+					m.historyIdx--
+				}
+				m.textarea.SetValue(m.sentMessages[m.historyIdx])
+				break
+			}
+			// Otherwise let viewport handle scroll
+			var vc tea.Cmd
+			m.viewport, vc = m.viewport.Update(msg)
+			cmds = append(cmds, vc)
+
+		// ↓ — forward through recall or scroll viewport
+		case tea.KeyDown:
+			if !m.thinking && m.historyIdx != -1 {
+				if m.historyIdx < len(m.sentMessages)-1 {
+					m.historyIdx++
+					m.textarea.SetValue(m.sentMessages[m.historyIdx])
+				} else {
+					m.historyIdx = -1
+					m.textarea.SetValue("")
+				}
+				break
+			}
+			var vc tea.Cmd
+			m.viewport, vc = m.viewport.Update(msg)
+			cmds = append(cmds, vc)
 		}
 
+	// ── Streaming events ───────────────────────
 	case agentTokenMsg:
 		m.tokenBuf += string(msg)
 		m.refreshViewport()
 
-	case agentToolMsg:
+	case agentToolCallMsg:
+		// Flush any partial text before showing a tool call
 		if m.tokenBuf != "" {
 			m.flushToken()
 		}
-		m.currentTool = string(msg)
+		m.activeTools = append(m.activeTools, toolEvent{
+			name:    msg.name,
+			input:   msg.snippet,
+			pending: true,
+		})
+		m.refreshViewport()
+
+	case agentToolResultMsg:
+		// Mark the most-recent pending tool as done
+		for i := len(m.activeTools) - 1; i >= 0; i-- {
+			if m.activeTools[i].pending && m.activeTools[i].name == msg.name {
+				m.activeTools[i].pending = false
+				m.activeTools[i].result = msg.snippet
+				break
+			}
+		}
 		m.refreshViewport()
 
 	case agentDoneMsg:
 		m.flushToken()
-		m.currentTool = ""
+		// Commit completed tool events to history
+		for _, te := range m.activeTools {
+			m.appendHistory(renderToolBlock(te))
+		}
+		m.activeTools = nil
 		m.thinking = false
 		m.appendHistory(Muted.Render(fmt.Sprintf(
-			"   ▸ %d iter · %s tokens", msg.iterations, fmtNum(msg.tokens),
+			"   ▸ %d iter · %s tok", msg.iterations, fmtNum(msg.tokens),
 		)))
 		m.appendHistory("")
 		m.refreshViewport()
 
 	case agentErrMsg:
 		m.flushToken()
-		m.currentTool = ""
+		m.activeTools = nil
 		m.thinking = false
-		m.appendHistory(ErrorStyle.Render("✗ ") + Muted.Render(msg.Error()))
+		m.appendHistory(ErrorStyle.Render("✗ error: ") + Muted.Render(msg.err.Error()))
+		m.appendHistory("")
 		m.refreshViewport()
 
 	case pulseMsg:
@@ -201,12 +304,12 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, sc)
 	}
 
+	// Always update textarea (when not thinking) and viewport
 	if !m.thinking {
 		var tc tea.Cmd
 		m.textarea, tc = m.textarea.Update(msg)
 		cmds = append(cmds, tc)
 	}
-
 	var vc tea.Cmd
 	m.viewport, vc = m.viewport.Update(msg)
 	cmds = append(cmds, vc)
@@ -214,58 +317,126 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// ─────────────────────────────────────────────
+// View
+// ─────────────────────────────────────────────
+
 func (m *REPLModel) View() string {
 	if !m.ready {
-		return "\n  " + Primary.Render("Starting OpsIntelligence...") + "\n"
+		return "\n  " + Primary.Render("Starting OpsIntelligence…") + "\n"
 	}
 
-	// Viewport (chat history)
-	m.viewport.SetContent(m.buildContent())
 	borderCol := PulseBorder(m.pulseFrame)
+	pulseMark := lipgloss.NewStyle().Foreground(borderCol).Bold(true).Render("▶")
+
+	// ── Header bar ─────────────────────────────
+	headerRow := lipgloss.JoinHorizontal(lipgloss.Left,
+		pulseMark, " ",
+		GradientWord("OPSINTELLIGENCE"), " ",
+		CyberBracket("REPL"),
+		Muted.Render("  "+strings.TrimSpace(m.version)+"  ·  "+shortID(m.sessionID)),
+	)
+	headerBar := lipgloss.NewStyle().Width(m.width - 2).Render(headerRow)
+	under := lipgloss.NewStyle().Foreground(ColorBorder).Width(m.width - 2).
+		Render(ScanlineSuffix(minReplScanlineWidth(m.width)))
+
+	// ── Chat viewport ──────────────────────────
+	m.viewport.SetContent(m.buildContent())
 	chatBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderCol).
 		Width(m.width - 2).
 		Render(m.viewport.View())
 
-	pulseMark := lipgloss.NewStyle().Foreground(borderCol).Bold(true).Render("▶")
-	headerRow := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		pulseMark,
-		lipgloss.NewStyle().Render(" "),
-		GradientWord("OPSINTELLIGENCE"),
-		lipgloss.NewStyle().Render(" "),
-		CyberBracket("REPL"),
-		Muted.Render("  "+strings.TrimSpace(m.version)+"  ·  session "+shortID(m.sessionID)),
-	)
-	headerBar := lipgloss.NewStyle().
-		Width(m.width-2).
-		Padding(0, 0, 0, 0).
-		Render(headerRow)
-	under := lipgloss.NewStyle().Foreground(ColorBorder).Width(m.width - 2).Render(ScanlineSuffix(minReplScanlineWidth(m.width)))
-
-	// Status footer
-	var footer string
-	if m.thinking {
-		tool := ""
-		if m.currentTool != "" {
-			tool = "  " + ToolBadge.Render("⚡ "+m.currentTool)
-		}
-		footer = m.spinner.View() + Neon.Render(" · ") + Muted.Render("thinking") + tool
-	} else {
-		footer = Muted.Render("↵ send  ·  Ctrl+J newline  ·  ↑↓ scroll  ·  ESC quit")
-	}
-
-	// Input box
+	// ── Input + footer ─────────────────────────
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderTop(true).
 		BorderForeground(ColorBorder).
 		Width(m.width-2).
 		Padding(0, 1).
-		Render(Primary.Render("›") + " " + m.textarea.View() + "\n  " + footer)
+		Render(Primary.Render("›") + " " + m.textarea.View() + "\n  " + m.renderFooter())
 
 	return lipgloss.JoinVertical(lipgloss.Left, headerBar, under, chatBox, inputBox)
+}
+
+// renderFooter builds the context-sensitive hint line below the input.
+func (m *REPLModel) renderFooter() string {
+	if m.thinking {
+		toolHint := ""
+		for i := len(m.activeTools) - 1; i >= 0; i-- {
+			te := m.activeTools[i]
+			if te.pending {
+				toolHint = "  " + ToolBadge.Render("⚡ "+te.name)
+				if te.input != "" {
+					toolHint += Muted.Render(" " + te.input)
+				}
+				break
+			}
+		}
+		return m.spinner.View() + Neon.Render(" · ") + Muted.Render("thinking") + toolHint
+	}
+
+	model := ""
+	if m.modelName != "" {
+		model = Muted.Render("  ·  ") + Muted.Render(m.modelName)
+	}
+	return Muted.Render("↵ send  ·  ctrl+j newline  ·  ↑ recall  ·  ctrl+l clear  ·  esc quit") + model
+}
+
+// ─────────────────────────────────────────────
+// Content builder
+// ─────────────────────────────────────────────
+
+func (m *REPLModel) buildContent() string {
+	var sb strings.Builder
+
+	// Committed history lines
+	for _, l := range m.history {
+		sb.WriteString(l + "\n")
+	}
+
+	// In-flight agent text (streaming)
+	if m.tokenBuf != "" {
+		sb.WriteString(AgentPrefix.Render("◈") + " " + renderMarkdown(m.tokenBuf))
+	}
+
+	// Active tool events (pending result)
+	for _, te := range m.activeTools {
+		if te.pending {
+			sb.WriteString("\n" + renderToolPending(te.name, te.input, m.spinner.View()))
+		} else {
+			sb.WriteString("\n" + renderToolBlock(te))
+		}
+	}
+
+	return sb.String()
+}
+
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+
+func (m *REPLModel) appendHistory(line string) { m.history = append(m.history, line) }
+
+func (m *REPLModel) flushToken() {
+	if m.tokenBuf != "" {
+		m.appendHistory(AgentPrefix.Render("◈") + " " + renderMarkdown(m.tokenBuf))
+		m.tokenBuf = ""
+	}
+}
+
+func (m *REPLModel) refreshViewport() {
+	m.viewport.SetContent(m.buildContent())
+	m.viewport.GotoBottom()
+}
+
+// inputAreaHeight returns how many rows to reserve for the input panel.
+func inputAreaHeight(termH int) int {
+	if termH < 20 {
+		return 6
+	}
+	return 8
 }
 
 func minReplScanlineWidth(termW int) int {
@@ -279,33 +450,6 @@ func minReplScanlineWidth(termW int) int {
 	return w
 }
 
-func (m *REPLModel) buildContent() string {
-	var sb strings.Builder
-	for _, l := range m.history {
-		sb.WriteString(l + "\n")
-	}
-	if m.tokenBuf != "" {
-		sb.WriteString(AgentPrefix.Render("🤖") + " " + m.tokenBuf)
-	}
-	if m.currentTool != "" {
-		sb.WriteString("\n" + ToolBadge.Render("  ⚡ "+m.currentTool) + " " + m.spinner.View())
-	}
-	return sb.String()
-}
-
-func (m *REPLModel) appendHistory(line string) { m.history = append(m.history, line) }
-func (m *REPLModel) flushToken() {
-	if m.tokenBuf != "" {
-		m.appendHistory(AgentPrefix.Render("🤖") + " " + m.tokenBuf)
-		m.tokenBuf = ""
-	}
-}
-func (m *REPLModel) refreshViewport() {
-	m.viewport.SetContent(m.buildContent())
-	m.viewport.GotoBottom()
-}
-
-// fmtNum inserts commas into an integer string.
 func fmtNum(n int) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
@@ -322,13 +466,200 @@ func fmtNum(n int) string {
 }
 
 // ─────────────────────────────────────────────
-// RunREPL — entry point called from main.go
+// Message renderers
 // ─────────────────────────────────────────────
 
-// RunREPL starts the futuristic bubbletea REPL.
-// It bridges agent streaming events into the TUI via p.Send().
-func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount, skillCount int) error {
-	// Print banner before entering alt-screen
+func renderUserMsg(line string) string {
+	return UserPrefix.Render("◉ You") + Muted.Render(" › ") + line
+}
+
+// renderToolPending shows an in-flight tool call with spinner.
+func renderToolPending(name, input, spin string) string {
+	label := ToolBadge.Render("  ╭─ " + name)
+	if input != "" {
+		label += Muted.Render(" " + input)
+	}
+	return label + " " + spin
+}
+
+// renderToolBlock shows a completed tool call with result.
+func renderToolBlock(te toolEvent) string {
+	top := ToolBadge.Render("  ╭─ " + te.name)
+	if te.input != "" {
+		top += Muted.Render(" " + te.input)
+	}
+	if te.result == "" {
+		return top + "\n" + ToolBadge.Render("  ╰─ ") + Muted.Render("done")
+	}
+	result := te.result
+	if len(result) > 120 {
+		result = result[:120] + "…"
+	}
+	checkmark := lipgloss.NewStyle().Foreground(ColorCyan).Render("✓")
+	return top + "\n" + ToolBadge.Render("  ╰─ ") + checkmark + " " + Muted.Render(result)
+}
+
+// ─────────────────────────────────────────────
+// Markdown renderer (terminal-safe subset)
+// ─────────────────────────────────────────────
+
+var (
+	codeBlockStyle = lipgloss.NewStyle().
+			Foreground(ColorCyan).
+			Background(ColorSurface).
+			Padding(0, 1)
+	codeLineStyle = lipgloss.NewStyle().
+			Foreground(ColorNeon).
+			Background(ColorSurface)
+	inlineCodeRe = regexp.MustCompile("`([^`]+)`")
+	boldRe       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+)
+
+// renderMarkdown converts a small subset of markdown to lipgloss-styled ANSI.
+// Handles: fenced code blocks, inline code, **bold**, # headers.
+func renderMarkdown(text string) string {
+	lines := strings.Split(text, "\n")
+	var out []string
+	inCode := false
+	codeLang := ""
+
+	for _, line := range lines {
+		// Fenced code block start/end
+		if strings.HasPrefix(line, "```") {
+			if !inCode {
+				inCode = true
+				codeLang = strings.TrimPrefix(line, "```")
+				hint := "code"
+				if codeLang != "" {
+					hint = codeLang
+				}
+				out = append(out, ToolBadge.Render("  ╭─ "+hint))
+			} else {
+				inCode = false
+				codeLang = ""
+				out = append(out, ToolBadge.Render("  ╰─────"))
+			}
+			continue
+		}
+		if inCode {
+			out = append(out, codeLineStyle.Render("  │ "+line))
+			continue
+		}
+
+		// H1/H2 headers
+		if strings.HasPrefix(line, "## ") {
+			out = append(out, Primary.Bold(true).Render(strings.TrimPrefix(line, "## ")))
+			continue
+		}
+		if strings.HasPrefix(line, "# ") {
+			out = append(out, Neon.Bold(true).Render(strings.TrimPrefix(line, "# ")))
+			continue
+		}
+
+		// Inline transforms (bold, inline code)
+		line = boldRe.ReplaceAllStringFunc(line, func(m string) string {
+			inner := boldRe.FindStringSubmatch(m)[1]
+			return lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(inner)
+		})
+		line = inlineCodeRe.ReplaceAllStringFunc(line, func(m string) string {
+			inner := inlineCodeRe.FindStringSubmatch(m)[1]
+			return codeBlockStyle.Render(inner)
+		})
+
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// ─────────────────────────────────────────────
+// tuiStreamBridge — wires agent events → p.Send()
+// ─────────────────────────────────────────────
+
+type tuiStreamBridge struct {
+	prog *tea.Program
+}
+
+func (b *tuiStreamBridge) OnToken(token string) {
+	b.prog.Send(agentTokenMsg(token))
+}
+
+func (b *tuiStreamBridge) OnToolCall(name string, input json.RawMessage) {
+	snippet := snippetFromJSON(input)
+	b.prog.Send(agentToolCallMsg{name: name, snippet: snippet})
+}
+
+func (b *tuiStreamBridge) OnToolResult(name, result string) {
+	snippet := firstLine(result, 120)
+	b.prog.Send(agentToolResultMsg{name: name, snippet: snippet})
+}
+
+func (b *tuiStreamBridge) OnDone(r *RunResult) {
+	iters, toks := 0, 0
+	if r != nil {
+		iters = r.Iterations
+		toks = r.Usage.TotalTokens
+	}
+	b.prog.Send(agentDoneMsg{iterations: iters, tokens: toks})
+}
+
+func (b *tuiStreamBridge) OnError(err error) {
+	b.prog.Send(agentErrMsg{err: err})
+}
+
+// snippetFromJSON extracts a compact param string from a tool input JSON object.
+// E.g. {"path":"/tmp/foo","limit":100} → "path=/tmp/foo"
+func snippetFromJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	priority := []string{"path", "command", "query", "url", "file", "repo", "owner", "name", "id"}
+	for _, k := range priority {
+		if v, ok := m[k]; ok {
+			s := fmt.Sprintf("%v", v)
+			if len(s) > 60 {
+				s = s[:60] + "…"
+			}
+			return k + "=" + s
+		}
+	}
+	// Fallback: first key
+	for k, v := range m {
+		s := fmt.Sprintf("%v", v)
+		if len(s) > 60 {
+			s = s[:60] + "…"
+		}
+		return k + "=" + s
+	}
+	return ""
+}
+
+// firstLine returns the first non-empty line of s, capped at max runes.
+func firstLine(s string, max int) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		rs := []rune(line)
+		if len(rs) > max {
+			return string(rs[:max]) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
+// ─────────────────────────────────────────────
+// RunREPL — entry point
+// ─────────────────────────────────────────────
+
+// RunREPL starts the bubbletea REPL.
+// modelName is the active model string shown in the footer (pass "" to omit).
+func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount, skillCount int, modelName string) error {
 	fmt.Print(RenderBanner(ver, runner.SessionID(), providerCount, skillCount))
 	fmt.Println()
 
@@ -337,22 +668,11 @@ func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount,
 	sendMsg := func(line string) {
 		go func() {
 			bridge := &tuiStreamBridge{prog: p}
-			result, err := runner.Run(ctx, line)
-			if err != nil {
-				p.Send(agentErrMsg(err))
-				return
-			}
-			if result != nil {
-				p.Send(agentDoneMsg{
-					iterations: result.Iterations,
-					tokens:     result.Usage.TotalTokens,
-				})
-			}
-			_ = bridge // satisfies compiler; bridge not used in non-streaming fallback
+			runner.RunStream(ctx, line, bridge)
 		}()
 	}
 
-	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, sendMsg)
+	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, modelName, sendMsg)
 	p = tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
@@ -361,16 +681,4 @@ func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount,
 	)
 	_, err := p.Run()
 	return err
-}
-
-// tuiStreamBridge forwards agent events to the tea.Program via p.Send().
-// Kept for future streaming integration — currently Run() is used fallback.
-type tuiStreamBridge struct {
-	prog *tea.Program
-}
-
-func (b *tuiStreamBridge) OnToken(token string)                      { b.prog.Send(agentTokenMsg(token)) }
-func (b *tuiStreamBridge) OnToolCall(name string, _ json.RawMessage) { b.prog.Send(agentToolMsg(name)) }
-func (b *tuiStreamBridge) OnDone(r *RunResult) {
-	b.prog.Send(agentDoneMsg{iterations: r.Iterations, tokens: r.Usage.TotalTokens})
 }

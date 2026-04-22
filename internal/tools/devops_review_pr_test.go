@@ -36,8 +36,8 @@ func (s *stubProvider) Stream(_ context.Context, _ *provider.CompletionRequest) 
 	close(ch)
 	return ch, nil
 }
-func (s *stubProvider) ListModels(_ context.Context) ([]provider.ModelInfo, error)  { return nil, nil }
-func (s *stubProvider) HealthCheck(_ context.Context) error                          { return nil }
+func (s *stubProvider) ListModels(_ context.Context) ([]provider.ModelInfo, error) { return nil, nil }
+func (s *stubProvider) HealthCheck(_ context.Context) error                        { return nil }
 func (s *stubProvider) Embed(_ context.Context, _ string, _ string) ([]float32, error) {
 	return nil, nil
 }

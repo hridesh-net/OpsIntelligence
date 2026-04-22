@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/opsintelligence/opsintelligence/internal/cron"
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	"github.com/opsintelligence/opsintelligence/internal/cron"
 )
 
 func cronCmd(gf *globalFlags) *cobra.Command {
@@ -28,7 +28,7 @@ picked up by the background daemon (opsintelligence start or opsintelligence gat
 	cmd.AddCommand(cronListCmd(gf))
 	cmd.AddCommand(cronAddCmd(gf))
 	cmd.AddCommand(cronRemoveCmd(gf))
-	
+
 	return cmd
 }
 
@@ -78,7 +78,7 @@ func cronListCmd(gf *globalFlags) *cobra.Command {
 
 			fmt.Println(header.Render("\n🕒 Persistent Cron Jobs") + dim.Render(fmt.Sprintf("  (%d jobs)", len(jobs))))
 			fmt.Println(dim.Render("─────────────────────────────────────────────────────────────"))
-			
+
 			if len(jobs) == 0 {
 				fmt.Println(dim.Render("  No persistent jobs scheduled."))
 				fmt.Println(dim.Render("  Run: opsintelligence cron add \"@hourly\" \"Review the system logs\""))
@@ -90,7 +90,7 @@ func cronListCmd(gf *globalFlags) *cobra.Command {
 				}
 				w.Flush()
 			}
-			
+
 			if len(cfg.Cron) > 0 {
 				fmt.Println(header.Render("\n⚙️  Static Jobs") + dim.Render(fmt.Sprintf("  (%d jobs from opsintelligence.yaml)", len(cfg.Cron))))
 				fmt.Println(dim.Render("─────────────────────────────────────────────────────────────"))
@@ -114,7 +114,7 @@ func cronAddCmd(gf *globalFlags) *cobra.Command {
 		Short: "Add a new cron job",
 		Example: `  opsintelligence cron add "@hourly" "Check the system for errors"
   opsintelligence cron add "0 9 * * *" "Generate daily report"`,
-		Args:  cobra.ExactArgs(2),
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := buildLogger(gf.logLevel)
 			cfg, err := loadConfig(gf.configPath, log)

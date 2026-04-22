@@ -35,7 +35,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		stateDir := filepath.Join(os.Getenv("HOME"), ".opsintelligence")
 		venvPath = filepath.Join(stateDir, "voice_env")
 	}
-	
+
 	pythonPath := filepath.Join(venvPath, "bin", "python")
 	if os.PathSeparator == '\\' {
 		pythonPath = filepath.Join(venvPath, "Scripts", "python.exe")
@@ -59,7 +59,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	execPath, _ := os.Executable()
 	baseDir := filepath.Dir(execPath)
-	
+
 	// Try local scripts first, then relative to executable
 	scriptsDir := "scripts"
 	if _, err := os.Stat(filepath.Join(scriptsDir, "voice_server.py")); os.IsNotExist(err) {
@@ -80,7 +80,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}()
 
 	log.Printf("voice: internal microservice starting on port %d", d.cfg.ServicePort)
-	
+
 	// Wait for health check
 	return d.waitForReady()
 }
@@ -88,7 +88,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 func (d *Daemon) waitForReady() error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/", d.cfg.ServicePort)
 	client := http.Client{Timeout: 1 * time.Second}
-	
+
 	for i := 0; i < 30; i++ {
 		resp, err := client.Get(url)
 		if err == nil {

@@ -352,8 +352,9 @@ func TestOIDCState_TakeOnceAndExpiry(t *testing.T) {
 
 // TestPostgres_Smoke is gated by OPSINTELLIGENCE_TEST_POSTGRES_DSN so CI
 // without a Postgres instance stays green. Run locally with
-//   OPSINTELLIGENCE_TEST_POSTGRES_DSN='postgres://localhost/opsi_test?sslmode=disable' \
-//     go test ./internal/datastore/...
+//
+//	OPSINTELLIGENCE_TEST_POSTGRES_DSN='postgres://localhost/opsi_test?sslmode=disable' \
+//	  go test ./internal/datastore/...
 func TestPostgres_Smoke(t *testing.T) {
 	dsn := os.Getenv("OPSINTELLIGENCE_TEST_POSTGRES_DSN")
 	if dsn == "" {

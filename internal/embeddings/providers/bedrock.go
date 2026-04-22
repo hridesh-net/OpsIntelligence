@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/opsintelligence/opsintelligence/internal/embeddings"
-	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/opsintelligence/opsintelligence/internal/embeddings"
+	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
 )
 
 type bedrockEmbedder struct {

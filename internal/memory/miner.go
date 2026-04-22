@@ -23,15 +23,15 @@ type MiningOptions struct {
 }
 
 type MiningReport struct {
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	Mode         string    `json:"mode"`
-	Scanned      int       `json:"scanned"`
-	Indexed      int       `json:"indexed"`
-	Skipped      int       `json:"skipped"`
-	Errors       int       `json:"errors"`
-	LastError    string    `json:"last_error,omitempty"`
-	SchemaVersion int      `json:"schema_version"`
+	StartedAt     time.Time `json:"started_at"`
+	FinishedAt    time.Time `json:"finished_at"`
+	Mode          string    `json:"mode"`
+	Scanned       int       `json:"scanned"`
+	Indexed       int       `json:"indexed"`
+	Skipped       int       `json:"skipped"`
+	Errors        int       `json:"errors"`
+	LastError     string    `json:"last_error,omitempty"`
+	SchemaVersion int       `json:"schema_version"`
 }
 
 func (m *Manager) Mine(ctx context.Context, registry *embeddings.Registry, workspaceDir string, opts MiningOptions) (MiningReport, error) {

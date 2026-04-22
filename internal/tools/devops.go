@@ -289,7 +289,7 @@ func (t *githubPRCommentTool) Definition() provider.ToolDef {
 func (t *githubPRCommentTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var a struct {
 		Owner, Repo, Body string
-		Number             int
+		Number            int
 	}
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
@@ -836,7 +836,7 @@ func resolveOwnerRepo(owner, repo, defaultOrg string) (string, string, error) {
 	}
 	owner = strings.TrimSpace(owner)
 	repo = strings.TrimSpace(repo)
-	
+
 	if owner == "" {
 		return "", "", fmt.Errorf("owner is required (no default_org configured)")
 	}

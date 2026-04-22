@@ -118,12 +118,12 @@ type Config struct {
 	EnablePlanning      bool
 	EnableReflection    bool
 	// Enterprise opts into a compact system-prompt posture for high-load installs.
-	Enterprise bool
-	EmbeddingModel      string
-	SessionID           string // The persistent session ID for this runner
-	ChannelID           string // The message channel ID (e.g. "slack")
-	ProviderName        string // Lowercase provider ID for capability detection
-	ToolsProfile        string // "full" or "coding"
+	Enterprise     bool
+	EmbeddingModel string
+	SessionID      string // The persistent session ID for this runner
+	ChannelID      string // The message channel ID (e.g. "slack")
+	ProviderName   string // Lowercase provider ID for capability detection
+	ToolsProfile   string // "full" or "coding"
 	// GatewayPublicBaseURL is e.g. http://127.0.0.1:18790 — used to tell users where /workspace/ files are served.
 	GatewayPublicBaseURL string
 	// ExtensionPromptAppend is optional text from opsintelligence.yaml extensions.prompt_files (markdown fragments).
@@ -138,7 +138,7 @@ type Config struct {
 	RunTraceMode string
 	// EnabledSkillNames lists skills merged into this runner (for run_trace only).
 	EnabledSkillNames []string
-	Palace   PalaceConfig
+	Palace            PalaceConfig
 	// LocalIntel runs optional on-device Gemma before the main model (see opsintelligence.yaml agent.local_intel).
 	LocalIntel LocalIntelRunnerConfig
 }
@@ -374,22 +374,22 @@ Format your response inside <reflexion> tags.
 // WithSession returns a new Runner clone for a specific session ID.
 func (r *Runner) WithSession(sessionID string) *Runner {
 	return &Runner{
-		cfg:           r.cfg,
-		provider:      r.provider,
-		tools:         r.tools,
-		catalog:       r.catalog,
-		memory:        r.memory,
-		working:       r.memory.GetWorking(sessionID),
-		mediaFn:       r.mediaFn,
-		hardware:      r.hardware,
-		guardrail:     r.guardrail,
-		auditLog:      r.auditLog,
-		commands:      r.commands,
-		sessionRunner: true,
-		log:           r.log,
-		sessionID:     sessionID,
-		channelID:     r.channelID,
-		workspaceDir:  r.workspaceDir,
+		cfg:                   r.cfg,
+		provider:              r.provider,
+		tools:                 r.tools,
+		catalog:               r.catalog,
+		memory:                r.memory,
+		working:               r.memory.GetWorking(sessionID),
+		mediaFn:               r.mediaFn,
+		hardware:              r.hardware,
+		guardrail:             r.guardrail,
+		auditLog:              r.auditLog,
+		commands:              r.commands,
+		sessionRunner:         true,
+		log:                   r.log,
+		sessionID:             sessionID,
+		channelID:             r.channelID,
+		workspaceDir:          r.workspaceDir,
 		modelRegistry:         r.modelRegistry,
 		palaceRouter:          r.palaceRouter,
 		systemPromptAugmentor: r.systemPromptAugmentor,
@@ -1198,7 +1198,7 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 	if personaFromWorkspace != "" {
 		identityBlock = personaFromWorkspace
 	} else {
-		identityBlock = `You are **OpsIntelligence** — an autonomous DevOps agent. Your main jobs are **PR review**, **pipelines/CI**, **Sonar**, **incidents**, and **runbooks**. Pull facts with tools (especially devops.*), answer in plain language, stay **read-only** on GitHub/GitLab/Jenkins/Sonar/Slack unless the human clearly confirms a write in the same turn **or** you are in autonomous mode executing a task whose goal is to post a review (in which case `+"`devops.github.review_pr`"+` and `+"`devops.github.submit_review`"+` are pre-authorized — do not ask for confirmation, just post). Follow team Markdown under teams/* and owner policies under POLICIES.md / policies/ in the state directory.`
+		identityBlock = `You are **OpsIntelligence** — an autonomous DevOps agent. Your main jobs are **PR review**, **pipelines/CI**, **Sonar**, **incidents**, and **runbooks**. Pull facts with tools (especially devops.*), answer in plain language, stay **read-only** on GitHub/GitLab/Jenkins/Sonar/Slack unless the human clearly confirms a write in the same turn **or** you are in autonomous mode executing a task whose goal is to post a review (in which case ` + "`devops.github.review_pr`" + ` and ` + "`devops.github.submit_review`" + ` are pre-authorized — do not ask for confirmation, just post). Follow team Markdown under teams/* and owner policies under POLICIES.md / policies/ in the state directory.`
 	}
 
 	base := identityBlock + `
@@ -1268,10 +1268,12 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 		parts = append(parts, r.cfg.SystemPrompt)
 	}
 
-	// Corrective Memory (Lessons Learned from past tasks)
+	// Corrective Memory (Lessons Learned from past tasks) + RAG grounding context.
+	// Both use the same embedding so we only call Embed once per prompt build.
 	if query != "" && r.cfg.EmbeddingModel != "" {
 		emb, err := r.provider.Embed(ctx, r.cfg.EmbeddingModel, query)
 		if err == nil {
+			// ── 1. Past lessons ──────────────────────────────────────────────────
 			lessons, err := r.memory.Semantic.SearchLessons(ctx, emb, 3)
 			if err == nil && len(lessons) > 0 {
 				if r.cfg.Palace.Enabled && !r.cfg.Palace.ShadowOnly && r.cfg.Palace.PromptRouting && r.palaceRouter != nil {
@@ -1299,6 +1301,40 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 					sb.WriteString(fmt.Sprintf("- Task: %s\n  Insight: %s\n", l.Query, l.Insights))
 				}
 				parts = append(parts, sb.String())
+			}
+
+			// ── 2. RAG grounding context (anti-hallucination) ────────────────────
+			// Retrieve semantically relevant documents and inject them so the LLM
+			// has grounded evidence before generating. Claims not supported by this
+			// context or tool outputs should be verified with fact_check or web tools.
+			if docs, docErr := r.memory.Semantic.SearchWithModel(ctx, emb, 5); docErr == nil && len(docs) > 0 {
+				if r.cfg.Palace.Enabled && !r.cfg.Palace.ShadowOnly && r.cfg.Palace.PromptRouting && r.palaceRouter != nil {
+					route := r.palaceRouter.Route(query)
+					if !route.IsZero() {
+						filtered := make([]memory.Document, 0, len(docs))
+						for _, d := range docs {
+							if route.MatchesDocument(d) {
+								filtered = append(filtered, d)
+							}
+						}
+						if len(filtered) > 0 {
+							docs = filtered
+						} else if !r.cfg.Palace.FailOpen {
+							docs = nil
+						}
+					}
+				}
+				if len(docs) > 0 {
+					var sb strings.Builder
+					sb.WriteString("\n## Grounding Context (Retrieved Knowledge)\n")
+					sb.WriteString("Base your response on the evidence below and on tool outputs. " +
+						"Use `fact_check` for any specific claim not covered here.\n\n")
+					for i, d := range docs {
+						sb.WriteString(fmt.Sprintf("**[%d]** score=%.2f source=%s\n%s\n\n",
+							i+1, d.Score, d.Source, truncateUTF8(d.Content, 800)))
+					}
+					parts = append(parts, sb.String())
+				}
 			}
 		}
 	}

@@ -39,7 +39,6 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-
 // Server represents the Gateway HTTP and WebSocket server.
 type Server struct {
 	Hub        *Hub
@@ -52,11 +51,11 @@ type Server struct {
 	Tailscale  struct {
 		Mode string
 	}
-	TS *tsnet.Server
-	Config     *config.Config
-	Gmail      *automation.GmailWatcher
-	Voice      *voice.Daemon
-	Logger     *zap.Logger
+	TS     *tsnet.Server
+	Config *config.Config
+	Gmail  *automation.GmailWatcher
+	Voice  *voice.Daemon
+	Logger *zap.Logger
 
 	// PRReview is the optional PR review pool monitor. When set, the gateway
 	// mounts GET /api/v1/pr-reviews, GET /api/v1/pr-reviews/{id}/events,
@@ -80,14 +79,20 @@ type Server struct {
 	// /dashboard/. Zero value keeps the legacy shared-Bearer-token
 	// behaviour intact so existing deployments keep working.
 	AuthService *AuthService
+
+	// A2ATasks is the task store for the A2A protocol.
+	// Initialised by NewServer; tracks running/completed tasks so peer agents
+	// can poll tasks/get and cancel via tasks/cancel.
+	A2ATasks *A2ATaskStore
 }
 
 // NewServer initializes a new Gateway server on the specified port.
 // maxWebSocketClients is passed to the hub (0 = unlimited concurrent WS clients).
 func NewServer(port, maxWebSocketClients int) *Server {
 	return &Server{
-		Hub:  NewHub(maxWebSocketClients),
-		Port: port,
+		Hub:      NewHub(maxWebSocketClients),
+		Port:     port,
+		A2ATasks: newA2ATaskStore(),
 	}
 }
 
@@ -161,7 +166,6 @@ func (s *Server) Start() error {
 		}
 	}
 
-
 	// ── Phase-2 auth endpoints + dashboard shell ─────────────────────────────
 	// When an AuthService is wired the gateway exposes:
 	//   GET  /api/v1/auth/status
@@ -224,7 +228,6 @@ func (s *Server) Start() error {
 		mux.HandleFunc("/api/v1/pr-reviews/", auth(s.withCorrelation(s.PRReview.handleDetail)))
 	}
 
-
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
 	mux.HandleFunc("/api/chat", auth(s.withCorrelation(s.handleChat)))
 
@@ -232,7 +235,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/ws", s.withCorrelation(func(w http.ResponseWriter, r *http.Request) {
 		serveWs(s.Hub, s.logger(), w, r)
 	}))
-	
+
 	// ── A2A Protocol ──────────────────────────────────────────────────────────
 	mux.HandleFunc("/.well-known/agent.json", s.handleAgentCard)
 	mux.HandleFunc("/api/a2a", s.handleA2A)
@@ -420,7 +423,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			SessionID: sessionID,
 			Role:      memory.RoleUser,
 			Content:   req.Message,
-				CreatedAt: time.Now(),
+			CreatedAt: time.Now(),
 		}, handler)
 	}()
 
@@ -541,7 +544,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// The implementation of 'deliver: true' usually involves the agent itself calling
 	// a message tool, but if we want it automatic, we'd trigger it here.
 	// For now, we return 200 OK.
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
