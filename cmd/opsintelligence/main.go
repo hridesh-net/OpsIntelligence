@@ -42,10 +42,8 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
-	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
-	"github.com/opsintelligence/opsintelligence/internal/repointel"
 	"github.com/opsintelligence/opsintelligence/internal/provider/anthropic"
 	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
 	"github.com/opsintelligence/opsintelligence/internal/provider/catalogs"
@@ -65,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.26" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.25" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -234,7 +232,6 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		versionCmd(flags),
 		localgemmaCmd(flags),
 		prReviewsCmd(flags), // pr-review pool monitoring + control
-		reposCmd(flags),     // repo intelligence: index, scan, users, TUI
 	)
 	return root
 }
@@ -1818,69 +1815,16 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// channelSenders is a live map — entries are added when each channel
 	// starts below, so the handler will see them once channels are active.
 	//
-	// ── Repo Intelligence Manager ─────────────────────────────────────────
-	var repoMgr *repointel.Manager
-	if cfg.RepoIntel.Enabled {
-		riCfg := cfg.RepoIntel
-		registryFile := riCfg.RegistryFile
-		if registryFile == "" {
-			registryFile = "repointel/repos.yaml"
-		}
-		if !filepath.IsAbs(registryFile) {
-			registryFile = filepath.Join(cfg.StateDir, registryFile)
-		}
-		memDir := riCfg.MemoryDir
-		if memDir == "" {
-			memDir = "repointel/memory"
-		}
-		if !filepath.IsAbs(memDir) {
-			memDir = filepath.Join(cfg.StateDir, memDir)
-		}
-		riRouter, riErr := pipeline.NewLLMRouter(pipeline.LLMRouterConfig{
-			Primary:      p,
-			PrimaryModel: modelInfo.ID,
-			PrimaryRPM:   cfg.DevOps.GitHub.PrimaryRPM,
-		}, log)
-		if riErr == nil {
-			maxFiles := riCfg.MaxFilesPerRepo
-			idxr := repointel.NewIndexer(repointel.IndexerConfig{
-				GitHubToken:     cfg.DevOps.GitHub.Token,
-				MemoryDir:       memDir,
-				MaxFilesPerRepo: maxFiles,
-			}, riRouter, log)
-			scnr := repointel.NewScanner(riRouter, log)
-			mgr, mgrErr := repointel.NewManager(repointel.ManagerConfig{
-				RegistryPath: registryFile,
-				MemoryDir:    memDir,
-			}, idxr, scnr, log)
-			if mgrErr == nil {
-				repoMgr = mgr
-				go mgr.Start(ctx)
-				log.Info("repo intelligence manager started", zap.String("registry", registryFile))
-			} else {
-				log.Warn("repo intelligence manager init failed", zap.Error(mgrErr))
-			}
-		}
-	}
-
 	// PRReviewWorkers is read from devops.github.pr_review_workers (default 4).
 	// Excess PR review tasks queue automatically; workers are picked up as
 	// slots free. The handler is stored in the server so the gateway API
 	// and dashboard can inspect and cancel tasks.
 	var prReviewHandler *tools.PRReviewCmdHandler
-	if reviewFn := tools.NewReviewFn(ctx, cfg.DevOps, p, modelInfo.ID, tools.ReviewFnOptions{
-		StateDir:    cfg.StateDir,
-		Log:         log,
-		RepoManager: repoMgr,
-	}); reviewFn != nil {
-		workers := cfg.DevOps.GitHub.PRReviewWorkers
-		if workers <= 0 {
-			workers = 16
-		}
+	if reviewFn := tools.NewReviewFn(cfg.DevOps, p, modelInfo.ID); reviewFn != nil {
 		prReviewHandler = tools.NewPRReviewCmdHandler(
 			reviewFn,
 			channelSenders,
-			workers,
+			cfg.DevOps.GitHub.PRReviewWorkers,
 			log,
 		)
 		runner = runner.WithPRReview(prReviewHandler)
@@ -1894,9 +1838,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		runner = runner.WithSystemPromptAugmentor(func(_ context.Context) string {
 			return prReviewHandler.Dashboard()
 		})
-		log.Info("pr-review pipeline active (enterprise mode)",
-			zap.Int("max_workers", workers),
-			zap.Int("primary_rpm", cfg.DevOps.GitHub.PrimaryRPM),
+		log.Info("pr-review pool active",
+			zap.Int("max_workers", cfg.DevOps.GitHub.PRReviewWorkers),
 		)
 	}
 
@@ -2109,8 +2052,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv.Version = version
 		srv.Config = cfg
 		srv.Logger = log
-		srv.PRReview = gateway.NewPRReviewAdapter(prReviewHandler)       // exposes /api/v1/pr-reviews on the dashboard
-		srv.RepoIntel = gateway.NewRepoIntelAdapter(repoMgr)             // exposes /api/v1/repos/* when enabled
+		srv.PRReview = gateway.NewPRReviewAdapter(prReviewHandler) // exposes /api/v1/pr-reviews on the dashboard
 		if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
 			return err
 		} else if waReg != nil {
