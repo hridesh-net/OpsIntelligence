@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/localintel"
@@ -85,8 +86,27 @@ See doc/runbooks/doctor-config-validation.md and doc/runbooks/doctor-json-schema
 				if err := enc.Encode(out); err != nil {
 					return err
 				}
-			} else {
+			} else if noInput {
 				fmt.Fprint(cmd.OutOrStdout(), formatDoctorTextOutput(checks))
+			} else {
+				// Run interactive dashboard
+				runCheck := func() []tui.DoctorCheck {
+					// We already collected some checks (config issues), and now run the rest
+					all := runDoctorChecks(ctx, cfg, skipNetwork, flags.logLevel, channelTimeout)
+					total := append(checks, all...)
+					tuiChecks := make([]tui.DoctorCheck, len(total))
+					for i, c := range total {
+						tuiChecks[i] = tui.DoctorCheck{
+							ID:       c.ID,
+							Severity: c.Severity,
+							Message:  c.Message,
+						}
+					}
+					return tuiChecks
+				}
+				if err := tui.RunDoctor(runCheck); err != nil {
+					return err
+				}
 			}
 
 			if exit != 0 {

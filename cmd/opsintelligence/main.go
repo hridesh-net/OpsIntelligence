@@ -227,6 +227,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		datastoreCmd(flags),
 		adminCmd(flags),
 		doctorCmd(flags),
+		monitorCmd(flags),
 		guidesCmd(flags),
 		versionCmd(flags),
 		localgemmaCmd(flags),
@@ -1561,6 +1562,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// Register find_tools (the Anthropic-pattern tool discovery tool).
 	toolReg.Register(tools.FindToolsTool{Catalog: catalog})
 
+	// Register new Discovery & Visibility tools (always available, bypass smart routing later).
+	for _, t := range tools.DiagnosticTools(cfg.DevOps) {
+		toolReg.Register(t)
+	}
+	for _, t := range tools.SystemTools(toolReg) {
+		toolReg.Register(t)
+	}
+
 	// Register skill_graph_index (on-demand skill node discovery).
 	// activeSkillNames is already populated above (cfg.Agent.EnabledSkills or all loaded skills).
 	toolReg.Register(&skills.SkillGraphIndexTool{
@@ -1632,6 +1641,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			SmartRouting:          cfg.Agent.LocalIntel.SmartRouting,
 			SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 		},
+		DevOps: cfg.DevOps,
 		Palace: agent.PalaceConfig{
 			Enabled:             cfg.Agent.Palace.Enabled,
 			ShadowOnly:          cfg.Agent.Palace.ShadowOnly,

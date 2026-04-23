@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/opsintelligence/opsintelligence/internal/devops/github"
+	"github.com/opsintelligence/opsintelligence/internal/devops/sandbox"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
 
@@ -29,6 +30,7 @@ type githubReviewPRTool struct {
 	prov             provider.Provider
 	model            string
 	allowDraftReview bool // from devops.github.allow_draft_review
+	sandbox          *sandbox.Runner // nil = pipeline sandbox disabled
 }
 
 func (t *githubReviewPRTool) Definition() provider.ToolDef {
@@ -130,8 +132,15 @@ func (t *githubReviewPRTool) Execute(ctx context.Context, input json.RawMessage)
 	// Build the annotated diff string and the valid-lines index simultaneously.
 	annotated, validLines := buildAnnotatedDiff(files)
 
+	// ── Step 2.5: run CI pipeline sandbox (optional) ─────────────────────────
+	var sandboxResult *sandbox.Result
+	if t.sandbox != nil {
+		sandboxResult, _ = t.sandbox.Run(ctx, a.Owner, a.Repo, pr.Head.Ref)
+		// errors are non-fatal; sandboxResult.Skipped=true on soft failures
+	}
+
 	// ── Step 3: call LLM for analysis ────────────────────────────────────────
-	findings, err := t.analyzeWithLLM(ctx, pr, annotated, a.Focus)
+	findings, err := t.analyzeWithLLM(ctx, pr, annotated, a.Focus, sandboxResult)
 	if err != nil {
 		return "", fmt.Errorf("review_pr: llm analysis: %w", err)
 	}
@@ -168,7 +177,7 @@ func (t *githubReviewPRTool) Execute(ctx context.Context, input json.RawMessage)
 	}
 
 	// ── Step 5: decide verdict & compose top-level body ───────────────────────
-	event, body := buildVerdict(findings, skipped, pr, a.Owner, a.Repo)
+	event, body := buildVerdict(findings, skipped, pr, a.Owner, a.Repo, sandboxResult)
 
 	// ── Step 6: dry-run short-circuit ────────────────────────────────────────
 	if a.DryRun {
@@ -355,6 +364,7 @@ func (t *githubReviewPRTool) analyzeWithLLM(
 	pr *github.PullRequest,
 	annotatedDiff string,
 	focus string,
+	pipelineResult *sandbox.Result,
 ) ([]prFinding, error) {
 	focusLine := "general code quality"
 	if strings.TrimSpace(focus) != "" {
@@ -369,6 +379,9 @@ func (t *githubReviewPRTool) analyzeWithLLM(
 		truncateStr(pr.Body, 1500),
 		annotatedDiff,
 	)
+	if pipelineResult != nil && !pipelineResult.Skipped {
+		userMsg += "\n\n" + sandbox.FormatForLLM(pipelineResult)
+	}
 
 	req := &provider.CompletionRequest{
 		Model:        t.model,
@@ -435,7 +448,7 @@ func capitalise(s string) string {
 
 // buildVerdict decides the review event (APPROVE / REQUEST_CHANGES / COMMENT)
 // and composes the top-level review body based on the findings.
-func buildVerdict(findings []prFinding, skipped []string, pr *github.PullRequest, owner, repo string) (event, body string) {
+func buildVerdict(findings []prFinding, skipped []string, pr *github.PullRequest, owner, repo string, pipelineResult *sandbox.Result) (event, body string) {
 	var criticals, highs, mediums, nits int
 	for _, f := range findings {
 		switch strings.ToLower(f.Severity) {
@@ -495,6 +508,14 @@ func buildVerdict(findings []prFinding, skipped []string, pr *github.PullRequest
 			sb.WriteString(fmt.Sprintf("- %s\n", s))
 		}
 		sb.WriteString("</details>\n")
+	}
+
+	if pipelineResult != nil && !pipelineResult.Skipped {
+		sb.WriteString(sandbox.FormatForReviewBody(pipelineResult))
+		// Pipeline failure: don't approve even if LLM finds no code issues
+		if !pipelineResult.Succeeded && event == "APPROVE" {
+			event = "COMMENT"
+		}
 	}
 
 	sb.WriteString("\n---\n🤖 Generated with [OpsIntelligence](https://github.com/hridesh-net/OpsIntelligence) · `devops.github.review_pr`\n")

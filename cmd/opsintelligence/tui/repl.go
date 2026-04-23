@@ -100,6 +100,7 @@ type REPLModel struct {
 	modelName  string // shown in footer
 
 	sendMsg func(line string)
+	banner  string
 }
 
 // NewREPLModel constructs the model. sendMsg is invoked on Enter; it must not block.
@@ -107,6 +108,7 @@ func NewREPLModel(
 	ctx context.Context,
 	runner AgentRunner,
 	sessionID, ver, modelName string,
+	providerCount, skillCount int,
 	sendMsg func(string),
 ) *REPLModel {
 	ctx, cancel := context.WithCancel(ctx)
@@ -135,6 +137,7 @@ func NewREPLModel(
 		version:    ver,
 		modelName:  modelName,
 		historyIdx: -1,
+		banner:     RenderBanner(ver, sessionID, providerCount, skillCount),
 	}
 }
 
@@ -147,6 +150,8 @@ func pulseCmd() tea.Cmd {
 // ─────────────────────────────────────────────
 
 func (m *REPLModel) Init() tea.Cmd {
+	// Seed the banner into history on first frame
+	m.appendHistory(m.banner)
 	return tea.Batch(textarea.Blink, m.spinner.Tick, pulseCmd())
 }
 
@@ -660,9 +665,6 @@ func firstLine(s string, max int) string {
 // RunREPL starts the bubbletea REPL.
 // modelName is the active model string shown in the footer (pass "" to omit).
 func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount, skillCount int, modelName string) error {
-	fmt.Print(RenderBanner(ver, runner.SessionID(), providerCount, skillCount))
-	fmt.Println()
-
 	var p *tea.Program
 
 	sendMsg := func(line string) {
@@ -672,7 +674,7 @@ func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount,
 		}()
 	}
 
-	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, modelName, sendMsg)
+	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, modelName, providerCount, skillCount, sendMsg)
 	p = tea.NewProgram(
 		model,
 		tea.WithAltScreen(),

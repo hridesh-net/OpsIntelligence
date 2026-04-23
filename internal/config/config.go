@@ -266,10 +266,11 @@ type OIDCConfig struct {
 
 // DevOpsConfig groups the built-in DevOps platform integrations.
 type DevOpsConfig struct {
-	GitHub  GitHubConfig  `yaml:"github"`
-	GitLab  GitLabConfig  `yaml:"gitlab"`
-	Jenkins JenkinsConfig `yaml:"jenkins"`
-	Sonar   SonarConfig   `yaml:"sonar"`
+	GitHub   GitHubConfig   `yaml:"github"`
+	GitLab   GitLabConfig   `yaml:"gitlab"`
+	Jenkins  JenkinsConfig  `yaml:"jenkins"`
+	Sonar    SonarConfig    `yaml:"sonar"`
+	Pipeline PipelineConfig `yaml:"pipeline"`
 }
 
 // GitHubConfig configures GitHub access for PR review and Actions monitoring.
@@ -314,6 +315,41 @@ type SonarConfig struct {
 	Token            string `yaml:"token"`
 	TokenEnv         string `yaml:"token_env"`
 	ProjectKeyPrefix string `yaml:"project_key_prefix"`
+}
+
+// PipelineConfig configures CI pipeline sandbox execution during PR reviews.
+// When Enabled is true, the review tool detects CI config files on the PR's
+// head branch and runs the pipeline in a local Docker-based sandbox.
+type PipelineConfig struct {
+	// Enabled gates all sandbox execution. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// TimeoutSeconds caps each sandbox run. Default 600 (10 minutes).
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+
+	// ActPath is the path to the `act` binary (nektos/act) for GitHub Actions.
+	// When empty, $PATH is searched.
+	ActPath string `yaml:"act_path"`
+
+	// ActRunnerImage is the Docker image used by act for GitHub Actions.
+	// Default: catthehacker/ubuntu:act-latest (recommended minimal image).
+	ActRunnerImage string `yaml:"act_runner_image"`
+
+	// GitLabRunnerPath is the path to the `gitlab-runner` binary.
+	// When empty, $PATH is searched.
+	GitLabRunnerPath string `yaml:"gitlab_runner_path"`
+
+	// CircleCIPath is the path to the `circleci` binary.
+	// When empty, $PATH is searched.
+	CircleCIPath string `yaml:"circleci_path"`
+
+	// FallbackImage is the Docker image for the YAML-parse fallback runner.
+	// Default: alpine:latest
+	FallbackImage string `yaml:"fallback_image"`
+
+	// RequireDocker makes sandbox execution fail the review when Docker is
+	// unavailable. Default false (sandbox is skipped gracefully).
+	RequireDocker bool `yaml:"require_docker"`
 }
 
 // TeamsConfig selects the active team and where team directories live.
@@ -1145,6 +1181,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.DevOps.GitHub.BaseURL == "" {
 		cfg.DevOps.GitHub.BaseURL = "https://api.github.com"
+	}
+	if cfg.DevOps.Pipeline.TimeoutSeconds == 0 {
+		cfg.DevOps.Pipeline.TimeoutSeconds = 600
+	}
+	if cfg.DevOps.Pipeline.FallbackImage == "" {
+		cfg.DevOps.Pipeline.FallbackImage = "alpine:latest"
+	}
+	if cfg.DevOps.Pipeline.ActRunnerImage == "" {
+		cfg.DevOps.Pipeline.ActRunnerImage = "catthehacker/ubuntu:act-latest"
 	}
 	resolveDevOpsTokens(&cfg.DevOps)
 	applyTeamPromptFiles(cfg)

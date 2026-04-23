@@ -13,6 +13,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/devops/github"
 	"github.com/opsintelligence/opsintelligence/internal/devops/gitlab"
 	"github.com/opsintelligence/opsintelligence/internal/devops/jenkins"
+	"github.com/opsintelligence/opsintelligence/internal/devops/sandbox"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sonar"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
@@ -29,12 +30,18 @@ func NewReviewFn(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 		BaseURL:    cfg.GitHub.BaseURL,
 		DefaultOrg: cfg.GitHub.DefaultOrg,
 	}, httpc)
+	var sandboxRunner *sandbox.Runner
+	if cfg.Pipeline.Enabled {
+		det := sandbox.NewDetector(cfg.GitHub.BaseURL, cfg.GitHub.Token, httpc)
+		sandboxRunner = sandbox.NewRunner(cfg.Pipeline, det)
+	}
 	tool := &githubReviewPRTool{
 		c:                gh,
 		defaultOrg:       cfg.GitHub.DefaultOrg,
 		prov:             prov,
 		model:            model,
 		allowDraftReview: cfg.GitHub.AllowDraftReview,
+		sandbox:          sandboxRunner,
 	}
 	return func(ctx context.Context, owner, repo string, number int) (string, error) {
 		input, err := json.Marshal(map[string]any{
@@ -66,6 +73,14 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 			BaseURL:    cfg.GitHub.BaseURL,
 			DefaultOrg: cfg.GitHub.DefaultOrg,
 		}, httpc)
+
+		// Build sandbox runner when pipeline sandbox is enabled.
+		var sandboxRunner *sandbox.Runner
+		if cfg.Pipeline.Enabled {
+			det := sandbox.NewDetector(cfg.GitHub.BaseURL, cfg.GitHub.Token, httpc)
+			sandboxRunner = sandbox.NewRunner(cfg.Pipeline, det)
+		}
+
 		out = append(out,
 			&githubListPRsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubGetPRTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
@@ -80,8 +95,16 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 				prov:             prov,
 				model:            model,
 				allowDraftReview: cfg.GitHub.AllowDraftReview,
+				sandbox:          sandboxRunner,
 			},
 		)
+		if sandboxRunner != nil {
+			out = append(out, &pipelineSandboxTool{
+				runner:     sandboxRunner,
+				ghClient:   gh,
+				defaultOrg: cfg.GitHub.DefaultOrg,
+			})
+		}
 	}
 	if cfg.GitLab.Enabled && cfg.GitLab.Token != "" && cfg.GitLab.BaseURL != "" {
 		gl := gitlab.New(gitlab.Config{BaseURL: cfg.GitLab.BaseURL, Token: cfg.GitLab.Token}, httpc)
@@ -104,6 +127,20 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 		)
 	}
 	return out
+}
+
+// SystemTools returns global utility tools that should always be available.
+func SystemTools(registry *agent.ToolRegistry) []agent.Tool {
+	return []agent.Tool{
+		&listCapabilitiesTool{registry: registry},
+	}
+}
+
+// DiagnosticTools returns tools used for self-healing and health checks.
+func DiagnosticTools(cfg config.DevOpsConfig) []agent.Tool {
+	return []agent.Tool{
+		&diagnoseTool{cfg: cfg},
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -814,6 +851,96 @@ func defaultString(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline sandbox standalone tool
+// ─────────────────────────────────────────────────────────────────────────────
+
+type pipelineSandboxTool struct {
+	runner     *sandbox.Runner
+	ghClient   *github.Client
+	defaultOrg string
+}
+
+func (t *pipelineSandboxTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.pipeline.run_sandbox",
+		Description: "Detect and run the CI pipeline for a GitHub repo branch in a local Docker-based sandbox. " +
+			"Supports GitHub Actions (via act), GitLab CI (via gitlab-runner), CircleCI (via circleci local execute), " +
+			"and a generic YAML fallback that runs extracted shell steps in an isolated Docker container. " +
+			"Returns a structured report of the pipeline outcome. " +
+			"Requires devops.pipeline.enabled: true in config.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner": map[string]any{
+					"type":        "string",
+					"description": "Org or user owning the repo (default: devops.github.default_org).",
+				},
+				"repo": map[string]any{
+					"type":        "string",
+					"description": "Repository name.",
+				},
+				"ref": map[string]any{
+					"type":        "string",
+					"description": "Branch name or commit SHA to run the pipeline against.",
+				},
+				"pr": map[string]any{
+					"type":        "integer",
+					"description": "Optional PR number. When provided, the head branch ref is resolved automatically.",
+				},
+			},
+			Required: []string{"repo"},
+		},
+	}
+}
+
+func (t *pipelineSandboxTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner string `json:"owner"`
+		Repo  string `json:"repo"`
+		Ref   string `json:"ref"`
+		PR    int    `json:"pr"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", fmt.Errorf("pipeline.run_sandbox: invalid input: %w", err)
+	}
+
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
+	}
+
+	// If a PR number is provided, resolve the head branch ref from it.
+	if a.PR > 0 && t.ghClient != nil {
+		pr, err := t.ghClient.GetPullRequest(ctx, a.Owner, a.Repo, a.PR)
+		if err != nil {
+			return "", fmt.Errorf("pipeline.run_sandbox: fetch PR #%d: %w", a.PR, err)
+		}
+		a.Ref = pr.Head.Ref
+	}
+	if a.Ref == "" {
+		a.Ref = "main"
+	}
+
+	result, err := t.runner.Run(ctx, a.Owner, a.Repo, a.Ref)
+	if err != nil {
+		return "", fmt.Errorf("pipeline.run_sandbox: %w", err)
+	}
+
+	out := map[string]any{
+		"ci_kind":      string(result.CIKind),
+		"succeeded":    result.Succeeded,
+		"skipped":      result.Skipped,
+		"skip_reason":  result.SkipReason,
+		"errors":       result.Errors,
+		"elapsed_secs": result.ElapsedSecs,
+		"summary":      sandbox.FormatForReviewBody(result),
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return string(b), nil
 }
 
 func short(s string, n int) string {

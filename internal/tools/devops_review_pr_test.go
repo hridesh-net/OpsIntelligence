@@ -157,7 +157,7 @@ func TestBuildVerdict_NoFindings_Approve(t *testing.T) {
 	t.Parallel()
 	pr := &github.PullRequest{Number: 1, HTMLURL: "https://github.com/acme/api/pull/1",
 		User: github.User{Login: "alice"}, Base: github.Ref{Ref: "main"}, Head: github.Ref{Ref: "feat/x"}}
-	event, body := buildVerdict(nil, nil, pr, "acme", "api")
+	event, body := buildVerdict(nil, nil, pr, "acme", "api", nil)
 	if event != "APPROVE" {
 		t.Errorf("event = %q, want APPROVE", event)
 	}
@@ -173,7 +173,7 @@ func TestBuildVerdict_CriticalFindings_RequestChanges(t *testing.T) {
 	}
 	pr := &github.PullRequest{Number: 2, HTMLURL: "https://github.com/acme/api/pull/2",
 		User: github.User{Login: "bob"}, Base: github.Ref{Ref: "main"}, Head: github.Ref{Ref: "feat/y"}}
-	event, body := buildVerdict(findings, nil, pr, "acme", "api")
+	event, body := buildVerdict(findings, nil, pr, "acme", "api", nil)
 	if event != "REQUEST_CHANGES" {
 		t.Errorf("event = %q, want REQUEST_CHANGES", event)
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
+	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/system"
@@ -141,6 +142,8 @@ type Config struct {
 	Palace            PalaceConfig
 	// LocalIntel runs optional on-device Gemma before the main model (see opsintelligence.yaml agent.local_intel).
 	LocalIntel LocalIntelRunnerConfig
+	// DevOps is the platform configuration (GitHub, etc.) used for proactive health reporting in the system prompt.
+	DevOps config.DevOpsConfig
 }
 
 // LocalIntelRunnerConfig is the agent-local view of config.Agent.LocalIntel.
@@ -269,6 +272,7 @@ func NewRunner(
 		workspaceDir:  workspaceDir,
 		hardware:      &system.HardwareReport{},
 		palaceRouter:  memory.NewHeuristicPalaceRouter(),
+		commands:      make(map[string]func(ctx context.Context, replyFn channels.StreamingReplyFunc) error),
 	}
 }
 
@@ -314,6 +318,12 @@ Please provide:
 1. A concise summary of the goal.
 2. A numbered list of milestones.
 3. Potential risks or edge cases to watch for.
+
+## Strategic Guidelines
+- **Tool Composition**: If no single tool completes the task, combine multiple tools (e.g. bash + read_file + devops.*).
+- **Exhaust Discovery**: If a capability appears missing, use find_tools or system.list_capabilities before reporting it as impossible.
+- **Diagnostics**: If you encounter environment or auth errors, call devops.diagnose to find a path forward.
+- **Persistence**: Tweak your strategy dynamically if a specific milestone fails.
 
 Format your response inside <planning> tags. 
 Do NOT call any tools yet. Just plan.
@@ -880,7 +890,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 	tool, ok := r.tools.Get(resolved)
 	if !ok {
 		r.log.Warn("tool not found", zap.String("tool", resolved), zap.String("requested_tool", tc.ToolName))
-		result = fmt.Sprintf("Error: tool %q not found", resolved)
+		result = r.toolNotFoundMessage(resolved)
 		return result
 	}
 
@@ -965,6 +975,29 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 		)...,
 	)
 	return result
+}
+
+// toolNotFoundMessage returns a recovery-oriented error string when the LLM calls
+// an unregistered tool name. It includes fuzzy suggestions from the live registry
+// and explicit instructions to use the discovery tools before giving up.
+func (r *Runner) toolNotFoundMessage(name string) string {
+	var similar []string
+	lname := strings.ToLower(name)
+	for _, def := range r.tools.Definitions() {
+		dn := strings.ToLower(def.Name)
+		if strings.Contains(dn, lname) || strings.Contains(lname, dn) {
+			similar = append(similar, def.Name)
+			if len(similar) >= 5 {
+				break
+			}
+		}
+	}
+	msg := fmt.Sprintf("tool %q is not in the current selection.", name)
+	if len(similar) > 0 {
+		msg += fmt.Sprintf(" Similar registered tools: %s.", strings.Join(similar, ", "))
+	}
+	msg += " Recovery steps: (1) call `find_tools` with a keyword to search the full registry, (2) call `system.list_capabilities` to see all tools, (3) call `devops.diagnose` if this is a DevOps/auth issue. Try a combination of available tools before reporting the task as impossible."
+	return "Error: " + msg
 }
 
 // buildRequest converts working memory messages to a provider request.
@@ -1058,15 +1091,48 @@ func (r *Runner) selectTools(query string) []provider.ToolDef {
 		target = r.tools.Definitions() // backward-compat fallback
 	}
 	target = r.mergeLocalIntelToolHints(target, caps)
+
+	// Final Discovery Pass-through: ensure "Discovery" tools are ALWAYS present
+	// and never subject to Smart Routing filtering or provider caps.
+	discoveryTools := []string{"find_tools", "devops.diagnose", "system.list_capabilities"}
+	seen := make(map[string]struct{}, len(target))
+	for _, d := range target {
+		seen[d.Name] = struct{}{}
+	}
+	for _, name := range discoveryTools {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		if t, ok := r.tools.Get(name); ok {
+			target = append(target, t.Definition())
+			seen[name] = struct{}{}
+		}
+	}
+
 	return r.filterTools(target)
 }
 
 // mergeLocalIntelToolHints prepends Gemma-validated tool ids ahead of catalog selection, then caps by provider MaxTools.
+// LocalIntel additions are capped at MaxTools/3 (min 3) so they cannot crowd out the catalog base set entirely.
 func (r *Runner) mergeLocalIntelToolHints(base []provider.ToolDef, caps provider.ProviderCaps) []provider.ToolDef {
 	if r.tools == nil || len(r.localIntelRoutingTools) == 0 {
 		return base
 	}
-	seen := make(map[string]struct{}, len(base)+len(r.localIntelRoutingTools))
+
+	// Determine how many LocalIntel-only slots to allow so base tools always get through.
+	localIntelCap := len(r.localIntelRoutingTools)
+	if caps.MaxTools > 0 {
+		// Reserve at least half the budget for the catalog base set.
+		maxLocal := caps.MaxTools / 3
+		if maxLocal < 3 {
+			maxLocal = 3
+		}
+		if localIntelCap > maxLocal {
+			localIntelCap = maxLocal
+		}
+	}
+
+	seen := make(map[string]struct{}, len(base)+localIntelCap)
 	var out []provider.ToolDef
 	add := func(d provider.ToolDef) {
 		if _, ok := seen[d.Name]; ok {
@@ -1075,12 +1141,17 @@ func (r *Runner) mergeLocalIntelToolHints(base []provider.ToolDef, caps provider
 		seen[d.Name] = struct{}{}
 		out = append(out, d)
 	}
+	added := 0
 	for _, name := range r.localIntelRoutingTools {
+		if added >= localIntelCap {
+			break
+		}
 		t, ok := r.tools.Get(name)
 		if !ok {
 			continue
 		}
 		add(t.Definition())
+		added++
 	}
 	for _, d := range base {
 		add(d)
@@ -1214,6 +1285,14 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 - **PR review:** smart chains only see text you give them. For a GitHub PR URL: parse owner/repo/number → ` + "`devops.github.pull_request`" + ` then ` + "`devops.github.pr_diff`" + ` (trim diff ~24k) → optional CI/status tools → ` + "`chain_run`" + ` with ` + "`id\":\"pr-review`" + ` and inputs ` + "`github_pr_json`" + `, ` + "`github_diff`" + `, etc. The chain returns a JSON payload (event + body + comments[]); pass it directly to ` + "`devops.github.submit_review`" + ` to post inline line-level comments — do NOT use ` + "`devops.github.pr_comment`" + ` when comments[] is non-empty. Use ` + "`chain_list`" + ` if you need chain ids.
 - **Other flows:** ` + "`chain_run`" + ` for ` + "`sonar-triage`" + `, ` + "`cicd-regression`" + `, ` + "`incident-scribe`" + ` when they match the task—still gather evidence with tools first when the chain needs real data.
 - **Tone:** verdict or status first, then short evidence and links. No filler, no narrating hidden startup phases.
+
+## Tool Discovery Protocol — follow before reporting any failure
+The routing layer only sends you a subset of tools per turn to save tokens. The **full registry is always larger**.
+1. If a tool call returns "not found" or you can't see a tool you need → call ` + "`find_tools`" + ` with a keyword first.
+2. Still unsure? Call ` + "`system.list_capabilities`" + ` — it lists **every** registered tool regardless of routing.
+3. For any ` + "`devops.*`" + ` failure, missing-token, or auth error → call ` + "`devops.diagnose`" + ` immediately; it checks live credentials and gives fix instructions. Do **not** tell the user the integration is broken until you have run this.
+4. Before declaring a task impossible, try a **combination** of available tools — there is almost always an alternate path.
+5. Only tell the user a capability is unavailable after ` + "`system.list_capabilities`" + ` confirms it is absent from the registry.
 
 ## Policies
 - **SOUL.md / IDENTITY.md / USER.md** in the state directory (when present) define name and team context. This runtime is always OpsIntelligence.
@@ -1368,7 +1447,54 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 		}
 	}
 
+	// ── Integration Health (Autonomous Awareness) ──────────────────────────
+	if health := r.buildIntegrationHealth(); health != "" {
+		parts = append(parts, "## Integration Health\n"+health)
+	}
+
 	return strings.Join(parts, "\n\n")
+}
+
+// buildIntegrationHealth returns a concise summary of configured integrations
+// and their status. This allows the LLM to know when a tool it *should* have
+// is inactive due to configuration (e.g. missing token).
+func (r *Runner) buildIntegrationHealth() string {
+	var sb strings.Builder
+	d := r.cfg.DevOps
+	if d.GitHub.Enabled {
+		if d.GitHub.Token == "" {
+			sb.WriteString("- GitHub: ❌ Token absent at startup. Call `devops.diagnose` for live credential check and fix instructions before reporting this to the user.\n")
+		} else {
+			sb.WriteString("- GitHub: ✅ Active\n")
+		}
+	}
+	if d.GitLab.Enabled {
+		if d.GitLab.Token == "" {
+			sb.WriteString("- GitLab: ❌ Token absent at startup. Call `devops.diagnose` for live credential check and fix instructions.\n")
+		} else {
+			sb.WriteString("- GitLab: ✅ Active\n")
+		}
+	}
+	if d.Jenkins.Enabled {
+		if d.Jenkins.Token == "" {
+			sb.WriteString("- Jenkins: ❌ Token/User absent at startup. Call `devops.diagnose` for live credential check and fix instructions.\n")
+		} else {
+			sb.WriteString("- Jenkins: ✅ Active\n")
+		}
+	}
+	if d.Sonar.Enabled {
+		if d.Sonar.Token == "" {
+			sb.WriteString("- Sonar: ❌ Token absent at startup. Call `devops.diagnose` for live credential check and fix instructions.\n")
+		} else {
+			sb.WriteString("- Sonar: ✅ Active\n")
+		}
+	}
+
+	res := sb.String()
+	if res == "" {
+		return ""
+	}
+	return "The following status reflects your current integration environment:\n" + res
 }
 
 // looksLikeTemplate detects untouched template markdown so we don't inject
