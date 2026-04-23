@@ -22,7 +22,7 @@ import (
 // RunResult mirrors agent.RunResult without creating an import cycle.
 type RunResult struct {
 	Iterations int
-	Usage      struct{ TotalTokens int }
+	Usage      TokenUsageSnapshot
 }
 
 // AgentStreamHandler receives streaming events from the runner.
@@ -50,7 +50,10 @@ type AgentRunner interface {
 type agentTokenMsg string
 type agentToolCallMsg struct{ name, snippet string }
 type agentToolResultMsg struct{ name, snippet string }
-type agentDoneMsg struct{ iterations, tokens int }
+type agentDoneMsg struct {
+	iterations int
+	usage      TokenUsageSnapshot
+}
 type agentErrMsg struct{ err error }
 type pulseMsg struct{}
 
@@ -101,6 +104,11 @@ type REPLModel struct {
 
 	sendMsg func(line string)
 	banner  string
+
+	dashboardInfo  DashboardInfo
+	dashboard      *DashboardModel
+	sessionUsage   SessionUsage
+	configOpen     bool
 }
 
 // NewREPLModel constructs the model. sendMsg is invoked on Enter; it must not block.
@@ -110,6 +118,7 @@ func NewREPLModel(
 	sessionID, ver, modelName string,
 	providerCount, skillCount int,
 	sendMsg func(string),
+	dashboardInfo DashboardInfo,
 ) *REPLModel {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -126,19 +135,22 @@ func NewREPLModel(
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 
-	return &REPLModel{
-		ctx:        ctx,
-		cancel:     cancel,
-		runner:     runner,
-		textarea:   ta,
-		spinner:    sp,
-		sendMsg:    sendMsg,
-		sessionID:  sessionID,
-		version:    ver,
-		modelName:  modelName,
-		historyIdx: -1,
-		banner:     RenderBanner(ver, sessionID, providerCount, skillCount),
+	m := &REPLModel{
+		ctx:            ctx,
+		cancel:         cancel,
+		runner:         runner,
+		textarea:       ta,
+		spinner:        sp,
+		sendMsg:        sendMsg,
+		sessionID:      sessionID,
+		version:        ver,
+		modelName:      modelName,
+		historyIdx:     -1,
+		banner:         RenderBanner(ver, sessionID, providerCount, skillCount),
+		dashboardInfo:  dashboardInfo,
 	}
+	m.dashboard = NewDashboardModel(dashboardInfo, "/config", &m.sessionUsage, true)
+	return m
 }
 
 func pulseCmd() tea.Cmd {
@@ -150,9 +162,8 @@ func pulseCmd() tea.Cmd {
 // ─────────────────────────────────────────────
 
 func (m *REPLModel) Init() tea.Cmd {
-	// Seed the banner into history on first frame
 	m.appendHistory(m.banner)
-	return tea.Batch(textarea.Blink, m.spinner.Tick, pulseCmd())
+	return tea.Batch(textarea.Blink, m.spinner.Tick, pulseCmd(), m.dashboard.Init())
 }
 
 // ─────────────────────────────────────────────
@@ -180,26 +191,55 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Height = vpH
 		}
 		m.textarea.SetWidth(m.width - 8)
+		d, dc := m.dashboard.Update(msg)
+		m.dashboard = d.(*DashboardModel)
+		cmds = append(cmds, dc)
 
-	// ── Keyboard ───────────────────────────────
 	case tea.KeyMsg:
-		switch msg.Type {
+		if msg.String() == "ctrl+o" && !m.configOpen {
+			m.configOpen = true
+			d, c := m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			m.dashboard = d.(*DashboardModel)
+			cmds = append(cmds, c)
+			return m, tea.Batch(cmds...)
+		}
+		if m.configOpen {
+			if msg.Type == tea.KeyCtrlC || msg.String() == "ctrl+c" {
+				m.cancel()
+				return m, tea.Quit
+			}
+			if msg.Type == tea.KeyEsc || msg.String() == "ctrl+o" || msg.String() == "q" || msg.String() == "Q" {
+				m.configOpen = false
+				return m, nil
+			}
+			d, c := m.dashboard.Update(msg)
+			m.dashboard = d.(*DashboardModel)
+			cmds = append(cmds, c)
+			return m, tea.Batch(cmds...)
+		}
 
+		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.cancel()
 			return m, tea.Quit
 
-		// Ctrl+L — clear history
 		case tea.KeyCtrlL:
 			m.history = nil
 			m.tokenBuf = ""
 			m.activeTools = nil
 			m.refreshViewport()
 
-		// Enter — send message
 		case tea.KeyEnter:
 			if !m.thinking {
 				line := strings.TrimSpace(m.textarea.Value())
+				if line == "/config" {
+					m.textarea.Reset()
+					m.configOpen = true
+					d, c := m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+					m.dashboard = d.(*DashboardModel)
+					cmds = append(cmds, c)
+					return m, tea.Batch(cmds...)
+				}
 				if line != "" {
 					m.sentMessages = append(m.sentMessages, line)
 					m.historyIdx = -1
@@ -216,7 +256,6 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		// ↑ — recall previous message when textarea is empty
 		case tea.KeyUp:
 			if !m.thinking && m.textarea.Value() == "" && len(m.sentMessages) > 0 {
 				if m.historyIdx == -1 {
@@ -227,12 +266,10 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.SetValue(m.sentMessages[m.historyIdx])
 				break
 			}
-			// Otherwise let viewport handle scroll
 			var vc tea.Cmd
 			m.viewport, vc = m.viewport.Update(msg)
 			cmds = append(cmds, vc)
 
-		// ↓ — forward through recall or scroll viewport
 		case tea.KeyDown:
 			if !m.thinking && m.historyIdx != -1 {
 				if m.historyIdx < len(m.sentMessages)-1 {
@@ -279,14 +316,16 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentDoneMsg:
 		m.flushToken()
-		// Commit completed tool events to history
 		for _, te := range m.activeTools {
 			m.appendHistory(renderToolBlock(te))
 		}
 		m.activeTools = nil
 		m.thinking = false
+		if msg.iterations > 0 || msg.usage.TotalTokens > 0 || msg.usage.PromptTokens > 0 {
+			m.sessionUsage.Add(msg.usage)
+		}
 		m.appendHistory(Muted.Render(fmt.Sprintf(
-			"   ▸ %d iter · %s tok", msg.iterations, fmtNum(msg.tokens),
+			"   ▸ %d iter · %s tok", msg.iterations, fmtNum(msg.usage.TotalTokens),
 		)))
 		m.appendHistory("")
 		m.refreshViewport()
@@ -307,17 +346,23 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var sc tea.Cmd
 		m.spinner, sc = m.spinner.Update(msg)
 		cmds = append(cmds, sc)
+
+	case tickMsg, psResult:
+		d2, dc2 := m.dashboard.Update(msg)
+		m.dashboard = d2.(*DashboardModel)
+		cmds = append(cmds, dc2)
 	}
 
-	// Always update textarea (when not thinking) and viewport
-	if !m.thinking {
+	if !m.configOpen && !m.thinking {
 		var tc tea.Cmd
 		m.textarea, tc = m.textarea.Update(msg)
 		cmds = append(cmds, tc)
 	}
-	var vc tea.Cmd
-	m.viewport, vc = m.viewport.Update(msg)
-	cmds = append(cmds, vc)
+	if !m.configOpen {
+		var vc tea.Cmd
+		m.viewport, vc = m.viewport.Update(msg)
+		cmds = append(cmds, vc)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -329,6 +374,9 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *REPLModel) View() string {
 	if !m.ready {
 		return "\n  " + Primary.Render("Starting OpsIntelligence…") + "\n"
+	}
+	if m.configOpen {
+		return m.dashboard.View()
 	}
 
 	borderCol := PulseBorder(m.pulseFrame)
@@ -386,7 +434,7 @@ func (m *REPLModel) renderFooter() string {
 	if m.modelName != "" {
 		model = Muted.Render("  ·  ") + Muted.Render(m.modelName)
 	}
-	return Muted.Render("↵ send  ·  ctrl+j newline  ·  ↑ recall  ·  ctrl+l clear  ·  esc quit") + model
+	return Muted.Render("↵ send  ·  ctrl+o config  ·  ctrl+j newline  ·  ↑ recall  ·  ctrl+l clear  ·  esc quit") + model
 }
 
 // ─────────────────────────────────────────────
@@ -599,12 +647,11 @@ func (b *tuiStreamBridge) OnToolResult(name, result string) {
 }
 
 func (b *tuiStreamBridge) OnDone(r *RunResult) {
-	iters, toks := 0, 0
-	if r != nil {
-		iters = r.Iterations
-		toks = r.Usage.TotalTokens
+	if r == nil {
+		b.prog.Send(agentDoneMsg{})
+		return
 	}
-	b.prog.Send(agentDoneMsg{iterations: iters, tokens: toks})
+	b.prog.Send(agentDoneMsg{iterations: r.Iterations, usage: r.Usage})
 }
 
 func (b *tuiStreamBridge) OnError(err error) {
@@ -664,7 +711,8 @@ func firstLine(s string, max int) string {
 
 // RunREPL starts the bubbletea REPL.
 // modelName is the active model string shown in the footer (pass "" to omit).
-func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount, skillCount int, modelName string) error {
+// dashInfo seeds the /config overlay (Status / Config / Limits / Usage).
+func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount, skillCount int, modelName string, dashInfo DashboardInfo) error {
 	var p *tea.Program
 
 	sendMsg := func(line string) {
@@ -674,7 +722,7 @@ func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount,
 		}()
 	}
 
-	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, modelName, providerCount, skillCount, sendMsg)
+	model := NewREPLModel(ctx, runner, runner.SessionID(), ver, modelName, providerCount, skillCount, sendMsg, dashInfo)
 	p = tea.NewProgram(
 		model,
 		tea.WithAltScreen(),

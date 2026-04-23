@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.12" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.13" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -337,6 +337,81 @@ func stopCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
+func channelsFromCfg(cfg *config.Config) []string {
+	var channels []string
+	if cfg.Channels.Telegram != nil {
+		channels = append(channels, "Telegram")
+	}
+	if cfg.Channels.Discord != nil {
+		channels = append(channels, "Discord")
+	}
+	if cfg.Channels.Slack != nil {
+		channels = append(channels, "Slack")
+	}
+	if cfg.Channels.WhatsApp != nil {
+		channels = append(channels, "WhatsApp")
+	}
+	return channels
+}
+
+func optionalBoolString(p *bool) string {
+	if p == nil {
+		return "unset"
+	}
+	if *p {
+		return "true"
+	}
+	return "false"
+}
+
+func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version, skillSummary string, channels []string, mcpTransport, gwBind string) tui.DashboardInfo {
+	webHost := cfg.Gateway.Host
+	if webHost == "" {
+		webHost = "127.0.0.1"
+	}
+	cwd, _ := os.Getwd()
+	status := tui.StatusInfo{
+		PID:           pid,
+		Version:       version,
+		SkillSummary:  skillSummary,
+		Channels:      channels,
+		PlanoEnabled:  cfg.Plano.Enabled,
+		PlanoEndpoint: cfg.Plano.Endpoint,
+		MCPEnabled:    cfg.MCP.Server.Enabled,
+		MCPTransport:  mcpTransport,
+		GatewayBase:   cfg.PublicGatewayBaseURL(),
+		GatewayBind:   gwBind,
+		RunTraceFile:  cfg.Agent.RunTraceFile,
+		RunTraceMode:  cfg.Agent.RunTraceMode,
+	}
+	limits := tui.LimitsSnapshot{
+		MaxIterations:         cfg.Agent.MaxIterations,
+		WorkingTokenBudget:    cfg.Memory.WorkingTokenBudget,
+		MemPalaceSearchLimit:  cfg.Memory.MemPalace.SearchLimit,
+		MaxWebSocketClients:   cfg.Gateway.MaxWebSocketClients,
+		SubagentMaxConcurrent: cfg.Agent.SubagentTasks.MaxConcurrent,
+		SubagentRetainLimit:   cfg.Agent.SubagentTasks.RetainLimit,
+		LocalIntelMaxTokens:   cfg.Agent.LocalIntel.MaxTokens,
+		SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
+	}
+	return tui.DashboardInfo{
+		Status:              status,
+		ConfigPath:          configPath,
+		StateDir:            cfg.StateDir,
+		CWD:                 cwd,
+		RoutingModel:        cfg.Routing.Default,
+		GatewayHostPort:     fmt.Sprintf("%s:%d", webHost, cfg.Gateway.Port),
+		GatewayPublicBase:   strings.TrimSuffix(strings.TrimSpace(cfg.PublicGatewayBaseURL()), "/"),
+		Enterprise:          cfg.Agent.Enterprise,
+		Planning:            optionalBoolString(cfg.Agent.Planning),
+		Reflection:          optionalBoolString(cfg.Agent.Reflection),
+		MemPalaceEnabled:    cfg.Memory.MemPalace.Enabled,
+		LocalIntelEnabled:   cfg.Agent.LocalIntel.Enabled,
+		MCPClientCount:      len(cfg.MCP.Clients),
+		Limits:              limits,
+	}
+}
+
 func statusCmd(gf *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -387,21 +462,8 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				skillSummary = fmt.Sprintf("%d enabled / %d installed", enabledCount, skillCount)
 			}
 
-			var channels []string
-			if cfg.Channels.Telegram != nil {
-				channels = append(channels, "Telegram")
-			}
-			if cfg.Channels.Discord != nil {
-				channels = append(channels, "Discord")
-			}
-			if cfg.Channels.Slack != nil {
-				channels = append(channels, "Slack")
-			}
-			if cfg.Channels.WhatsApp != nil {
-				channels = append(channels, "WhatsApp")
-			}
+			channels := channelsFromCfg(cfg)
 
-			// MCP transport
 			mcpTransport := cfg.MCP.Server.Transport
 			if mcpTransport == "" {
 				mcpTransport = "stdio"
@@ -411,20 +473,8 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 			if gwBind == "" {
 				gwBind = "loopback"
 			}
-			return tui.RunStatus(tui.StatusInfo{
-				PID:           pid,
-				Version:       version,
-				SkillSummary:  skillSummary,
-				Channels:      channels,
-				PlanoEnabled:  cfg.Plano.Enabled,
-				PlanoEndpoint: cfg.Plano.Endpoint,
-				MCPEnabled:    cfg.MCP.Server.Enabled,
-				MCPTransport:  mcpTransport,
-				GatewayBase:   cfg.PublicGatewayBaseURL(),
-				GatewayBind:   gwBind,
-				RunTraceFile:  cfg.Agent.RunTraceFile,
-				RunTraceMode:  cfg.Agent.RunTraceMode,
-			})
+			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind)
+			return tui.RunDashboard(dash, "opsintelligence status", nil, false)
 		},
 	}
 }
@@ -2051,7 +2101,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	}
 
 	// Interactive REPL mode
-	return runREPL(ctx, runner, modelInfo.ID, log)
+	return runREPL(ctx, runner, modelInfo.ID, log, cfg, gf)
 }
 
 // extractBundledSkills copies the repo's skills/ directory into destDir (bundled dir).
@@ -2498,7 +2548,7 @@ func (h *cliStreamHandler) OnError(err error) { h.done <- err }
 
 // runREPL launches the interactive agent REPL.
 // It now uses the futuristic bubbletea TUI from cmd/opsintelligence/tui.
-func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger) error {
+func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger, cfg *config.Config, gf *globalFlags) error {
 	// Count providers and skills for the banner
 	providerCount := 1 // at least one is configured or we wouldn't be here
 	skillCount := 0
@@ -2512,9 +2562,23 @@ func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logg
 		}
 	}
 
-	// Wrap agent.Runner as tui.AgentRunner
+	skillSummary := fmt.Sprintf("%d installed", skillCount)
+	if n := len(cfg.Agent.EnabledSkills); n > 0 {
+		skillSummary = fmt.Sprintf("%d enabled / %d installed", n, skillCount)
+	}
+	channels := channelsFromCfg(cfg)
+	mcpTransport := cfg.MCP.Server.Transport
+	if mcpTransport == "" {
+		mcpTransport = "stdio"
+	}
+	gwBind := strings.TrimSpace(cfg.Gateway.Bind)
+	if gwBind == "" {
+		gwBind = "loopback"
+	}
+	dash := buildDashboardInfo(cfg, gf.configPath, os.Getpid(), version, skillSummary, channels, mcpTransport, gwBind)
+
 	a := &agentRunnerAdapter{runner: r}
-	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID)
+	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID, dash)
 }
 
 // agentRunnerAdapter wraps agent.Runner to satisfy tui.AgentRunner.
@@ -2549,7 +2613,13 @@ func (b *runnerStreamBridge) OnDone(res *agent.RunResult) {
 	}
 	b.h.OnDone(&tui.RunResult{
 		Iterations: res.Iterations,
-		Usage:      struct{ TotalTokens int }{TotalTokens: res.Usage.TotalTokens},
+		Usage: tui.TokenUsageSnapshot{
+			PromptTokens:     res.Usage.PromptTokens,
+			CompletionTokens: res.Usage.CompletionTokens,
+			CacheReadTokens:    res.Usage.CacheReadTokens,
+			CacheWriteTokens:   res.Usage.CacheWriteTokens,
+			TotalTokens:        res.Usage.TotalTokens,
+		},
 	})
 }
 func (b *runnerStreamBridge) OnError(err error) { b.h.OnError(err) }

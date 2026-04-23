@@ -18,6 +18,12 @@ const (
 	ColorWhite    = lipgloss.Color("#E8EBF4") // primary text
 	ColorUserMsg  = lipgloss.Color("#9BB8FF") // user emphasis
 	ColorAgentMsg = lipgloss.Color("#7EC4FF") // agent emphasis
+
+	// Claude-style dashboard chrome (charcoal + lavender tabs).
+	ColorChromeBg     = lipgloss.Color("#252733") // context strip / chrome
+	ColorDashboardBg  = lipgloss.Color("#2b2d3c") // main panel fill
+	ColorAccentLavender = lipgloss.Color("#b4befe") // active tab, accents
+	ColorTabActiveFG  = lipgloss.Color("#1e1f2e") // text on lavender pill
 )
 
 // ── Base Styles ───────────────────────────────────────────────────────────
@@ -74,6 +80,41 @@ var (
 
 	// StatusErr is a red dot for stopped status.
 	StatusErr = lipgloss.NewStyle().Foreground(ColorError).Bold(true).Render("●")
+
+	// ChromeStrip is the top context line (e.g. › /config).
+	ChromeStrip = lipgloss.NewStyle().
+			Background(ColorChromeBg).
+			Foreground(ColorWhite).
+			Padding(0, 1)
+
+	ChromePrompt = lipgloss.NewStyle().
+			Background(ColorChromeBg).
+			Foreground(ColorMuted)
+
+	// TabActive / TabInactive style the dashboard tab row.
+	TabActive = lipgloss.NewStyle().
+			Background(ColorAccentLavender).
+			Foreground(ColorTabActiveFG).
+			Bold(true).
+			Padding(0, 1).
+			MarginRight(1)
+
+	TabInactive = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Padding(0, 1).
+			MarginRight(1)
+
+	DashboardFooter = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Padding(0, 1)
+
+	DashboardPanel = lipgloss.NewStyle().
+			Background(ColorDashboardBg).
+			Foreground(ColorWhite).
+			Padding(1, 2)
+
+	DashboardDivider = lipgloss.NewStyle().
+			Foreground(ColorAccentLavender)
 )
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -100,6 +141,23 @@ func ProgressBar(percent float64, width int) string {
 	for i := 0; i < width; i++ {
 		if i < filled {
 			bar += lipgloss.NewStyle().Foreground(ColorCyan).Render("█")
+		} else {
+			bar += lipgloss.NewStyle().Foreground(ColorBorder).Render("░")
+		}
+	}
+	return bar
+}
+
+// ProgressBarLavender is like ProgressBar but uses the dashboard accent fill.
+func ProgressBarLavender(percent float64, width int) string {
+	filled := int(float64(width) * percent / 100)
+	if filled > width {
+		filled = width
+	}
+	bar := ""
+	for i := 0; i < width; i++ {
+		if i < filled {
+			bar += lipgloss.NewStyle().Foreground(ColorAccentLavender).Render("█")
 		} else {
 			bar += lipgloss.NewStyle().Foreground(ColorBorder).Render("░")
 		}
