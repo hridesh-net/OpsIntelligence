@@ -7,37 +7,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// robotLines is the ASCII robot, colored with ANSI via lipgloss Render.
-// The bot matches the OpsIntelligence logo: square head, antenna, two eyes.
-var robotLines = []string{
-	`     ╷     `,
-	`   ┌─┴─┐   `,
-	`   │◉ ◉│   `,
-	`   │ ▬ │   `,
-	`   └──┬┘   `,
-	`  ╔═══╧═╗  `,
-	`  ║CLAW ║  `,
-	`  ╚══╤══╝  `,
-	`   ┌─┴─┐   `,
-	`   └───┘   `,
+// renderBrandMarkArt returns a neutral dotted frame (no mascot / claw glyph).
+func renderBrandMarkArt() string {
+	const inner = 16 // spaces between vertical rules
+	top := "  " + strings.Repeat("·", inner+2) // top rule
+	side := "  ·" + strings.Repeat(" ", inner) + "·"
+	sty := lipgloss.NewStyle().Foreground(ColorMuted)
+	return sty.Render(top + "\n" + side + "\n" + side + "\n" + side + "\n" + top + "\n")
 }
 
-// RenderBanner renders the full splash banner: robot + info block side by side.
+// RenderBanner renders the full splash banner: brand mark + info block side by side.
 func RenderBanner(ver, sessionID string, providers, skillsCount int) string {
-	// Robot — accent blue
-	robotStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	glowStyle := lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
+	markBlock := renderBrandMarkArt()
 
-	var robotSB strings.Builder
-	for i, line := range robotLines {
-		if i == 2 || i == 3 { // eye/mouth row — neon highlight
-			robotSB.WriteString(glowStyle.Render(line) + "\n")
-		} else {
-			robotSB.WriteString(robotStyle.Render(line) + "\n")
-		}
-	}
-
-	// Info block — right pane
 	subStyle := lipgloss.NewStyle().Foreground(ColorPrimary)
 	dimStyle := lipgloss.NewStyle().Foreground(ColorMuted)
 
@@ -60,13 +42,11 @@ func RenderBanner(ver, sessionID string, providers, skillsCount int) string {
 		infoSB.WriteString(l + "\n")
 	}
 
-	// Side-by-side
 	combined := lipgloss.JoinHorizontal(lipgloss.Top,
-		robotSB.String(),
+		markBlock,
 		infoSB.String(),
 	)
 
-	// Outer border
 	banner := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPrimary).
@@ -74,9 +54,9 @@ func RenderBanner(ver, sessionID string, providers, skillsCount int) string {
 		Padding(0, 1).
 		Render(combined)
 
-	// Tagline below — scanline + bracket for hacker-terminal vibe
-	tagline := lipgloss.NewStyle().Foreground(ColorBorder).Render("  ") +
-		CyberBracket("AUTONOMOUS EDGE CORE") + "\n  " + ScanlineSuffix(56)
+	tagW := 56
+	tagline := lipgloss.NewStyle().Foreground(ColorMuted).PaddingLeft(2).
+		Render(strings.Repeat("·", tagW))
 
 	return "\n" + banner + "\n" + tagline + "\n"
 }
@@ -88,17 +68,7 @@ func PrintBanner(ver, sessionID string, providers, skillsCount int) {
 
 // PrintOnboardBanner prints a shorter version for the onboarding wizard.
 func PrintOnboardBanner(ver string) {
-	robotStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	glowStyle := lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
-
-	var robotSB strings.Builder
-	for i, line := range robotLines {
-		if i == 2 || i == 3 {
-			robotSB.WriteString(glowStyle.Render(line) + "\n")
-		} else {
-			robotSB.WriteString(robotStyle.Render(line) + "\n")
-		}
-	}
+	markBlock := renderBrandMarkArt()
 
 	infoLines := []string{
 		"",
@@ -114,7 +84,7 @@ func PrintOnboardBanner(ver string) {
 		infoSB.WriteString(l + "\n")
 	}
 
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, robotSB.String(), infoSB.String())
+	combined := lipgloss.JoinHorizontal(lipgloss.Top, markBlock, infoSB.String())
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPrimary).

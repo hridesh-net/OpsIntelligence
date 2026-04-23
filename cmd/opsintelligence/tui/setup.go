@@ -366,17 +366,7 @@ func printYAMLSnippet(snippet string) {
 // ─────────────────────────────────────────────
 
 func renderSetupHeader(ver string) string {
-	robotStyle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	glowStyle := lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
-
-	var robotSB strings.Builder
-	for i, line := range robotLines {
-		if i == 2 || i == 3 {
-			robotSB.WriteString(glowStyle.Render(line) + "\n")
-		} else {
-			robotSB.WriteString(robotStyle.Render(line) + "\n")
-		}
-	}
+	markBlock := renderBrandMarkArt()
 
 	infoLines := []string{
 		"",
@@ -394,7 +384,7 @@ func renderSetupHeader(ver string) string {
 		infoSB.WriteString(l + "\n")
 	}
 
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, robotSB.String(), infoSB.String())
+	combined := lipgloss.JoinHorizontal(lipgloss.Top, markBlock, infoSB.String())
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPrimary).

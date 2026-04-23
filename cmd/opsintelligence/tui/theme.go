@@ -50,17 +50,7 @@ var (
 	// Neon is the brightest pop.
 	Neon = lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
 
-	// UserPrefix styles the "You ›" label.
-	UserPrefix = lipgloss.NewStyle().
-			Foreground(ColorUserMsg).
-			Bold(true)
-
-	// AgentPrefix styles the "🤖" label.
-	AgentPrefix = lipgloss.NewStyle().
-			Foreground(ColorAgentMsg).
-			Bold(true)
-
-	// ToolBadge styles the [⚙ tool_name] indicator.
+	// ToolBadge styles tool name labels in the REPL.
 	ToolBadge = lipgloss.NewStyle().
 			Foreground(ColorCyan).
 			Bold(true)

@@ -380,13 +380,13 @@ func (m *REPLModel) View() string {
 	}
 
 	borderCol := PulseBorder(m.pulseFrame)
-	pulseMark := lipgloss.NewStyle().Foreground(borderCol).Bold(true).Render("▶")
+	prompt := ChromePrompt.Render("›")
 
-	// ── Header bar ─────────────────────────────
+	// ── Header bar (chevron + wordmark; no mascot glyph) ──
 	headerRow := lipgloss.JoinHorizontal(lipgloss.Left,
-		pulseMark, " ",
+		prompt, " ",
 		GradientWord("OPSINTELLIGENCE"), " ",
-		CyberBracket("REPL"),
+		Muted.Render("repl"),
 		Muted.Render("  "+strings.TrimSpace(m.version)+"  ·  "+shortID(m.sessionID)),
 	)
 	headerBar := lipgloss.NewStyle().Width(m.width - 2).Render(headerRow)
@@ -451,7 +451,7 @@ func (m *REPLModel) buildContent() string {
 
 	// In-flight agent text (streaming)
 	if m.tokenBuf != "" {
-		sb.WriteString(AgentPrefix.Render("◈") + " " + renderMarkdown(m.tokenBuf))
+		sb.WriteString(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf))
 	}
 
 	// Active tool events (pending result)
@@ -474,7 +474,7 @@ func (m *REPLModel) appendHistory(line string) { m.history = append(m.history, l
 
 func (m *REPLModel) flushToken() {
 	if m.tokenBuf != "" {
-		m.appendHistory(AgentPrefix.Render("◈") + " " + renderMarkdown(m.tokenBuf))
+		m.appendHistory(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf))
 		m.tokenBuf = ""
 	}
 }
@@ -523,12 +523,12 @@ func fmtNum(n int) string {
 // ─────────────────────────────────────────────
 
 func renderUserMsg(line string) string {
-	return UserPrefix.Render("◉ You") + Muted.Render(" › ") + line
+	return lipgloss.NewStyle().Foreground(ColorUserMsg).Bold(true).Render("You") + Muted.Render(" › ") + line
 }
 
 // renderToolPending shows an in-flight tool call with spinner.
 func renderToolPending(name, input, spin string) string {
-	label := ToolBadge.Render("  ╭─ " + name)
+	label := Muted.Render("  › ") + ToolBadge.Render(name)
 	if input != "" {
 		label += Muted.Render(" " + input)
 	}
@@ -537,19 +537,19 @@ func renderToolPending(name, input, spin string) string {
 
 // renderToolBlock shows a completed tool call with result.
 func renderToolBlock(te toolEvent) string {
-	top := ToolBadge.Render("  ╭─ " + te.name)
+	top := Muted.Render("  › ") + ToolBadge.Render(te.name)
 	if te.input != "" {
 		top += Muted.Render(" " + te.input)
 	}
 	if te.result == "" {
-		return top + "\n" + ToolBadge.Render("  ╰─ ") + Muted.Render("done")
+		return top + "\n" + Muted.Render("  › ") + ToolBadge.Render("done")
 	}
 	result := te.result
 	if len(result) > 120 {
 		result = result[:120] + "…"
 	}
 	checkmark := lipgloss.NewStyle().Foreground(ColorCyan).Render("✓")
-	return top + "\n" + ToolBadge.Render("  ╰─ ") + checkmark + " " + Muted.Render(result)
+	return top + "\n" + Muted.Render("  › ") + checkmark + " " + Muted.Render(result)
 }
 
 // ─────────────────────────────────────────────
@@ -586,11 +586,11 @@ func renderMarkdown(text string) string {
 				if codeLang != "" {
 					hint = codeLang
 				}
-				out = append(out, ToolBadge.Render("  ╭─ "+hint))
+				out = append(out, Muted.Render("  › ")+ToolBadge.Render(hint))
 			} else {
 				inCode = false
 				codeLang = ""
-				out = append(out, ToolBadge.Render("  ╰─────"))
+				out = append(out, Muted.Render("  › ────"))
 			}
 			continue
 		}
