@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -2048,38 +2047,6 @@ func runOnboarding(configPath string) (bool, error) {
 
 	fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("✔ Configuration saved!"))
 
-	if ghWebhookEnabled && strings.TrimSpace(ghWebhookSecret) != "" {
-		dimWH := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		whURL := "http://" + gwHost + ":" + strconv.Itoa(gwPort) + "/api/webhook/github"
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  GitHub webhook — payload URL"))
-		fmt.Println(dimWH.Render("  Use an HTTPS URL GitHub can reach; path must match your config (default /api/webhook/github):"))
-		fmt.Println(dimWH.Render("    " + whURL))
-	}
-
-	if localIntelEnabled {
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  Local Gemma — next steps"))
-		if g := strings.TrimSpace(localIntelGGUF); g != "" {
-			fmt.Println(dim.Render("  • GGUF ready at: " + g))
-		}
-		fmt.Println(dim.Render("  • Verify:  opsintelligence doctor   (see doc/runbooks/doctor-config-validation.md)"))
-		if !localintel.CompiledWithLocalGemma() {
-			fmt.Println(dim.Render("  • This binary lacks in-process Gemma support; install a release binary with local Gemma enabled."))
-			fmt.Println(dim.Render("  • Dev fallback: make install EXTRA_TAGS=opsintelligence_localgemma"))
-			fmt.Println(dim.Render("  • Or: go build -tags fts5,opsintelligence_localgemma -o opsintelligence ./cmd/opsintelligence"))
-		}
-	}
-	if memPalaceEnabled {
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("  MemPalace — next steps"))
-		fmt.Println(dim.Render("  • Venv and world initialised — the agent will recall from it automatically."))
-		fmt.Println(dim.Render("  • Add memories manually: opsintelligence mempalace store"))
-		fmt.Println(dim.Render("  • Inspect stored knowledge: opsintelligence mempalace recall <query>"))
-	}
-
 	// ── Auto-start on login (no prompt; idempotent on macOS/Linux) ────────────
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	switch runtime.GOOS {
@@ -2105,32 +2072,34 @@ func runOnboarding(configPath string) (bool, error) {
 		fmt.Println(dim.Render("  Run opsintelligence service install if your OS supports it."))
 	}
 
-	// ── Launch summary banner ─────────────────────────────────────────────────
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	webURL := fmt.Sprintf("http://localhost:%d", gwPort)
-
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("  🚀 Launching OpsIntelligence in background…"))
-	fmt.Println()
-	fmt.Printf("  %-14s %s\n", dim.Render("Web UI:"), accent.Render(webURL))
-	fmt.Printf("  %-14s %s\n", dim.Render("Token:"), accent.Render(gwToken))
-	fmt.Printf("  %-14s %s\n", dim.Render("Gateway:"), accent.Render(fmt.Sprintf("%s:%d", gwHost, gwPort)))
-	fmt.Println()
-	fmt.Println(dim.Render("  Manage with:"))
-	fmt.Println(dim.Render("    opsintelligence gateway start   │ stop   │ restart"))
-	fmt.Println(dim.Render("    opsintelligence service status          (login auto-start)"))
-	fmt.Println(dim.Render("    opsintelligence status"))
-	fmt.Println()
-	fmt.Println(dim.Render("  GitHub & inbound webhooks:"))
-	fmt.Println(dim.Render("    opsintelligence guides github   — PAT vs webhook secret vs gh"))
-	fmt.Println(dim.Render("    doc/github-webhooks.md"))
-	if len(selectedChannels) > 0 {
-		fmt.Println()
-		fmt.Println(dim.Render("  Channel setup guides:"))
-		for _, line := range buildChannelSetupGuideLines(selectedChannels, gwHost, gwPort) {
-			fmt.Println(dim.Render("   " + line))
-		}
+	// ── Tabbed summary TUI ────────────────────────────────────────────────────
+	summary := tui.OnboardSummary{
+		PrimaryProvider:   primary.provider,
+		PrimaryModel:      primary.model,
+		SecondaryProv:     secondary.provider,
+		EmbedProvider:     embed.provider,
+		EmbedModel:        embed.model,
+		GatewayHost:       gwHost,
+		GatewayPort:       gwPort,
+		GatewayMode:       normalizeGatewayBind(gwMode),
+		LocalIntelEnabled: localIntelEnabled,
+		LocalIntelGGUF:    localIntelGGUF,
+		MemPalaceEnabled:  memPalaceEnabled,
+		PlanoEnabled:      usePlano,
+		PlanoEndpoint:     planoEndpoint,
+		Channels:          selectedChannels,
+		Skills:            selectedSkills,
+		GitHubEnabled:     githubToken != "" || strings.TrimSpace(githubTokenEnv) != "",
+		GitHubOrg:         githubDefaultOrg,
+		GitLabEnabled:     strings.TrimSpace(gitlabURL) != "" && (gitlabToken != "" || strings.TrimSpace(gitlabTokenEnv) != ""),
+		GitLabURL:         gitlabURL,
+		JenkinsEnabled:    strings.TrimSpace(jenkinsURL) != "" && (jenkinsToken != "" || strings.TrimSpace(jenkinsTokenEnv) != ""),
+		JenkinsURL:        jenkinsURL,
+		SonarEnabled:      strings.TrimSpace(sonarURL) != "" && (sonarToken != "" || strings.TrimSpace(sonarTokenEnv) != ""),
+		SonarURL:          sonarURL,
 	}
+	fmt.Println()
+	_ = tui.RunOnboardSummary(summary)
 	fmt.Println()
 
 	// Always start daemon after onboarding completes

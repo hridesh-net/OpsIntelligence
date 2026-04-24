@@ -5,54 +5,140 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/devops/github"
 	"github.com/opsintelligence/opsintelligence/internal/devops/gitlab"
 	"github.com/opsintelligence/opsintelligence/internal/devops/jenkins"
+	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sandbox"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sonar"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
+	"github.com/opsintelligence/opsintelligence/internal/repointel"
 )
 
-// NewReviewFn returns a ReviewFn backed by devops.github.review_pr for use with PRReviewCmdHandler.
+// ReviewFnOptions carries optional overrides for NewReviewFn / NewCoordinatorReviewFn.
+type ReviewFnOptions struct {
+	// SecondaryProvider and SecondaryModel are overflow providers used when the
+	// primary is rate-limited or its circuit breaker is open.
+	SecondaryProvider provider.Provider
+	SecondaryModel    string
+
+	// LocalIntelProvider is the local Gemma provider used for low-complexity diffs.
+	// Nil = local intel routing disabled.
+	LocalIntelProvider provider.Provider
+	LocalIntelModel    string
+
+	// StateDir is the root OpsIntelligence state dir (for trace storage).
+	StateDir string
+
+	// Log is the zap logger; nil = silent.
+	Log *zap.Logger
+
+	// RepoManager is the optional Repo Intelligence manager. When set,
+	// per-repo indexed memory is injected into each PR review prompt.
+	RepoManager *repointel.Manager
+}
+
+// NewReviewFn returns a ReviewFn backed by the enterprise pipeline Coordinator.
 // Returns nil when GitHub integration is not configured.
-func NewReviewFn(cfg config.DevOpsConfig, prov provider.Provider, model string) ReviewFn {
+//
+// The coordinator starts two background goroutines (TraceAgent + dispatcher)
+// that are tied to the provided ctx lifetime.
+func NewReviewFn(ctx context.Context, cfg config.DevOpsConfig, prov provider.Provider, model string, opts ReviewFnOptions) ReviewFn {
 	if !cfg.GitHub.Enabled || cfg.GitHub.Token == "" {
 		return nil
 	}
+
 	httpc := &http.Client{Timeout: 20 * time.Second}
 	gh := github.New(github.Config{
 		Token:      cfg.GitHub.Token,
 		BaseURL:    cfg.GitHub.BaseURL,
 		DefaultOrg: cfg.GitHub.DefaultOrg,
 	}, httpc)
-	var sandboxRunner *sandbox.Runner
+
+	// Build sandbox components (optional).
+	var sbRunner *sandbox.Runner
+	var det *sandbox.Detector
 	if cfg.Pipeline.Enabled {
-		det := sandbox.NewDetector(cfg.GitHub.BaseURL, cfg.GitHub.Token, httpc)
-		sandboxRunner = sandbox.NewRunner(cfg.Pipeline, det)
+		det = sandbox.NewDetector(cfg.GitHub.BaseURL, cfg.GitHub.Token, httpc)
+		sbRunner = sandbox.NewRunner(cfg.Pipeline, det)
 	}
-	tool := &githubReviewPRTool{
-		c:                gh,
-		defaultOrg:       cfg.GitHub.DefaultOrg,
-		prov:             prov,
-		model:            model,
-		allowDraftReview: cfg.GitHub.AllowDraftReview,
-		sandbox:          sandboxRunner,
+
+	// Build LLM router — token-bucket per provider, no artificial cap.
+	routerCfg := pipeline.LLMRouterConfig{
+		Primary:           prov,
+		PrimaryModel:      model,
+		PrimaryRPM:        cfg.GitHub.PrimaryRPM,
+		BurstMult:         cfg.GitHub.BurstMultiplier,
+		Secondary:         opts.SecondaryProvider,
+		SecondaryModel:    opts.SecondaryModel,
+		SecondaryRPM:      cfg.GitHub.SecondaryRPM,
+		LocalIntel:        opts.LocalIntelProvider,
+		LocalIntelModel:   opts.LocalIntelModel,
+		LocalIntelDiffMax: cfg.GitHub.LocalIntelDiffMax,
 	}
-	return func(ctx context.Context, owner, repo string, number int) (string, error) {
-		input, err := json.Marshal(map[string]any{
-			"owner":  owner,
-			"repo":   repo,
-			"number": number,
-		})
-		if err != nil {
-			return "", err
+	router, err := pipeline.NewLLMRouter(routerCfg, opts.Log)
+	if err != nil {
+		return nil // primary provider missing — handled by caller
+	}
+
+	// Build trace store.
+	traceDir := cfg.GitHub.TraceDir
+	if traceDir == "" && opts.StateDir != "" {
+		traceDir = filepath.Join(opts.StateDir, "pipeline-traces")
+	}
+	var store pipeline.TraceStore
+	if traceDir != "" && traceDir != "none" {
+		if fs, err := pipeline.NewFileTraceStore(traceDir); err == nil {
+			store = fs
 		}
-		return tool.Execute(ctx, input)
+	}
+	if store == nil {
+		store = pipeline.NopTraceStore{}
+	}
+
+	// Start background goroutines.
+	traceAgent := pipeline.NewTraceAgent(store, opts.Log)
+	go traceAgent.Run(ctx)
+
+	dedupWindow := time.Duration(cfg.GitHub.DedupWindowSecs) * time.Second
+	coord := pipeline.NewCoordinator(
+		pipeline.CoordinatorConfig{
+			MaxWorkers:  cfg.GitHub.PRReviewWorkers,
+			DedupWindow: dedupWindow,
+			DefaultOrg:  cfg.GitHub.DefaultOrg,
+		},
+		router, traceAgent, gh, sbRunner, det, opts.Log,
+	)
+	go coord.Start(ctx)
+
+	repoMgr := opts.RepoManager
+	return func(callCtx context.Context, owner, repo string, number int) (string, error) {
+		prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, number)
+		input := pipeline.StageInput{
+			Owner:    owner,
+			Repo:     repo,
+			FullRepo: owner + "/" + repo,
+			Number:   number,
+			PRURL:    prURL,
+		}
+		// Inject repo intelligence context when available.
+		if repoMgr != nil {
+			repoID := repointel.RepoID("github", owner, repo)
+			input.RepoContext = repoMgr.MemoryForReview(repoID)
+		}
+		job := pipeline.PRJob{
+			Input:    input,
+			Priority: pipeline.PriorityNormal,
+		}
+		return coord.SubmitAndWait(callCtx, job)
 	}
 }
 

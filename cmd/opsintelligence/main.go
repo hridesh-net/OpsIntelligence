@@ -42,6 +42,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
+	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/provider/anthropic"
@@ -52,6 +53,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/provider/openaicompat"
 	planoprovider "github.com/opsintelligence/opsintelligence/internal/provider/plano"
 	"github.com/opsintelligence/opsintelligence/internal/provider/vertex"
+	"github.com/opsintelligence/opsintelligence/internal/repointel"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
@@ -63,7 +65,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.28" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.29" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -232,6 +234,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		versionCmd(flags),
 		localgemmaCmd(flags),
 		prReviewsCmd(flags), // pr-review pool monitoring + control
+		reposCmd(flags),    // repo intelligence: index, scan, users, TUI
 	)
 	return root
 }
@@ -1810,6 +1813,55 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return "## Active Sub-Agents (live)\n" + board
 	})
 
+	// ── Repo Intelligence manager (optional) ──────────────────────────
+	var repoMgr *repointel.Manager
+	if cfg.RepoIntel.Enabled {
+		riCfg := cfg.RepoIntel
+		registryFile := riCfg.RegistryFile
+		if registryFile == "" {
+			registryFile = "repointel/repos.yaml"
+		}
+		if !filepath.IsAbs(registryFile) {
+			registryFile = filepath.Join(cfg.StateDir, registryFile)
+		}
+		memDir := riCfg.MemoryDir
+		if memDir == "" {
+			memDir = "repointel/memory"
+		}
+		if !filepath.IsAbs(memDir) {
+			memDir = filepath.Join(cfg.StateDir, memDir)
+		}
+		riRouter, riErr := pipeline.NewLLMRouter(pipeline.LLMRouterConfig{
+			Primary:      p,
+			PrimaryModel: modelInfo.ID,
+			PrimaryRPM:   cfg.DevOps.GitHub.PrimaryRPM,
+			BurstMult:    cfg.DevOps.GitHub.BurstMultiplier,
+			SecondaryRPM: cfg.DevOps.GitHub.SecondaryRPM,
+		}, log)
+		if riErr != nil {
+			log.Warn("repo intelligence LLM router init failed", zap.Error(riErr))
+		} else {
+			maxFiles := riCfg.MaxFilesPerRepo
+			idxr := repointel.NewIndexer(repointel.IndexerConfig{
+				GitHubToken:     cfg.DevOps.GitHub.Token,
+				MemoryDir:       memDir,
+				MaxFilesPerRepo: maxFiles,
+			}, riRouter, log)
+			scnr := repointel.NewScanner(riRouter, log)
+			mgr, mgrErr := repointel.NewManager(repointel.ManagerConfig{
+				RegistryPath: registryFile,
+				MemoryDir:    memDir,
+			}, idxr, scnr, log)
+			if mgrErr != nil {
+				log.Warn("repo intelligence manager init failed", zap.Error(mgrErr))
+			} else {
+				repoMgr = mgr
+				go mgr.Start(ctx)
+				log.Info("repo intelligence manager started", zap.String("registry", registryFile))
+			}
+		}
+	}
+
 	// ── /pr-review command handler ────────────────────────────────────
 	// Wire up parallel PR review if GitHub integration is configured.
 	// channelSenders is a live map — entries are added when each channel
@@ -1820,26 +1872,32 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// slots free. The handler is stored in the server so the gateway API
 	// and dashboard can inspect and cancel tasks.
 	var prReviewHandler *tools.PRReviewCmdHandler
-	if reviewFn := tools.NewReviewFn(cfg.DevOps, p, modelInfo.ID); reviewFn != nil {
+	if reviewFn := tools.NewReviewFn(ctx, cfg.DevOps, p, modelInfo.ID, tools.ReviewFnOptions{
+		StateDir:    cfg.StateDir,
+		Log:         log,
+		RepoManager: repoMgr,
+	}); reviewFn != nil {
+		workers := cfg.DevOps.GitHub.PRReviewWorkers
+		if workers <= 0 {
+			workers = 16
+		}
 		prReviewHandler = tools.NewPRReviewCmdHandler(
 			reviewFn,
 			channelSenders,
-			cfg.DevOps.GitHub.PRReviewWorkers,
+			workers,
 			log,
 		)
 		runner = runner.WithPRReview(prReviewHandler)
-		// Expose monitoring + cancellation to the master agent.
 		toolReg.Register(tools.PRReviewTasksTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewCancelTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewEventsTool{H: prReviewHandler})
 		catalog = tools.NewCatalog(toolReg, toolGraph)
 		runner = runner.WithCatalog(catalog)
-		// Inject active PR review panel into the master agent's ambient context.
 		runner = runner.WithSystemPromptAugmentor(func(_ context.Context) string {
 			return prReviewHandler.Dashboard()
 		})
-		log.Info("pr-review pool active",
-			zap.Int("max_workers", cfg.DevOps.GitHub.PRReviewWorkers),
+		log.Info("pr-review pipeline active",
+			zap.Int("max_workers", workers),
 		)
 	}
 
@@ -2053,6 +2111,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv.Config = cfg
 		srv.Logger = log
 		srv.PRReview = gateway.NewPRReviewAdapter(prReviewHandler) // exposes /api/v1/pr-reviews on the dashboard
+		srv.RepoIntel = gateway.NewRepoIntelAdapter(repoMgr)
 		if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
 			return err
 		} else if waReg != nil {

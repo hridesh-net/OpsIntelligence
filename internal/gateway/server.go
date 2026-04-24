@@ -62,6 +62,11 @@ type Server struct {
 	// and POST /api/v1/pr-reviews/{id}/cancel.
 	PRReview *prReviewAdapter
 
+	// RepoIntel is the optional Repo Intelligence adapter. When set, the
+	// gateway mounts /api/v1/repos/* endpoints for repo management, memory
+	// inspection, scan results, and user management.
+	RepoIntel *RepoIntelAdapter
+
 	// WebhookAdapters is the typed, pluggable webhook-adapter registry
 	// (see internal/webhookadapter). When non-nil and non-empty the
 	// gateway mounts its Router under /api/webhook/ and uses the shared
@@ -226,6 +231,12 @@ func (s *Server) Start() error {
 	if s.PRReview != nil {
 		mux.HandleFunc("/api/v1/pr-reviews", auth(s.withCorrelation(s.PRReview.handleList)))
 		mux.HandleFunc("/api/v1/pr-reviews/", auth(s.withCorrelation(s.PRReview.handleDetail)))
+	}
+
+	// ── API: Repo Intelligence ────────────────────────────────────────────────
+	if s.RepoIntel != nil {
+		mux.HandleFunc("/api/v1/repos", auth(s.withCorrelation(s.RepoIntel.HandleRepos)))
+		mux.HandleFunc("/api/v1/repos/", auth(s.withCorrelation(s.RepoIntel.HandleRepos)))
 	}
 
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────

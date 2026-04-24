@@ -100,6 +100,32 @@ type Config struct {
 	// disabled. Cloud operators opt into OIDC / TLS / shared-token
 	// overrides explicitly.
 	Auth AuthConfig `yaml:"auth"`
+
+	// RepoIntel configures the Repo Intelligence feature: per-repo memory,
+	// CVE/bottleneck scanning, and user management.
+	RepoIntel RepoIntelConfig `yaml:"repo_intel"`
+}
+
+// RepoIntelConfig configures the Repo Intelligence subsystem.
+type RepoIntelConfig struct {
+	// Enabled activates the repo intelligence manager. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// RegistryFile is the path (relative to StateDir) for the repos.yaml registry.
+	// Default: "repointel/repos.yaml".
+	RegistryFile string `yaml:"registry_file"`
+
+	// MemoryDir is the directory (relative to StateDir) where per-repo memory
+	// and scan JSON files are stored. Default: "repointel/memory".
+	MemoryDir string `yaml:"memory_dir"`
+
+	// MaxFilesPerRepo caps the number of files fetched per repo during indexing.
+	// Default: 20.
+	MaxFilesPerRepo int `yaml:"max_files_per_repo"`
+
+	// WorkQueueDepth is the channel buffer for the sequential processing queue.
+	// Default: 256.
+	WorkQueueDepth int `yaml:"work_queue_depth"`
 }
 
 // DatastoreConfig configures the ops-plane persistence backend.
@@ -281,14 +307,46 @@ type GitHubConfig struct {
 	TokenEnv   string `yaml:"token_env"`   // e.g. GITHUB_TOKEN
 	DefaultOrg string `yaml:"default_org"` // e.g. acme; used for short-hand repo queries
 
-	// PRReviewWorkers is the max number of /pr-review tasks that run concurrently.
-	// Excess tasks queue until a slot frees. 0 → default of 4.
+	// PRReviewWorkers is the max number of PR pipeline workers running concurrently.
+	// Each worker runs all five pipeline stages (fetch, analyse, sandbox, review, post).
+	// Excess jobs queue until a slot frees. 0 → default of 16.
 	PRReviewWorkers int `yaml:"pr_review_workers"`
 
 	// AllowDraftReview controls whether draft PRs are reviewed.
 	// Default false: draft PRs return a skipped result (no error, no post).
 	// Set to true to review draft PRs as normal.
 	AllowDraftReview bool `yaml:"allow_draft_review"`
+
+	// ── LLM rate limiting ────────────────────────────────────────────────────
+
+	// PrimaryRPM is the primary LLM provider's requests-per-minute limit.
+	// The pipeline uses a token-bucket refilling at PrimaryRPM/60 tokens/sec.
+	// 0 → default of 60. All parallel pipelines share this bucket.
+	PrimaryRPM int `yaml:"primary_rpm"`
+
+	// SecondaryRPM is the secondary provider's RPM. 0 = no secondary.
+	SecondaryRPM int `yaml:"secondary_rpm"`
+
+	// BurstMultiplier allows short bursts above the steady-state rate.
+	// Bucket capacity = RPM * BurstMultiplier / 60. 0 → default 1.5.
+	BurstMultiplier float64 `yaml:"burst_multiplier"`
+
+	// ── Routing ──────────────────────────────────────────────────────────────
+
+	// LocalIntelDiffMax is the maximum changed-line count at which the pipeline
+	// routes a review to local intel (Gemma) instead of the primary remote LLM.
+	// 0 → default 200. Set to -1 to disable local intel routing entirely.
+	LocalIntelDiffMax int `yaml:"local_intel_diff_max"`
+
+	// ── Trace storage ────────────────────────────────────────────────────────
+
+	// TraceDir is the directory where completed pipeline traces are stored as JSON.
+	// Empty → <state_dir>/pipeline-traces. Set to "none" to disable trace storage.
+	TraceDir string `yaml:"trace_dir"`
+
+	// DedupWindowSecs is the minimum interval (seconds) before the same PR at
+	// the same commit SHA can be re-reviewed. 0 → default 600 (10 minutes).
+	DedupWindowSecs int `yaml:"dedup_window_secs"`
 }
 
 // GitLabConfig configures GitLab access for MR review and pipeline monitoring.
@@ -350,6 +408,10 @@ type PipelineConfig struct {
 	// RequireDocker makes sandbox execution fail the review when Docker is
 	// unavailable. Default false (sandbox is skipped gracefully).
 	RequireDocker bool `yaml:"require_docker"`
+
+	// SubprocessTimeoutSeconds caps each individual test command when the pipeline
+	// falls back to direct subprocess execution (no Docker). Default 300 (5 min).
+	SubprocessTimeoutSeconds int `yaml:"subprocess_timeout_seconds"`
 }
 
 // TeamsConfig selects the active team and where team directories live.

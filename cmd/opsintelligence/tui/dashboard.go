@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -86,15 +88,24 @@ type DashboardModel struct {
 	ps            psResult
 	sessionUsage  *SessionUsage
 	overlay       bool // when true, Esc/q do not quit (parent REPL handles dismiss)
+	search        textinput.Model
+	searchActive  bool
 }
 
 // NewDashboardModel builds a dashboard. sessionUsage may be nil for standalone status.
 func NewDashboardModel(info DashboardInfo, contextLabel string, sessionUsage *SessionUsage, overlay bool) *DashboardModel {
+	ti := textinput.New()
+	ti.Placeholder = "Search settings..."
+	ti.CharLimit = 64
+	ti.Width = 40
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorMuted)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorWhite)
 	return &DashboardModel{
 		info:         info,
 		contextLabel: strings.TrimSpace(contextLabel),
 		sessionUsage: sessionUsage,
 		overlay:      overlay,
+		search:       ti,
 	}
 }
 
@@ -113,12 +124,33 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.KeyMsg:
+		if m.searchActive {
+			switch msg.String() {
+			case "esc":
+				m.searchActive = false
+				m.search.Blur()
+				m.search.SetValue("")
+				return m, nil
+			case "enter":
+				m.searchActive = false
+				m.search.Blur()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.search, cmd = m.search.Update(msg)
+				return m, cmd
+			}
+		}
 		switch msg.String() {
 		case "ctrl+c", "q", "Q", "esc":
 			if m.overlay {
 				return m, nil
 			}
 			return m, tea.Quit
+		case "/":
+			m.searchActive = true
+			m.search.Focus()
+			return m, textinput.Blink
 		case "left":
 			m.activeTab = (m.activeTab - 1 + dashTabCount) % dashTabCount
 		case "right", "tab":
@@ -167,42 +199,70 @@ func (m *DashboardModel) View() string {
 	tabRow := lipgloss.NewStyle().Width(w).Background(ColorDashboardBg).Padding(0, 1).
 		Render(strings.Join(tabParts, "  "))
 
+	// Search bar — shown between tabs and content
+	searchBorderColor := ColorBorder
+	if m.searchActive {
+		searchBorderColor = ColorAccentLavender
+	}
+	searchBar := lipgloss.NewStyle().
+		Width(w-4).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(searchBorderColor).
+		Background(ColorDashboardBg).
+		Padding(0, 1).
+		MarginLeft(2).
+		Render(m.search.View())
+
 	divLine := strings.Repeat("─", max(0, w-2))
 	div := lipgloss.NewStyle().Width(w).Padding(0, 1).Render(DashboardDivider.Render(divLine))
 
-	body := m.renderTabBody()
-	body = clipDashboardLines(body, contentH)
+	query := strings.ToLower(strings.TrimSpace(m.search.Value()))
+	body := m.renderTabBodyFiltered(query)
+	body = clipDashboardLines(body, contentH-3) // -3 for search bar height
 
 	panel := DashboardPanel.Width(w - 2).Render(body)
 
-	footerText := "←/→ · tab · shift+tab · q / esc quit"
-	if m.overlay {
-		footerText = "←/→ · tab · esc / ctrl+o close"
+	footerParts := []string{"↑/↓/tab to switch", "/ to search", "Esc to close"}
+	if !m.overlay {
+		footerParts = []string{"↑/↓/tab to switch", "/ to search", "q / Esc to quit"}
 	}
+	footerText := strings.Join(footerParts, " · ")
 	footer := lipgloss.NewStyle().Width(w).Background(ColorDashboardBg).Padding(0, 1).
 		Foreground(ColorMuted).Render(footerText)
 
-	return lipgloss.JoinVertical(lipgloss.Left, strip, tabRow, div, panel, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, strip, tabRow, searchBar, div, panel, footer)
 }
 
-func (m *DashboardModel) renderTabBody() string {
+func (m *DashboardModel) renderTabBodyFiltered(query string) string {
 	switch m.activeTab {
 	case dashTabStatus:
 		lines := StatusContentLines(m.info.Status, m.ps, true)
 		title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Orchestrator")
-		return title + "\n\n" + strings.Join(lines, "\n")
+		if query == "" {
+			return title + "\n\n" + strings.Join(lines, "\n")
+		}
+		var filtered []string
+		for _, l := range lines {
+			if strings.Contains(strings.ToLower(l), query) {
+				filtered = append(filtered, l)
+			}
+		}
+		if len(filtered) == 0 {
+			return title + "\n\n" + lipgloss.NewStyle().Foreground(ColorMuted).Render("No matches for "+strconv.Quote(query))
+		}
+		return title + "\n\n" + strings.Join(filtered, "\n")
 	case dashTabConfig:
-		return m.renderConfigTab()
+		return m.renderConfigTabFiltered(query)
 	case dashTabLimits:
-		return m.renderLimitsTab()
+		return m.renderLimitsTabFiltered(query)
 	case dashTabUsage:
-		return m.renderUsageTab()
+		return m.renderUsageTabFiltered(query)
 	default:
 		return ""
 	}
 }
 
-func (m *DashboardModel) renderConfigTab() string {
+func (m *DashboardModel) renderConfigTabFiltered(query string) string {
 	dim := lipgloss.NewStyle().Foreground(ColorMuted)
 	lav := lipgloss.NewStyle().Foreground(ColorAccentLavender)
 
@@ -232,39 +292,58 @@ func (m *DashboardModel) renderConfigTab() string {
 		{"local_intel", li},
 		{"mcp.clients", fmt.Sprintf("%d", m.info.MCPClientCount)},
 	}
-	var rows []string
 	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Configuration")
+	var rows []string
 	rows = append(rows, title, "")
 	const keyW = 18
+	matched := 0
 	for _, row := range kv {
+		if query != "" && !strings.Contains(row.k, query) && !strings.Contains(strings.ToLower(row.v), query) {
+			continue
+		}
+		matched++
 		pad := strings.Repeat(" ", max(0, keyW-len(row.k)))
 		line := dim.Render(row.k+pad) + lav.Render(row.v)
 		rows = append(rows, line)
 	}
-	return strings.Join(rows, "\n")
-}
-
-func (m *DashboardModel) renderLimitsTab() string {
-	dim := lipgloss.NewStyle().Foreground(ColorMuted)
-	lav := lipgloss.NewStyle().Foreground(ColorAccentLavender)
-	L := m.info.Limits
-
-	rows := []string{
-		lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Limits"),
-		"",
-		rowKV(dim, lav, "max_iterations", fmtLimit(L.MaxIterations)),
-		rowKV(dim, lav, "working_token_budget", fmtLimit(L.WorkingTokenBudget)),
-		rowKV(dim, lav, "mempalace.search_limit", fmtLimit(L.MemPalaceSearchLimit)),
-		rowKV(dim, lav, "gateway.max_ws_clients", fmtLimit(L.MaxWebSocketClients)),
-		rowKV(dim, lav, "subagent.max_concurrent", fmtLimit(L.SubagentMaxConcurrent)),
-		rowKV(dim, lav, "subagent.retain_limit", fmtLimit(L.SubagentRetainLimit)),
-		rowKV(dim, lav, "local_intel.max_tokens", fmtLimit(L.LocalIntelMaxTokens)),
-		rowKV(dim, lav, "local_intel.smart_route_max", fmtLimit(L.SmartRoutingMaxTokens)),
+	if query != "" && matched == 0 {
+		rows = append(rows, dim.Render("No matches for "+strconv.Quote(query)))
 	}
 	return strings.Join(rows, "\n")
 }
 
-func (m *DashboardModel) renderUsageTab() string {
+func (m *DashboardModel) renderLimitsTabFiltered(query string) string {
+	dim := lipgloss.NewStyle().Foreground(ColorMuted)
+	lav := lipgloss.NewStyle().Foreground(ColorAccentLavender)
+	L := m.info.Limits
+
+	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Limits")
+	kv := []struct{ k, v string }{
+		{"max_iterations", fmtLimit(L.MaxIterations)},
+		{"working_token_budget", fmtLimit(L.WorkingTokenBudget)},
+		{"mempalace.search_limit", fmtLimit(L.MemPalaceSearchLimit)},
+		{"gateway.max_ws_clients", fmtLimit(L.MaxWebSocketClients)},
+		{"subagent.max_concurrent", fmtLimit(L.SubagentMaxConcurrent)},
+		{"subagent.retain_limit", fmtLimit(L.SubagentRetainLimit)},
+		{"local_intel.max_tokens", fmtLimit(L.LocalIntelMaxTokens)},
+		{"local_intel.smart_route_max", fmtLimit(L.SmartRoutingMaxTokens)},
+	}
+	rows := []string{title, ""}
+	matched := 0
+	for _, row := range kv {
+		if query != "" && !strings.Contains(row.k, query) && !strings.Contains(row.v, query) {
+			continue
+		}
+		matched++
+		rows = append(rows, rowKV(dim, lav, row.k, row.v))
+	}
+	if query != "" && matched == 0 {
+		rows = append(rows, dim.Render("No matches for "+strconv.Quote(query)))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m *DashboardModel) renderUsageTabFiltered(query string) string {
 	dim := lipgloss.NewStyle().Foreground(ColorMuted)
 	lav := lipgloss.NewStyle().Foreground(ColorAccentLavender)
 
@@ -275,18 +354,26 @@ func (m *DashboardModel) renderUsageTab() string {
 
 	if m.sessionUsage != nil && m.sessionUsage.Turns > 0 {
 		s := m.sessionUsage
-		b.WriteString(rowKV(dim, lav, "turns_completed", fmt.Sprintf("%d", s.Turns)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "prompt_tokens", fmtNum(s.PromptTokens)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "completion_tokens", fmtNum(s.CompletionTokens)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "cache_read", fmtNum(s.CacheReadTokens)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "cache_write", fmtNum(s.CacheWriteTokens)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "total_tokens", fmtNum(s.TotalTokens)))
-		b.WriteString("\n")
+		kv := []struct{ k, v string }{
+			{"turns_completed", fmt.Sprintf("%d", s.Turns)},
+			{"prompt_tokens", fmtNum(s.PromptTokens)},
+			{"completion_tokens", fmtNum(s.CompletionTokens)},
+			{"cache_read", fmtNum(s.CacheReadTokens)},
+			{"cache_write", fmtNum(s.CacheWriteTokens)},
+			{"total_tokens", fmtNum(s.TotalTokens)},
+		}
+		matched := 0
+		for _, row := range kv {
+			if query != "" && !strings.Contains(row.k, query) && !strings.Contains(row.v, query) {
+				continue
+			}
+			matched++
+			b.WriteString(rowKV(dim, lav, row.k, row.v))
+			b.WriteString("\n")
+		}
+		if query != "" && matched == 0 {
+			b.WriteString(dim.Render("No matches for " + strconv.Quote(query)))
+		}
 		return b.String()
 	}
 
@@ -294,10 +381,17 @@ func (m *DashboardModel) renderUsageTab() string {
 	b.WriteString("\n\n")
 	ramMB := float64(m.ps.rssKB) / 1024.0
 	if m.info.Status.PID > 0 && m.ps.alive {
-		b.WriteString(rowKV(dim, lav, "process_rss", fmt.Sprintf("%.1f MB", ramMB)))
-		b.WriteString("\n")
-		b.WriteString(rowKV(dim, lav, "pid", fmt.Sprintf("%d", m.info.Status.PID)))
-		b.WriteString("\n")
+		kv := []struct{ k, v string }{
+			{"process_rss", fmt.Sprintf("%.1f MB", ramMB)},
+			{"pid", fmt.Sprintf("%d", m.info.Status.PID)},
+		}
+		for _, row := range kv {
+			if query != "" && !strings.Contains(row.k, query) && !strings.Contains(row.v, query) {
+				continue
+			}
+			b.WriteString(rowKV(dim, lav, row.k, row.v))
+			b.WriteString("\n")
+		}
 	} else if m.info.Status.PID > 0 {
 		b.WriteString(dim.Render("Process not running or PID unavailable for RSS."))
 	} else {
