@@ -111,6 +111,7 @@ func doFetch(ctx context.Context, in StageInput, c *github.Client) (*FetchResult
 	if in.CommitSHA != "" {
 		commitSHA = in.CommitSHA
 	}
+	in.CommitSHA = commitSHA
 
 	return &FetchResult{
 		PR:         pr,
@@ -119,14 +120,7 @@ func doFetch(ctx context.Context, in StageInput, c *github.Client) (*FetchResult
 		ValidLines: validLines,
 		DiffLines:  diffLines,
 		FilePaths:  paths,
-	}, fmt.Errorf("%w", setCommitSHA(&in, commitSHA)) // propagate SHA; safe nil check below
-}
-
-// setCommitSHA is a no-op helper that always returns nil; used to propagate
-// the commit SHA into StageInput without a separate return value.
-func setCommitSHA(in *StageInput, sha string) error {
-	in.CommitSHA = sha
-	return nil
+	}, nil
 }
 
 // buildAnnotatedDiff builds the annotated diff and valid-lines index.

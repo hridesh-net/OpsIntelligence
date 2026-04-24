@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.31] — 2026-04-24
+
+### Fixed
+
+- **PR review fetch**: After a successful GitHub fetch, `doFetch` no longer returned `fmt.Errorf("%w", nil)` (a mistaken attempt to thread `CommitSHA` through the error return). That non-nil error formatted as `%!w(<nil>)` and caused PR review pool tasks to fail immediately after "fetching diff".
+
 ## [0.3.23] — 2026-04-22
 
 ### Added
