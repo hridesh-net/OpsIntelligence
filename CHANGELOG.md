@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **doctor**: If stdin or stdout is not a TTY (CI, pipes, `go test` subprocesses), print plain-text check output instead of the Bubble Tea dashboard, which failed with `could not open a new TTY`.
+
 ## [0.3.31] — 2026-04-24
 
 ### Fixed

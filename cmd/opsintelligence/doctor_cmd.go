@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
@@ -59,7 +60,6 @@ Use --no-input / --non-interactive for scripts (doctor does not prompt today; re
 
 See doc/runbooks/doctor-config-validation.md and doc/runbooks/doctor-json-schema.md for details.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = noInput // reserved: fail closed if a future check ever required stdin
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
@@ -74,6 +74,10 @@ See doc/runbooks/doctor-config-validation.md and doc/runbooks/doctor-json-schema
 
 			exit := doctorExitCode(checks)
 
+			// Bubble Tea doctor UI needs a real TTY (CI, scripts, and go test subprocesses do not).
+			textMode := noInput || !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd()))
+			_ = noInput // still reserved for explicit non-interactive / future stdin checks
+
 			if asJSON {
 				out := doctorOutput{
 					SchemaVersion: 1,
@@ -86,7 +90,7 @@ See doc/runbooks/doctor-config-validation.md and doc/runbooks/doctor-json-schema
 				if err := enc.Encode(out); err != nil {
 					return err
 				}
-			} else if noInput {
+			} else if textMode {
 				fmt.Fprint(cmd.OutOrStdout(), formatDoctorTextOutput(checks))
 			} else {
 				// Run interactive dashboard
