@@ -333,3 +333,80 @@ func TestGithubReviewPRTool_EmptyFindings_Approve(t *testing.T) {
 		t.Errorf("event = %v, want APPROVE", payload["event"])
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parsePRURL + tolerant number parsing
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestParsePRURL(t *testing.T) {
+	cases := []struct {
+		input         string
+		wantOwner     string
+		wantRepo      string
+		wantNumber    int
+		wantOK        bool
+	}{
+		{"https://github.com/acme/graphify/pull/42", "acme", "graphify", 42, true},
+		{"http://github.com/acme/graphify/pull/42", "acme", "graphify", 42, true},
+		{"github.com/acme/graphify/pull/42", "acme", "graphify", 42, true},
+		{"https://github.com/acme/graphify/pull/42/files", "acme", "graphify", 42, true},
+		{"https://github.com/acme/graphify/pull/42#discussion", "acme", "graphify", 42, true},
+		{"https://github.com/acme/graphify/issues/42", "", "", 0, false},
+		{"acme/graphify", "", "", 0, false},
+		{"not-a-url", "", "", 0, false},
+		{"", "", "", 0, false},
+	}
+	for _, tc := range cases {
+		o, r, n, ok := parsePRURL(tc.input)
+		if ok != tc.wantOK || o != tc.wantOwner || r != tc.wantRepo || n != tc.wantNumber {
+			t.Errorf("parsePRURL(%q) = (%q,%q,%d,%v), want (%q,%q,%d,%v)",
+				tc.input, o, r, n, ok,
+				tc.wantOwner, tc.wantRepo, tc.wantNumber, tc.wantOK)
+		}
+	}
+}
+
+func TestGithubReviewPRTool_StringNumber(t *testing.T) {
+	srv := newTestGitHubServer(t, 2)
+	defer srv.Close()
+	tool := &githubReviewPRTool{
+		c:          github.New(github.Config{Token: "tok", BaseURL: srv.URL}, srv.Client()),
+		defaultOrg: "acme",
+		prov:       &stubProvider{response: "[]"},
+		model:      "stub",
+	}
+	// LLM passes number as a quoted string — must still work.
+	input := json.RawMessage(`{"repo":"repo","number":"2","dry_run":true}`)
+	out, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(out), &payload)
+	if payload["event"] != "APPROVE" {
+		t.Errorf("event = %v, want APPROVE", payload["event"])
+	}
+}
+
+func TestGithubReviewPRTool_PRURL(t *testing.T) {
+	srv := newTestGitHubServer(t, 2)
+	defer srv.Close()
+	tool := &githubReviewPRTool{
+		c:          github.New(github.Config{Token: "tok", BaseURL: srv.URL}, srv.Client()),
+		defaultOrg: "",
+		prov:       &stubProvider{response: "[]"},
+		model:      "stub",
+	}
+	// LLM passes a full PR URL — owner/repo/number extracted automatically.
+	prURL := "https://github.com/acme/repo/pull/2"
+	inputJSON, _ := json.Marshal(map[string]any{"pr_url": prURL, "dry_run": true})
+	out, err := tool.Execute(context.Background(), json.RawMessage(inputJSON))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(out), &payload)
+	if payload["event"] != "APPROVE" {
+		t.Errorf("event = %v, want APPROVE", payload["event"])
+	}
+}

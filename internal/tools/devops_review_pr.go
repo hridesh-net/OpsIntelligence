@@ -41,21 +41,26 @@ func (t *githubReviewPRTool) Definition() provider.ToolDef {
 			"validates those anchors against the real diff, then submits a formal GitHub review with " +
 			"inline line-level comments (APPROVE / REQUEST_CHANGES / COMMENT). " +
 			"Use instead of chain_run+submit_review when you want a single, atomic review with no intermediate steps. " +
+			"Accepts a full GitHub PR URL via pr_url (e.g. https://github.com/owner/repo/pull/42) — " +
+			"owner, repo, and number are extracted automatically in that case. " +
 			"Requires the configured GitHub token to have pull_requests:write on the target repo.",
 		InputSchema: provider.ToolParameter{
 			Type: "object",
 			Properties: map[string]any{
+				"pr_url": map[string]any{
+					"type":        "string",
+					"description": "Full GitHub PR URL (e.g. https://github.com/owner/repo/pull/42). When provided, owner/repo/number are extracted automatically — you do not need to supply them separately.",
+				},
 				"owner": map[string]any{
 					"type":        "string",
-					"description": "Org or user owning the repo (default: devops.github.default_org).",
+					"description": "Org or user owning the repo (default: devops.github.default_org). Ignored when pr_url is provided.",
 				},
 				"repo": map[string]any{
 					"type":        "string",
-					"description": "Repository name. May include owner/ prefix.",
+					"description": "Repository name. May include owner/ prefix. Ignored when pr_url is provided.",
 				},
 				"number": map[string]any{
-					"type":        "integer",
-					"description": "Pull request number.",
+					"description": "Pull request number (integer or string). Ignored when pr_url is provided.",
 				},
 				"focus": map[string]any{
 					"type":        "string",
@@ -66,7 +71,6 @@ func (t *githubReviewPRTool) Definition() provider.ToolDef {
 					"description": "If true, return the review payload as JSON without posting it to GitHub.",
 				},
 			},
-			Required: []string{"repo", "number"},
 		},
 	}
 }
@@ -76,28 +80,73 @@ func (t *githubReviewPRTool) Definition() provider.ToolDef {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (t *githubReviewPRTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	var a struct {
-		Owner  string `json:"owner"`
-		Repo   string `json:"repo"`
-		Number int    `json:"number"`
-		Focus  string `json:"focus"`
-		DryRun bool   `json:"dry_run"`
+	// Use json.Number for the number field so the LLM can pass it as either
+	// an integer (42) or a string ("42") without causing an unmarshal error.
+	var raw struct {
+		Owner  string          `json:"owner"`
+		Repo   string          `json:"repo"`
+		Number json.Number     `json:"number"`
+		Focus  string          `json:"focus"`
+		DryRun bool            `json:"dry_run"`
+		PRURL  string          `json:"pr_url"` // convenience: full GitHub PR URL
 	}
-	if err := json.Unmarshal(input, &a); err != nil {
+	if err := json.Unmarshal(input, &raw); err != nil {
 		return "", fmt.Errorf("review_pr: invalid input: %w", err)
 	}
 
+	owner := raw.Owner
+	repo := raw.Repo
+	focus := raw.Focus
+	dryRun := raw.DryRun
+
+	// ── Resolve from a full PR URL when provided ─────────────────────────────
+	// Handles inputs like pr_url="https://github.com/org/repo/pull/42" or
+	// when the LLM mistakenly puts a URL in the repo field.
+	for _, candidate := range []string{raw.PRURL, repo, owner} {
+		if o, r, n, ok := parsePRURL(candidate); ok {
+			if owner == "" {
+				owner = o
+			}
+			if repo == "" || candidate == repo || candidate == owner {
+				repo = r
+			}
+			if raw.Number == "" {
+				raw.Number = json.Number(strconv.Itoa(n))
+			}
+			break
+		}
+	}
+
+	// ── Parse PR number — accept int or quoted string ─────────────────────────
+	var number int
+	if raw.Number != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(raw.Number.String()))
+		if err != nil {
+			return "", fmt.Errorf("review_pr: number %q is not a valid PR number", raw.Number)
+		}
+		number = n
+	}
+
 	var err error
-	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	owner, repo, err = resolveOwnerRepo(owner, repo, t.defaultOrg)
 	if err != nil {
 		return "", err
 	}
-	if a.Number < 1 {
-		return "", fmt.Errorf("review_pr: number must be a positive PR number")
+	if number < 1 {
+		return "", fmt.Errorf("review_pr: number must be a positive PR number (got %q)", raw.Number)
 	}
 	if t.prov == nil {
 		return "", fmt.Errorf("review_pr: no LLM provider configured")
 	}
+
+	// Alias back so the rest of the function body doesn't need changing.
+	a := struct {
+		Owner  string
+		Repo   string
+		Number int
+		Focus  string
+		DryRun bool
+	}{owner, repo, number, focus, dryRun}
 
 	// ── Step 1: fetch PR metadata ────────────────────────────────────────────
 	pr, err := t.c.GetPullRequest(ctx, a.Owner, a.Repo, a.Number)
@@ -546,4 +595,41 @@ func stripJSONFences(s string) string {
 		}
 	}
 	return s
+}
+
+// parsePRURL parses a GitHub PR URL of the form:
+//
+//	https://github.com/<owner>/<repo>/pull/<number>
+//
+// Returns (owner, repo, number, true) on success or ("", "", 0, false) otherwise.
+// Also handles variants without the https:// scheme or with trailing slashes/fragments.
+func parsePRURL(raw string) (owner, repo string, number int, ok bool) {
+	s := strings.TrimSpace(raw)
+	// Strip scheme.
+	for _, prefix := range []string{"https://", "http://"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	// Must start with github.com/
+	if !strings.HasPrefix(s, "github.com/") {
+		return
+	}
+	s = strings.TrimPrefix(s, "github.com/")
+	// Strip fragment/query.
+	if i := strings.IndexAny(s, "#?"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimRight(s, "/")
+	// Expect: <owner>/<repo>/pull/<number>
+	parts := strings.Split(s, "/")
+	if len(parts) < 4 {
+		return
+	}
+	if parts[2] != "pull" {
+		return
+	}
+	n, err := strconv.Atoi(parts[3])
+	if err != nil || n < 1 {
+		return
+	}
+	return parts[0], parts[1], n, true
 }
