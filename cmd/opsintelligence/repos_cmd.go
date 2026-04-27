@@ -15,11 +15,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
 	"github.com/spf13/cobra"
 )
@@ -77,11 +79,48 @@ func openRegistry(gf *globalFlags) (*repointel.Registry, error) {
 }
 
 func parseOwnerName(full string) (owner, name string, err error) {
+	full = strings.TrimSpace(full)
+	full = strings.TrimSuffix(full, ".git")
+	full = strings.TrimPrefix(full, "https://github.com/")
+	full = strings.TrimPrefix(full, "http://github.com/")
+	full = strings.TrimPrefix(full, "https://gitlab.com/")
+	full = strings.TrimPrefix(full, "http://gitlab.com/")
+	if strings.HasPrefix(full, "git@github.com:") {
+		full = strings.TrimPrefix(full, "git@github.com:")
+	}
+	if strings.HasPrefix(full, "git@gitlab.com:") {
+		full = strings.TrimPrefix(full, "git@gitlab.com:")
+	}
+	full = strings.TrimPrefix(full, "/")
 	parts := strings.SplitN(full, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("repo must be in owner/name format, got %q", full)
 	}
 	return parts[0], parts[1], nil
+}
+
+// ensureRepoIntelEnabled flips repo_intel.enabled on first use so repos add/sync
+// "just works" without requiring manual YAML edits.
+func ensureRepoIntelEnabled(gf *globalFlags) (bool, error) {
+	cfgPath := strings.TrimSpace(gf.configPath)
+	if cfgPath == "" {
+		cfgPath = config.DefaultConfigPath()
+	}
+	if cfg, err := loadConfig(cfgPath, nil); err == nil && cfg.RepoIntel.Enabled {
+		return false, nil
+	}
+	patch := []byte("repo_intel:\n  enabled: true\n")
+	merged, err := mergeOnboardYAML(cfgPath, patch)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(cfgPath, merged, 0o600); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ── repos add ─────────────────────────────────────────────────────────────────
@@ -96,6 +135,10 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 			owner, name, err := parseOwnerName(args[0])
 			if err != nil {
 				return err
+			}
+			enabledNow, err := ensureRepoIntelEnabled(gf)
+			if err != nil {
+				return fmt.Errorf("enable repo_intel: %w", err)
 			}
 			reg, err := openRegistry(gf)
 			if err != nil {
@@ -112,8 +155,18 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 			if err := reg.Add(entry); err != nil {
 				return err
 			}
+			if err := reg.UpdateIndexStatus(entry.ID, repointel.IndexPending, "", ""); err != nil {
+				return err
+			}
+			if err := reg.UpdateScanStatus(entry.ID, repointel.ScanPending, "", ""); err != nil {
+				return err
+			}
 			fmt.Printf("Repo %s/%s added (platform: %s).\n", owner, name, platform)
-			fmt.Println("Run `opsintelligence repos sync` or start the agent to begin indexing.")
+			fmt.Println("Queued initial indexing + scan. A running agent will pick it up automatically.")
+			if enabledNow {
+				fmt.Println("Repo Intelligence was disabled in config and has been auto-enabled.")
+				fmt.Println("If an agent is already running, restart once: `opsintelligence restart`.")
+			}
 			return nil
 		},
 	}
@@ -194,6 +247,10 @@ func reposSyncCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			enabledNow, err := ensureRepoIntelEnabled(gf)
+			if err != nil {
+				return fmt.Errorf("enable repo_intel: %w", err)
+			}
 			reg, err := openRegistry(gf)
 			if err != nil {
 				return err
@@ -208,6 +265,10 @@ func reposSyncCmd(gf *globalFlags) *cobra.Command {
 			}
 			fmt.Printf("Repo %s/%s queued for re-sync.\n", owner, name)
 			fmt.Println("The agent will pick it up on the next processing cycle.")
+			if enabledNow {
+				fmt.Println("Repo Intelligence was disabled in config and has been auto-enabled.")
+				fmt.Println("If an agent is already running, restart once: `opsintelligence restart`.")
+			}
 			return nil
 		},
 	}
@@ -252,6 +313,11 @@ func reposStatusCmd(gf *globalFlags) *cobra.Command {
 			if e.ScanStatus == repointel.ScanDone {
 				fmt.Printf("  Scanned at:  %s\n", e.ScannedAt.Format(time.RFC3339))
 				fmt.Printf("  Risk level:  %s\n", e.RiskLevel)
+			}
+			cfg, cfgErr := loadConfig(gf.configPath, nil)
+			if cfgErr == nil && !cfg.RepoIntel.Enabled && (e.IndexStatus == repointel.IndexPending || e.ScanStatus == repointel.ScanPending) {
+				fmt.Println("Hint: repo_intel.enabled is false; queue will stay pending until enabled.")
+				fmt.Println("Set `repo_intel.enabled: true` then restart: `opsintelligence restart`.")
 			}
 			if e.ScanError != "" {
 				fmt.Printf("  Error:       %s\n", e.ScanError)

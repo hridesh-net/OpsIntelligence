@@ -2,10 +2,8 @@ package tui
 
 // setup.go — guided Gemma + MemPalace quick-start wizard.
 //
-// Designed for first-time / naive users who want smart local AI routing
-// (Gemma) and structured memory (MemPalace) without editing YAML by hand.
-//
-// Entry point: RunSetupWizard()
+// Full bubbletea alt-screen wizard: welcome → options → progress → done.
+// No raw fmt.Print / ANSI escape hacks.
 
 import (
 	"context"
@@ -24,7 +22,7 @@ import (
 )
 
 // ─────────────────────────────────────────────
-// Setup wizard state
+// Public types
 // ─────────────────────────────────────────────
 
 // SetupOptions are provided by the caller (main.go / quickstart command).
@@ -47,179 +45,494 @@ type SetupResult struct {
 // RunSetupWizard — entry point
 // ─────────────────────────────────────────────
 
-// RunSetupWizard runs the interactive Gemma + MemPalace setup wizard.
-// It uses huh forms for selection and a bubbletea spinner for progress tasks.
+// RunSetupWizard runs the interactive setup wizard as a full-screen bubbletea program.
 func RunSetupWizard(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
-	fmt.Print(renderSetupHeader(opts.Version))
-
-	result := &SetupResult{}
-
-	// ── Step 1: What to set up ─────────────────
-	var wantMemPalace, wantGemma bool
-
-	pyAvail := pythonAvailable(opts.BootstrapPython)
-	pyHint := ""
-	if !pyAvail {
-		pyHint = " (python3 not found — MemPalace requires Python 3.9+)"
+	m := newWizardModel(ctx, opts)
+	p := tea.NewProgram(m,
+		tea.WithAltScreen(),
+		tea.WithContext(ctx),
+	)
+	final, err := p.Run()
+	if err != nil {
+		return nil, err
+	}
+	wm, ok := final.(*wizardModel)
+	if !ok || wm.result == nil {
+		return &SetupResult{}, nil
 	}
 
-	form := huh.NewForm(
+	// Print YAML snippet in normal terminal after alt-screen exits.
+	if wm.result.YAMLSnippet != "" {
+		printYAMLSnippet(wm.result.YAMLSnippet)
+	}
+	return wm.result, nil
+}
+
+// ─────────────────────────────────────────────
+// Wizard steps
+// ─────────────────────────────────────────────
+
+type wizardStep int
+
+const (
+	stepWelcome wizardStep = iota // static welcome screen
+	stepOptions                   // huh form — choose components
+	stepRunning                   // spinner progress per task
+	stepDone                      // results summary
+)
+
+// ─────────────────────────────────────────────
+// wizardModel — root bubbletea model
+// ─────────────────────────────────────────────
+
+type wizardTask struct {
+	label string
+	fn    func() error
+}
+
+type wizardTaskResult struct {
+	label string
+	err   error
+}
+
+type wizardTaskDoneMsg struct{ err error }
+type wizardPulseMsg struct{}
+
+type wizardModel struct {
+	ctx  context.Context
+	opts SetupOptions
+	step wizardStep
+
+	width  int
+	height int
+	pulse  int
+
+	// stepOptions
+	form      *huh.Form
+	wantMem   bool
+	wantGemma bool
+	pyAvail   bool
+
+	// stepRunning
+	spinner   spinner.Model
+	tasks     []wizardTask
+	taskIdx   int
+	taskDone  chan error
+	completed []wizardTaskResult
+
+	// stepDone
+	result *SetupResult
+}
+
+func newWizardModel(ctx context.Context, opts SetupOptions) *wizardModel {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+
+	return &wizardModel{
+		ctx:     ctx,
+		opts:    opts,
+		step:    stepWelcome,
+		spinner: sp,
+		pyAvail: pythonAvailable(opts.BootstrapPython),
+	}
+}
+
+func wizardPulseCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return wizardPulseMsg{} })
+}
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+
+func (m *wizardModel) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, wizardPulseCmd())
+}
+
+// ─────────────────────────────────────────────
+// Update
+// ─────────────────────────────────────────────
+
+func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			return m, tea.Quit
+		case tea.KeyEnter:
+			if m.step == stepWelcome {
+				return m, m.initOptions()
+			}
+			if m.step == stepDone {
+				return m, tea.Quit
+			}
+		case tea.KeyEsc:
+			if m.step == stepDone {
+				return m, tea.Quit
+			}
+		}
+
+	case wizardPulseMsg:
+		m.pulse++
+		cmds = append(cmds, wizardPulseCmd())
+
+	case spinner.TickMsg:
+		var sc tea.Cmd
+		m.spinner, sc = m.spinner.Update(msg)
+		cmds = append(cmds, sc)
+
+	case wizardTaskDoneMsg:
+		m.completed = append(m.completed, wizardTaskResult{
+			label: m.tasks[m.taskIdx].label,
+			err:   msg.err,
+		})
+		m.taskIdx++
+		if m.taskIdx < len(m.tasks) {
+			cmds = append(cmds, m.launchTask(m.taskIdx))
+		} else {
+			m.result = m.buildResult()
+			m.step = stepDone
+		}
+	}
+
+	// Delegate key events to huh form during stepOptions.
+	if m.step == stepOptions && m.form != nil {
+		f, fc := m.form.Update(msg)
+		m.form = f.(*huh.Form)
+		cmds = append(cmds, fc)
+		if m.form.State == huh.StateCompleted {
+			return m, m.startTasks()
+		}
+		if m.form.State == huh.StateAborted {
+			return m, tea.Quit
+		}
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m *wizardModel) initOptions() tea.Cmd {
+	m.step = stepOptions
+	pyHint := ""
+	if !m.pyAvail {
+		pyHint = " (python3 not found)"
+	}
+
+	m.form = huh.NewForm(
 		huh.NewGroup(
 			huh.NewNote().
-				Title("Smart Mode Setup").
+				Title("Choose Components").
 				Description(
-					"This wizard installs two optional components:\n\n"+
-						"  • MemPalace  — hierarchical memory for your agent\n"+
-						"  • Gemma      — on-device LLM for fast routing\n\n"+
-						"Both are optional. You can set up one or both.",
+					"  MemPalace  — hierarchical memory for your agent\n" +
+						"  Gemma      — on-device LLM for fast routing (~3 GiB)\n",
 				),
 			huh.NewConfirm().
-				Title("Set up MemPalace (Python memory system)?"+pyHint).
-				Value(&wantMemPalace).
+				Title("Set up MemPalace?"+pyHint).
+				Value(&m.wantMem).
 				Affirmative("Yes").
 				Negative("Skip"),
 			huh.NewConfirm().
-				Title("Set up Gemma (local AI routing, ~3 GiB download)?").
-				Value(&wantGemma).
+				Title("Download Gemma (local AI routing)?").
+				Value(&m.wantGemma).
 				Affirmative("Yes").
 				Negative("Skip"),
 		),
 	).WithTheme(setupTheme())
 
-	if err := form.RunWithContext(ctx); err != nil {
-		return nil, fmt.Errorf("setup wizard cancelled: %w", err)
+	return m.form.Init()
+}
+
+func (m *wizardModel) startTasks() tea.Cmd {
+	m.tasks = m.buildTasks()
+	if len(m.tasks) == 0 {
+		m.result = m.buildResult()
+		m.step = stepDone
+		return nil
+	}
+	m.step = stepRunning
+	m.taskIdx = 0
+	return m.launchTask(0)
+}
+
+func (m *wizardModel) launchTask(idx int) tea.Cmd {
+	task := m.tasks[idx]
+	ch := make(chan error, 1)
+	m.taskDone = ch
+	go func() { ch <- task.fn() }()
+	return func() tea.Msg {
+		return wizardTaskDoneMsg{err: <-ch}
+	}
+}
+
+func (m *wizardModel) buildTasks() []wizardTask {
+	var tasks []wizardTask
+
+	if m.wantMem && m.pyAvail {
+		tasks = append(tasks, wizardTask{
+			label: "Installing MemPalace",
+			fn:    func() error { return runMemPalaceSetup(m.ctx, m.opts) },
+		})
 	}
 
-	if !wantMemPalace && !wantGemma {
-		fmt.Println(Muted.Render("\nNothing selected — skipping setup."))
-		return result, nil
-	}
-
-	// ── Step 2: MemPalace ──────────────────────
-	if wantMemPalace {
-		if !pyAvail {
-			fmt.Println(ErrorStyle.Render("\n✗ python3 not found — skipping MemPalace."))
-			fmt.Println(Muted.Render("  Install Python 3.9+ and re-run: opsintelligence quickstart"))
-		} else {
-			fmt.Println(Primary.Render("\n▸ Setting up MemPalace…"))
-			ok, err := runWithSpinner(ctx, "Installing MemPalace", func() error {
-				return runMemPalaceSetup(ctx, opts)
-			})
-			if err != nil || !ok {
-				fmt.Println(ErrorStyle.Render("  ✗ MemPalace setup failed: ") + Muted.Render(fmt.Sprintf("%v", err)))
-				fmt.Println(Muted.Render("  Try manually: opsintelligence mempalace setup"))
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(ColorCyan).Render("  ✓ MemPalace ready"))
-				result.MemPalaceEnabled = true
-			}
-		}
-	}
-
-	// ── Step 3: Gemma ──────────────────────────
-	if wantGemma {
-		ggufDest := opts.GGUFPath
+	if m.wantGemma {
+		ggufDest := m.opts.GGUFPath
 		if ggufDest == "" {
-			ggufDest = filepath.Join(opts.StateDir, "models", "gemma-4-e2b-it.gguf")
+			ggufDest = filepath.Join(m.opts.StateDir, "models", "gemma-4-e2b-it.gguf")
 		}
+		if _, err := os.Stat(ggufDest); err != nil {
+			tasks = append(tasks, wizardTask{
+				label: "Downloading Gemma GGUF",
+				fn:    func() error { return runGemmaSetup(m.ctx, ggufDest) },
+			})
+		}
+	}
 
-		// Check if already present
+	return tasks
+}
+
+func (m *wizardModel) buildResult() *SetupResult {
+	r := &SetupResult{}
+	ggufDest := m.opts.GGUFPath
+	if ggufDest == "" {
+		ggufDest = filepath.Join(m.opts.StateDir, "models", "gemma-4-e2b-it.gguf")
+	}
+	for _, tr := range m.completed {
+		if tr.err != nil {
+			continue
+		}
+		switch {
+		case strings.Contains(tr.label, "MemPalace"):
+			r.MemPalaceEnabled = true
+		case strings.Contains(tr.label, "Gemma"):
+			r.GemmaEnabled = true
+			r.GGUFPath = ggufDest
+		}
+	}
+	// If user said yes but skipped because already present.
+	if m.wantGemma {
 		if _, err := os.Stat(ggufDest); err == nil {
-			fmt.Println(Primary.Render("\n▸ Gemma GGUF already present at " + ggufDest))
-			result.GemmaEnabled = true
-			result.GGUFPath = ggufDest
-		} else {
-			fmt.Println(Primary.Render("\n▸ Setting up Gemma…"))
-			fmt.Println(Muted.Render("  Destination: " + ggufDest))
-			fmt.Println(Muted.Render("  Size: ~3 GiB — this may take several minutes on a slow connection."))
-			fmt.Println(Muted.Render("  You can run this in the background: opsintelligence local-intel setup"))
-			fmt.Println()
-
-			var doDownload bool
-			confirmForm := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title("Download Gemma GGUF now?").
-						Description("Alternatively, place the GGUF at:\n  " + ggufDest).
-						Value(&doDownload).
-						Affirmative("Download").
-						Negative("Skip"),
-				),
-			).WithTheme(setupTheme())
-
-			if err := confirmForm.RunWithContext(ctx); err == nil && doDownload {
-				ok, dlErr := runWithSpinner(ctx, "Downloading Gemma GGUF", func() error {
-					return runGemmaSetup(ctx, ggufDest)
-				})
-				if dlErr != nil || !ok {
-					fmt.Println(ErrorStyle.Render("  ✗ Gemma download failed: ") + Muted.Render(fmt.Sprintf("%v", dlErr)))
-					fmt.Println(Muted.Render("  Try manually: opsintelligence local-intel setup"))
-				} else {
-					fmt.Println(lipgloss.NewStyle().Foreground(ColorCyan).Render("  ✓ Gemma ready"))
-					result.GemmaEnabled = true
-					result.GGUFPath = ggufDest
-				}
-			}
+			r.GemmaEnabled = true
+			r.GGUFPath = ggufDest
 		}
 	}
-
-	// ── Step 4: YAML snippet ───────────────────
-	result.YAMLSnippet = buildYAMLSnippet(result, opts)
-	if result.YAMLSnippet != "" {
-		printYAMLSnippet(result.YAMLSnippet)
-	}
-
-	return result, nil
+	r.YAMLSnippet = buildYAMLSnippet(r, m.opts)
+	return r
 }
 
 // ─────────────────────────────────────────────
-// Spinner progress helper
+// View
 // ─────────────────────────────────────────────
 
-type spinnerDoneMsg struct{ err error }
+func (m *wizardModel) View() string {
+	if m.width == 0 {
+		return "\n  Loading…\n"
+	}
+	inner := m.viewBody()
+	return m.viewChrome(inner)
+}
 
-// RunWithSpinner is the exported variant for callers outside this package.
+func (m *wizardModel) viewChrome(body string) string {
+	w := m.width - 4
+	if w < 40 {
+		w = 40
+	}
+
+	// ── Header ──────────────────────────────────
+	stepLabel := m.stepLabel()
+	left := lipgloss.JoinHorizontal(lipgloss.Left,
+		ChromePrompt.Render("›"), " ",
+		GradientWord("OPSINTELLIGENCE"), " ",
+		Muted.Render("setup"),
+	)
+	right := Muted.Render(stepLabel)
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	headerRow := left + strings.Repeat(" ", gap) + right
+	header := lipgloss.NewStyle().Width(w).Render(headerRow)
+	under := lipgloss.NewStyle().Foreground(ColorBorder).Width(w).
+		Render(ScanlineSuffix(minReplScanlineWidth(w)))
+
+	// ── Body box ────────────────────────────────
+	borderCol := PulseBorder(m.pulse)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderCol).
+		Width(w).
+		Padding(1, 2).
+		Render(body)
+
+	// ── Footer hint ─────────────────────────────
+	hint := m.footerHint()
+	footer := Muted.Render(hint)
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, under, box, footer)
+}
+
+func (m *wizardModel) stepLabel() string {
+	switch m.step {
+	case stepWelcome:
+		return "Step 1/3 · Welcome"
+	case stepOptions:
+		return "Step 2/3 · Configure"
+	case stepRunning:
+		return "Step 3/3 · Installing"
+	case stepDone:
+		return "Done"
+	}
+	return ""
+}
+
+func (m *wizardModel) footerHint() string {
+	switch m.step {
+	case stepWelcome:
+		return "  enter to continue  ·  ctrl+c to quit"
+	case stepOptions:
+		return "  ↑↓ navigate  ·  enter/space select  ·  ctrl+c quit"
+	case stepRunning:
+		return "  installing…  ·  ctrl+c to abort"
+	case stepDone:
+		return "  enter to exit  ·  YAML snippet printed after"
+	}
+	return ""
+}
+
+func (m *wizardModel) viewBody() string {
+	switch m.step {
+	case stepWelcome:
+		return m.viewWelcome()
+	case stepOptions:
+		return m.viewOptions()
+	case stepRunning:
+		return m.viewRunning()
+	case stepDone:
+		return m.viewDone()
+	}
+	return ""
+}
+
+func (m *wizardModel) viewWelcome() string {
+	w := m.width - 12
+	if w < 36 {
+		w = 36
+	}
+
+	title := lipgloss.NewStyle().
+		Foreground(ColorNeon).Bold(true).Width(w).Align(lipgloss.Center).
+		Render("Smart Mode Setup")
+
+	ver := ""
+	if m.opts.Version != "" {
+		ver = "\n" + lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
+			Render(Muted.Render(m.opts.Version))
+	}
+
+	desc := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(
+		Muted.Render("This wizard sets up two optional components:"),
+	)
+
+	comp1 := Primary.Render("  MemPalace") + Muted.Render("  — hierarchical agent memory")
+	comp2 := Primary.Render("  Gemma    ") + Muted.Render("  — on-device LLM routing (~3 GiB)")
+
+	note := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
+		Render(Muted.Render("Takes ~2 min · internet needed for downloads"))
+
+	cta := lipgloss.NewStyle().
+		Foreground(ColorPrimary).Bold(true).Width(w).Align(lipgloss.Center).
+		Render("[ Press Enter to continue ]")
+
+	return strings.Join([]string{
+		title, ver, "",
+		desc, "",
+		comp1, comp2, "",
+		note, "",
+		cta,
+	}, "\n")
+}
+
+func (m *wizardModel) viewOptions() string {
+	if m.form == nil {
+		return Muted.Render("  Loading form…")
+	}
+	return m.form.View()
+}
+
+func (m *wizardModel) viewRunning() string {
+	var sb strings.Builder
+
+	// Completed tasks
+	for _, tr := range m.completed {
+		if tr.err != nil {
+			sb.WriteString(ErrorStyle.Render("  ✗ ") + tr.label + Muted.Render(" — "+tr.err.Error()) + "\n")
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(ColorCyan).Render("  ✓ ") + tr.label + "\n")
+		}
+	}
+
+	// Current in-flight task
+	if m.taskIdx < len(m.tasks) {
+		cur := m.tasks[m.taskIdx]
+		sb.WriteString("  " + m.spinner.View() + " " + Muted.Render(cur.label+"…") + "\n")
+	}
+
+	return sb.String()
+}
+
+func (m *wizardModel) viewDone() string {
+	if m.result == nil {
+		return Muted.Render("  Nothing was configured.")
+	}
+	var sb strings.Builder
+	sb.WriteString(Neon.Bold(true).Render("  Setup complete") + "\n\n")
+
+	for _, tr := range m.completed {
+		if tr.err != nil {
+			sb.WriteString(ErrorStyle.Render("  ✗ ") + tr.label + Muted.Render(": "+tr.err.Error()) + "\n")
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Foreground(ColorCyan).Render("  ✓ ") + tr.label + "\n")
+		}
+	}
+	if len(m.completed) == 0 {
+		sb.WriteString(Muted.Render("  Nothing was installed.") + "\n")
+	}
+
+	if m.result.YAMLSnippet != "" {
+		sb.WriteString("\n" + Muted.Render("  YAML config snippet will be shown after exit.") + "\n")
+	}
+
+	sb.WriteString("\n" + Muted.Render("  Run  opsintelligence doctor  to verify."))
+	return sb.String()
+}
+
+// ─────────────────────────────────────────────
+// Exported helpers (used by onboard.go, etc.)
+// ─────────────────────────────────────────────
+
+// RunWithSpinner runs fn in the background, displaying a bubbletea spinner.
 func RunWithSpinner(ctx context.Context, label string, fn func() error) (bool, error) {
-	return runWithSpinner(ctx, label, fn)
+	pm := newProgressModel(label)
+	go func() { pm.result <- fn() }()
+	p := tea.NewProgram(pm, tea.WithContext(ctx))
+	final, err := p.Run()
+	if err != nil {
+		return false, err
+	}
+	fm := final.(progressModel)
+	return fm.err == nil, fm.err
 }
 
 // RunMemPalaceSetup is the exported variant so onboard.go can reuse the logic.
 func RunMemPalaceSetup(ctx context.Context, opts SetupOptions) error {
 	return runMemPalaceSetup(ctx, opts)
 }
-
-func runWithSpinner(ctx context.Context, label string, fn func() error) (bool, error) {
-	type result struct {
-		err error
-	}
-
-	ch := make(chan result, 1)
-	go func() {
-		ch <- result{err: fn()}
-	}()
-
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
-
-	tick := time.NewTicker(80 * time.Millisecond)
-	defer tick.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case res := <-ch:
-			fmt.Print("\r\033[K") // clear spinner line
-			return res.err == nil, res.err
-		case <-tick.C:
-			sp.Spinner = nextDot(sp.Spinner)
-			fmt.Printf("\r  %s %s", sp.View(), Muted.Render(label+"…"))
-		}
-	}
-}
-
-// nextDot cycles the spinner dot manually (no bubbletea event loop needed).
-func nextDot(s spinner.Spinner) spinner.Spinner { return s }
 
 // ─────────────────────────────────────────────
 // Setup sub-routines (shell-out)
@@ -236,30 +549,22 @@ func runMemPalaceSetup(ctx context.Context, opts SetupOptions) error {
 	if err := os.MkdirAll(venvRoot, 0o755); err != nil {
 		return err
 	}
-
-	// Create venv
 	if _, err := os.Stat(filepath.Join(venvRoot, pythonBin())); err != nil {
 		if err := shellRun(ctx, py, "-m", "venv", venvRoot); err != nil {
 			return fmt.Errorf("create venv: %w", err)
 		}
 	}
-
 	vpy := filepath.Join(venvRoot, pythonBin())
-
-	// Install mempalace
 	if err := shellRun(ctx, vpy, "-c", "import mempalace"); err != nil {
 		if err := shellRun(ctx, vpy, "-m", "pip", "install", "-q", "-U", "mempalace"); err != nil {
 			return fmt.Errorf("pip install: %w", err)
 		}
 	}
-
-	// Init world (idempotent via marker)
 	marker := filepath.Join(opts.StateDir, "mempalace", ".world_initialized")
 	if _, err := os.Stat(marker); err != nil {
 		if err := os.MkdirAll(world, 0o755); err != nil {
 			return err
 		}
-		// Try CLI, then module
 		cli := filepath.Join(venvRoot, "bin", "mempalace")
 		if runtime.GOOS == "windows" {
 			cli = filepath.Join(venvRoot, "Scripts", "mempalace.exe")
@@ -280,8 +585,6 @@ func runGemmaSetup(ctx context.Context, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	// Delegate to the existing local-intel setup logic via subprocess so we don't
-	// duplicate the download + integrity check code. The binary must be in PATH.
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "opsintelligence"
@@ -313,7 +616,7 @@ func pythonAvailable(override string) bool {
 }
 
 // ─────────────────────────────────────────────
-// YAML snippet builder
+// YAML snippet builder + printer
 // ─────────────────────────────────────────────
 
 func buildYAMLSnippet(r *SetupResult, opts SetupOptions) string {
@@ -346,17 +649,13 @@ func printYAMLSnippet(snippet string) {
 	fmt.Println(Primary.Bold(true).Render("▸ Add to opsintelligence.yaml:"))
 	fmt.Println(Muted.Render("  (merge with existing memory:/agent: blocks if present)"))
 	fmt.Println()
-
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorBorder).
 		Padding(0, 2).
 		Foreground(ColorCyan)
-
 	fmt.Println(border.Render(snippet))
-
-	cfgPath := "~/.opsintelligence/opsintelligence.yaml"
-	fmt.Println(Muted.Render("\n  Config location: " + cfgPath))
+	fmt.Println(Muted.Render("  Config location: ~/.opsintelligence/opsintelligence.yaml"))
 	fmt.Println(Muted.Render("  Re-run  opsintelligence doctor  to verify."))
 	fmt.Println()
 }
@@ -364,36 +663,6 @@ func printYAMLSnippet(snippet string) {
 // ─────────────────────────────────────────────
 // UI helpers
 // ─────────────────────────────────────────────
-
-func renderSetupHeader(ver string) string {
-	markBlock := renderBrandMarkArt()
-
-	infoLines := []string{
-		"",
-		"  " + GradientWord("QUICKSTART") + "  " + Muted.Render(ver),
-		Primary.Render("  Smart Mode Setup Wizard"),
-		"",
-		Muted.Render("  Sets up Gemma (on-device AI) +"),
-		Muted.Render("  MemPalace (hierarchical memory)"),
-		"",
-		Muted.Render("  Takes ~2 min · needs internet for downloads"),
-		"",
-	}
-	var infoSB strings.Builder
-	for _, l := range infoLines {
-		infoSB.WriteString(l + "\n")
-	}
-
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, markBlock, infoSB.String())
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorPrimary).
-		Background(ColorSurface).
-		Padding(0, 1).
-		Render(combined)
-
-	return "\n" + box + "\n\n"
-}
 
 // setupTheme returns a huh theme consistent with the OpsIntelligence palette.
 func setupTheme() *huh.Theme {
@@ -413,8 +682,8 @@ func spinnerView(frame int) string {
 }
 
 // ─────────────────────────────────────────────
-// Standalone progress-spinner bubbletea model
-// (used internally if we need a full alt-screen spinner)
+// progressModel — standalone spinner bubbletea model
+// (used by RunWithSpinner for single-task progress display)
 // ─────────────────────────────────────────────
 
 type progressModel struct {
@@ -462,9 +731,9 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m progressModel) View() string {
 	if m.done {
 		if m.err != nil {
-			return ErrorStyle.Render("✗ ") + Muted.Render(m.err.Error()) + "\n"
+			return ErrorStyle.Render("  ✗ ") + Muted.Render(m.err.Error()) + "\n"
 		}
-		return lipgloss.NewStyle().Foreground(ColorCyan).Render("✓ ") + m.label + "\n"
+		return lipgloss.NewStyle().Foreground(ColorCyan).Render("  ✓ ") + m.label + "\n"
 	}
 	return "  " + m.spinner.View() + " " + Muted.Render(m.label+"…") + "\n"
 }

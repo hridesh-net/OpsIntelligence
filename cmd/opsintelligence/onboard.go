@@ -1780,6 +1780,12 @@ func runOnboarding(configPath string) (bool, error) {
 		sb.WriteString("\n")
 	}
 
+	// Repo Intelligence is enabled by default post-onboard so first repo add can
+	// begin indexing/scanning without extra manual YAML edits.
+	sb.WriteString("repo_intel:\n")
+	sb.WriteString("  enabled: true\n")
+	sb.WriteString("\n")
+
 	sb.WriteString("providers:\n")
 	writeProv := func(e provEntry) {
 		name := e.provider

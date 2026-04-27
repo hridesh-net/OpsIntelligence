@@ -109,6 +109,10 @@ type REPLModel struct {
 	dashboard      *DashboardModel
 	sessionUsage   SessionUsage
 	configOpen     bool
+
+	// atBottom tracks whether the viewport is pinned to the latest content.
+	// Auto-scroll only fires when true; manual scroll-up clears it.
+	atBottom bool
 }
 
 // NewREPLModel constructs the model. sendMsg is invoked on Enter; it must not block.
@@ -146,6 +150,7 @@ func NewREPLModel(
 		version:        ver,
 		modelName:      modelName,
 		historyIdx:     -1,
+		atBottom:       true,
 		banner:         RenderBanner(ver, sessionID, providerCount, skillCount),
 		dashboardInfo:  dashboardInfo,
 	}
@@ -246,6 +251,7 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.appendHistory(renderUserMsg(line))
 					m.appendHistory("")
 					m.textarea.Reset()
+					m.atBottom = true
 					m.thinking = true
 					m.tokenBuf = ""
 					m.activeTools = nil
@@ -264,11 +270,13 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.historyIdx--
 				}
 				m.textarea.SetValue(m.sentMessages[m.historyIdx])
-				break
+				return m, tea.Batch(cmds...)
 			}
+			m.atBottom = false
 			var vc tea.Cmd
 			m.viewport, vc = m.viewport.Update(msg)
 			cmds = append(cmds, vc)
+			return m, tea.Batch(cmds...)
 
 		case tea.KeyDown:
 			if !m.thinking && m.historyIdx != -1 {
@@ -279,11 +287,15 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.historyIdx = -1
 					m.textarea.SetValue("")
 				}
-				break
+				return m, tea.Batch(cmds...)
 			}
 			var vc tea.Cmd
 			m.viewport, vc = m.viewport.Update(msg)
 			cmds = append(cmds, vc)
+			if m.viewport.AtBottom() {
+				m.atBottom = true
+			}
+			return m, tea.Batch(cmds...)
 		}
 
 	// ── Streaming events ───────────────────────
@@ -394,7 +406,6 @@ func (m *REPLModel) View() string {
 		Render(ScanlineSuffix(minReplScanlineWidth(m.width)))
 
 	// ── Chat viewport ──────────────────────────
-	m.viewport.SetContent(m.buildContent())
 	chatBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderCol).
@@ -402,13 +413,18 @@ func (m *REPLModel) View() string {
 		Render(m.viewport.View())
 
 	// ── Input + footer ─────────────────────────
+	// Render footer separately with MaxWidth so ANSI sequences are never
+	// truncated mid-escape by the outer box's width constraint.
+	inputLine := Primary.Render("›") + " " + m.textarea.View()
+	footerLine := lipgloss.NewStyle().MaxWidth(m.width - 6).Render("  " + m.renderFooter())
+	inputContent := lipgloss.JoinVertical(lipgloss.Left, inputLine, footerLine)
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderTop(true).
 		BorderForeground(ColorBorder).
 		Width(m.width-2).
 		Padding(0, 1).
-		Render(Primary.Render("›") + " " + m.textarea.View() + "\n  " + m.renderFooter())
+		Render(inputContent)
 
 	return lipgloss.JoinVertical(lipgloss.Left, headerBar, under, chatBox, inputBox)
 }
@@ -481,7 +497,9 @@ func (m *REPLModel) flushToken() {
 
 func (m *REPLModel) refreshViewport() {
 	m.viewport.SetContent(m.buildContent())
-	m.viewport.GotoBottom()
+	if m.atBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // inputAreaHeight returns how many rows to reserve for the input panel.

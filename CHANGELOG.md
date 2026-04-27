@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.34] — 2026-04-27
+
+### Added
+
+- **Repo URL input normalization**: `repos add/sync/status/remove` now accept common GitHub/GitLab URL formats (HTTPS/SSH, optional `.git`) and normalize to `owner/name`.
+
+### Changed
+
+- **Repo learning UX defaults**: Onboarding now enables `repo_intel` by default, and `repos add` auto-queues initial index/scan so first-repo setup works without manual config edits.
+- **Repo command self-heal behavior**: `repos add` and `repos sync` auto-enable `repo_intel` when disabled and print an explicit one-time restart hint for already-running agents.
+- **Pending status guidance**: `repos status` now surfaces a clear hint when jobs remain pending because `repo_intel.enabled` is off.
+- **CLI/TUI polish**: Updated REPL/setup terminal surfaces to improve onboarding and interactive setup flow consistency.
+
 ## [0.3.33] — 2026-04-27
 
 ### Added
