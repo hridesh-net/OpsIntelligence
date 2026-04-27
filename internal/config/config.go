@@ -558,6 +558,11 @@ type GitHubWebhookConfig struct {
 	// AllowUnverified bypasses HMAC checks. NEVER enable this in production:
 	// it exists solely for local testing with tools like smee.io.
 	AllowUnverified bool `yaml:"allow_unverified,omitempty"`
+	// AutoReview, when true, automatically routes pull_request and
+	// issue_comment (on PRs) events to devops.github.review_pr without
+	// requiring explicit per-event YAML prompts. The agent will fetch the diff,
+	// run LLM analysis, and post a formal GitHub review for every configured repo.
+	AutoReview bool `yaml:"auto_review,omitempty"`
 }
 
 // GmailConfig holds settings for the Gmail Pub/Sub integration.
@@ -840,6 +845,13 @@ type SubagentTasksConfig struct {
 	DefaultTimeout string `yaml:"default_timeout"` // Go duration string, e.g. "45m"; empty = default 30m
 }
 
+// AutonomyConfig optionally constrains tool execution blast radius per user message
+// (one Run / RunStream across all model iterations, excluding internal memory flush turns).
+type AutonomyConfig struct {
+	// MaxToolCallsPerTurn is the maximum number of tools that may execute; 0 = unlimited.
+	MaxToolCallsPerTurn int `yaml:"max_tool_calls_per_turn"`
+}
+
 // SmartPromptsConfig augments where smart prompts / chains are loaded from.
 // Markdown and chain YAML use the same layout as <state_dir>/prompts/.
 // Directories are scanned in order after the embedded seed; <state_dir>/prompts
@@ -859,6 +871,8 @@ type AgentConfig struct {
 	// Enterprise opts into stronger defaults for high-load single-binary installs.
 	// When true and planning is nil, planning defaults to on; explicit planning always wins.
 	Enterprise bool `yaml:"enterprise"`
+	// Autonomy optionally caps autonomous tool use per user-facing agent turn (Run / RunStream).
+	Autonomy AutonomyConfig `yaml:"autonomy"`
 	// SubagentTasks configures limits for async sub-agent runs (see tools.SubAgentSvc.EnsureTaskManager).
 	SubagentTasks SubagentTasksConfig `yaml:"subagent_tasks"`
 	// RunTraceMode controls NDJSON run tracing for every agent turn (CLI, gateway,
@@ -960,6 +974,7 @@ type ChannelsConfig struct {
 	Discord  *DiscordConfig            `yaml:"discord"`
 	Slack    *SlackConfig              `yaml:"slack"`
 	WhatsApp *WhatsAppConfig           `yaml:"whatsapp"`
+	Teams    *MSTeamsConfig            `yaml:"teams"`
 }
 
 type WhatsAppConfig struct {
@@ -999,6 +1014,14 @@ type SlackConfig struct {
 	AppToken  string   `yaml:"app_token"`
 	DMMode    string   `yaml:"dm_mode"`    // open, pairing, allowlist, disabled
 	AllowFrom []string `yaml:"allow_from"` // Whitelisted IDs/Usernames
+}
+
+type MSTeamsConfig struct {
+	AppID       string   `yaml:"app_id"`       // Azure Bot App ID (Microsoft App ID)
+	AppPassword string   `yaml:"app_password"` // Azure Bot App Password
+	ListenAddr  string   `yaml:"listen_addr"`  // HTTP listen address for Bot Framework webhook (default :3978)
+	DMMode      string   `yaml:"dm_mode"`      // open, allowlist, disabled
+	AllowFrom   []string `yaml:"allow_from"`   // Whitelisted Teams user IDs
 }
 
 // ─────────────────────────────────────────────

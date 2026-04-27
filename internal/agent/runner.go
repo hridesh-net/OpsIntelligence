@@ -19,13 +19,13 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/opsintelligence/opsintelligence/internal/channels"
+	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/localintel"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
-	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/system"
@@ -119,12 +119,14 @@ type Config struct {
 	EnablePlanning      bool
 	EnableReflection    bool
 	// Enterprise opts into a compact system-prompt posture for high-load installs.
-	Enterprise     bool
-	EmbeddingModel string
-	SessionID      string // The persistent session ID for this runner
-	ChannelID      string // The message channel ID (e.g. "slack")
-	ProviderName   string // Lowercase provider ID for capability detection
-	ToolsProfile   string // "full" or "coding"
+	Enterprise bool
+	// MaxToolCallsPerUserTurn caps tool executions per Run/RunStream (0 = unlimited).
+	MaxToolCallsPerUserTurn int
+	EmbeddingModel          string
+	SessionID               string // The persistent session ID for this runner
+	ChannelID               string // The message channel ID (e.g. "slack")
+	ProviderName            string // Lowercase provider ID for capability detection
+	ToolsProfile            string // "full" or "coding"
 	// GatewayPublicBaseURL is e.g. http://127.0.0.1:18790 — used to tell users where /workspace/ files are served.
 	GatewayPublicBaseURL string
 	// ExtensionPromptAppend is optional text from opsintelligence.yaml extensions.prompt_files (markdown fragments).
@@ -223,6 +225,8 @@ type Runner struct {
 
 	// traceLoopIteration is the current agent loop index (1-based) for run_trace tool_call/tool_done.
 	traceLoopIteration int
+	// turnAuditPolicyHash is set for the duration of Run/RunStream (POLICIES.md + teams/*.md fingerprint).
+	turnAuditPolicyHash string
 
 	// prReview handles /pr-review: slash commands with parallel isolated review goroutines.
 	prReview PRReviewDispatcher
@@ -594,14 +598,21 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		r.log.Warn("episodic save failed", zap.Error(err))
 	}
 	enqueueSpan.End()
+	if sd := strings.TrimSpace(r.cfg.StateDir); sd != "" {
+		r.turnAuditPolicyHash = security.PolicyBundleFingerprint(sd)
+	} else {
+		r.turnAuditPolicyHash = ""
+	}
 	defer func() {
 		r.localIntelScratch = ""
 		r.localIntelRoutingTools = nil
 		r.localIntelRoutingSkillFocus = ""
+		r.turnAuditPolicyHash = ""
 	}()
 
 	var totalUsage provider.TokenUsage
 	iterations := 0
+	toolBudgetUsed := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
 	r.prepareLocalIntelSmartRouting(ctx, userMessage)
@@ -715,7 +726,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 
 		// Execute tool calls and collect results.
 		for _, tc := range toolCalls {
-			result := r.executeTool(ctx, tc)
+			result := r.boundedToolExecute(ctx, tc, &toolBudgetUsed)
 
 			toolResultMsg := memory.Message{
 				ID:        uuid.New().String(),
@@ -847,6 +858,18 @@ func stripXMLFunctionBlocks(text string) string {
 	return strings.TrimSpace(s)
 }
 
+// boundedToolExecute enforces MaxToolCallsPerUserTurn when set (per Run / RunStream).
+func (r *Runner) boundedToolExecute(ctx context.Context, tc provider.ContentPart, toolBudgetUsed *int) string {
+	max := r.cfg.MaxToolCallsPerUserTurn
+	if max > 0 && *toolBudgetUsed >= max {
+		return fmt.Sprintf("[Bounded autonomy] Tool call budget for this turn exhausted (%d tool calls). Summarize using evidence already collected; do not assume further tools will run.", max)
+	}
+	if max > 0 {
+		*toolBudgetUsed++
+	}
+	return r.executeTool(ctx, tc)
+}
+
 // executeTool runs a single tool call and returns the result string.
 func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (result string) {
 	resolved := r.resolveCatalogToolName(tc.ToolName)
@@ -961,10 +984,15 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 
 	// ── Audit log: record tool call event ────────────────────────────────
 	if r.auditLog != nil {
+		meta := &security.ToolCallAuditMeta{
+			ModelID:          r.cfg.Model,
+			PolicyBundleHash: strings.TrimSpace(r.turnAuditPolicyHash),
+		}
 		r.auditLog.WriteToolCall(
 			r.sessionID, r.channelID, "", // actor resolved by channel layer
 			resolved, inputJSON, result, dur,
 			security.CheckResult{Action: security.ActionAllow},
+			meta,
 		)
 	}
 
@@ -1432,6 +1460,9 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 	if r.cfg.Enterprise {
 		parts = append(parts, enterprisePosturePrompt)
 	}
+	if n := r.cfg.MaxToolCallsPerUserTurn; n > 0 {
+		parts = append(parts, fmt.Sprintf("## Bounded autonomy\nAt most **%d** tool calls may run for this user request (across all model iterations). Prioritize evidence-rich tools first; further tool calls may return a `[Bounded autonomy]` budget message.", n))
+	}
 
 	if strings.TrimSpace(r.localIntelScratch) != "" {
 		parts = append(parts, "## On-device advisory (local Gemma)\n"+strings.TrimSpace(r.localIntelScratch))
@@ -1610,15 +1641,22 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		r.log.Warn("episodic save failed", zap.Error(err))
 	}
 	enqueueSpan.End()
+	if sd := strings.TrimSpace(r.cfg.StateDir); sd != "" {
+		r.turnAuditPolicyHash = security.PolicyBundleFingerprint(sd)
+	} else {
+		r.turnAuditPolicyHash = ""
+	}
 	defer func() {
 		r.localIntelScratch = ""
 		r.localIntelRoutingTools = nil
 		r.localIntelRoutingSkillFocus = ""
+		r.turnAuditPolicyHash = ""
 	}()
 
 	var totalUsage provider.TokenUsage
 	var fullResponse strings.Builder
 	iterations := 0
+	toolBudgetUsed := 0
 
 	r.prepareLocalIntelScratch(ctx, userMessage)
 	r.prepareLocalIntelSmartRouting(ctx, userMessage)
@@ -1742,7 +1780,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		for _, tc := range toolCalls {
 			inputJSON, _ := json.Marshal(tc.ToolInput)
 			handler.OnToolCall(tc.ToolName, inputJSON)
-			result := r.executeTool(ctx, tc)
+			result := r.boundedToolExecute(ctx, tc, &toolBudgetUsed)
 			handler.OnToolResult(tc.ToolName, result)
 
 			toolMsg := memory.Message{

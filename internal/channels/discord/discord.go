@@ -111,7 +111,7 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 		return nil, err
 	}
 	_ = guildID // channel send uses channel id only
-	body := outboundBody(msg)
+	body := adapter.OutboundBody(msg)
 	if body == "" {
 		return nil, adapter.NewChannelError(adapter.ErrorKindPermanent, "discord: empty outbound body", nil)
 	}
@@ -131,19 +131,6 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	}, nil
 }
 
-func outboundBody(msg adapter.OutboundMessage) string {
-	if msg.Text != "" {
-		return msg.Text
-	}
-	var b strings.Builder
-	for _, p := range msg.Parts {
-		if p.Type == provider.ContentTypeText && p.Text != "" {
-			b.WriteString(p.Text)
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
 func parseDiscordSession(sessionID string) (guildID, channelID string, err error) {
 	if !strings.HasPrefix(sessionID, "discord:") {
 		return "", "", adapter.NewChannelError(adapter.ErrorKindPermanent, "discord: invalid session prefix", nil)
@@ -157,6 +144,12 @@ func parseDiscordSession(sessionID string) (guildID, channelID string, err error
 		return "", "", adapter.NewChannelError(adapter.ErrorKindPermanent, "discord: invalid session id", nil)
 	}
 	return parts[0], parts[1], nil
+}
+
+// splitDiscordMessage keeps legacy test/API compatibility while delegating to
+// the shared channel adapter splitter.
+func splitDiscordMessage(s string) []string {
+	return adapter.SplitMessage(s, 2000)
 }
 
 func (c *Channel) listenVoice(ctx context.Context, vc *discordgo.VoiceConnection, guildID, channelID string, handler channels.MessageHandler) {
@@ -358,7 +351,7 @@ func (c *Channel) legacyInboundHandler(handler channels.MessageHandler) adapter.
 		msg := channels.MessageFromInbound(ev)
 
 		sendText := func(text string) error {
-			for _, part := range splitDiscordMessage(text) {
+			for _, part := range adapter.SplitMessage(text, 2000) {
 				out := adapter.OutboundMessage{
 					SessionID: fmt.Sprintf("discord:%s:%s", guildID, chID),
 					Text:      part,
@@ -394,30 +387,6 @@ func (c *Channel) legacyInboundHandler(handler channels.MessageHandler) adapter.
 		}()
 		return nil
 	}
-}
-
-func splitDiscordMessage(s string) []string {
-	const maxLen = 2000
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	var out []string
-	for len(s) > maxLen {
-		cut := strings.LastIndex(s[:maxLen], "\n")
-		if cut < 120 {
-			cut = strings.LastIndex(s[:maxLen], " ")
-		}
-		if cut < 120 {
-			cut = maxLen
-		}
-		out = append(out, strings.TrimSpace(s[:cut]))
-		s = strings.TrimSpace(s[cut:])
-	}
-	if s != "" {
-		out = append(out, s)
-	}
-	return out
 }
 
 func (c *Channel) shouldAcceptMessage(m *discordgo.MessageCreate) bool {

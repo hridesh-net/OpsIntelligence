@@ -31,21 +31,31 @@ const (
 
 // AuditEntry is a single record in the audit log.
 type AuditEntry struct {
-	Seq        uint64            `json:"seq"`
-	Timestamp  time.Time         `json:"ts"`
-	SessionID  string            `json:"session"`
-	ChannelID  string            `json:"channel"`
-	Event      EventType         `json:"event"`
-	Actor      string            `json:"actor,omitempty"` // username/id from channel, if known
-	Tool       string            `json:"tool,omitempty"`
-	Skill      string            `json:"skill,omitempty"`
-	Node       string            `json:"node,omitempty"`
-	InputHash  string            `json:"input_hash,omitempty"`  // sha256 of input (not plain text)
-	OutputHash string            `json:"output_hash,omitempty"` // sha256 of output
-	DurationMs int64             `json:"duration_ms,omitempty"`
-	Guardrail  *GuardrailSummary `json:"guardrail,omitempty"`
-	PrevHash   string            `json:"prev_hash"`  // hash of previous entry
-	EntryHash  string            `json:"entry_hash"` // HMAC(secret, prev_hash+content)
+	Seq        uint64    `json:"seq"`
+	Timestamp  time.Time `json:"ts"`
+	SessionID  string    `json:"session"`
+	ChannelID  string    `json:"channel"`
+	Event      EventType `json:"event"`
+	Actor      string    `json:"actor,omitempty"` // username/id from channel, if known
+	Tool       string    `json:"tool,omitempty"`
+	Skill      string    `json:"skill,omitempty"`
+	Node       string    `json:"node,omitempty"`
+	InputHash  string    `json:"input_hash,omitempty"`  // sha256 of input (not plain text)
+	OutputHash string    `json:"output_hash,omitempty"` // sha256 of output
+	DurationMs int64     `json:"duration_ms,omitempty"`
+	// ModelID is the LLM id for this turn (tool_call events); included in HMAC when non-empty.
+	ModelID string `json:"model_id,omitempty"`
+	// PolicyBundleHash correlates the tool call to POLICIES.md + teams/*.md fingerprint; HMAC when non-empty.
+	PolicyBundleHash string            `json:"policy_bundle_hash,omitempty"`
+	Guardrail        *GuardrailSummary `json:"guardrail,omitempty"`
+	PrevHash         string            `json:"prev_hash"`  // hash of previous entry
+	EntryHash        string            `json:"entry_hash"` // HMAC(secret, prev_hash+content)
+}
+
+// ToolCallAuditMeta carries optional correlation fields for tool_call audit rows.
+type ToolCallAuditMeta struct {
+	ModelID          string
+	PolicyBundleHash string
 }
 
 // GuardrailSummary is a compact form of the guardrail result for the audit log.
@@ -104,10 +114,10 @@ func (al *AuditLog) Close() error {
 	return al.f.Close()
 }
 
-// WriteToolCall logs a tool execution event.
+// WriteToolCall logs a tool execution event. meta may be nil.
 func (al *AuditLog) WriteToolCall(sessionID, channelID, actor, toolName string,
-	inputJSON []byte, output string, dur time.Duration, result CheckResult) {
-	al.write(AuditEntry{
+	inputJSON []byte, output string, dur time.Duration, result CheckResult, meta *ToolCallAuditMeta) {
+	e := AuditEntry{
 		SessionID:  sessionID,
 		ChannelID:  channelID,
 		Actor:      actor,
@@ -117,7 +127,12 @@ func (al *AuditLog) WriteToolCall(sessionID, channelID, actor, toolName string,
 		OutputHash: hashString(output),
 		DurationMs: dur.Milliseconds(),
 		Guardrail:  summariseResult(result),
-	})
+	}
+	if meta != nil {
+		e.ModelID = meta.ModelID
+		e.PolicyBundleHash = meta.PolicyBundleHash
+	}
+	al.write(e)
 }
 
 // WriteSkillRead logs a read_skill_node event.
@@ -220,13 +235,18 @@ func computeHMAC(secret []byte, data string) string {
 
 // entryContent builds the stable string used as HMAC input —
 // excludes EntryHash itself to avoid circularity.
+// Legacy rows (no model/policy) use the 10-field form so existing chains still verify.
 func entryContent(e AuditEntry) string {
-	return fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+	base := fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s|%s|%s",
 		e.Seq, e.Timestamp.Format(time.RFC3339Nano),
 		e.SessionID, e.ChannelID, e.Event,
 		e.Tool, e.Skill, e.Node,
 		e.InputHash, e.OutputHash,
 	)
+	if e.ModelID == "" && e.PolicyBundleHash == "" {
+		return base
+	}
+	return base + "\x1f" + e.ModelID + "\x1f" + e.PolicyBundleHash
 }
 
 func summariseResult(r CheckResult) *GuardrailSummary {

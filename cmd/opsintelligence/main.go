@@ -28,11 +28,13 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/automation"
 	"github.com/opsintelligence/opsintelligence/internal/autotool"
 	"github.com/opsintelligence/opsintelligence/internal/channels/discord"
+	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
 	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
 	"github.com/opsintelligence/opsintelligence/internal/channels/telegram"
 	"github.com/opsintelligence/opsintelligence/internal/channels/whatsapp"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/cron"
+	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/embeddings"
 	embedproviders "github.com/opsintelligence/opsintelligence/internal/embeddings/providers"
 	"github.com/opsintelligence/opsintelligence/internal/extensions"
@@ -42,7 +44,6 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
-	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/provider/anthropic"
@@ -65,7 +66,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.32" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.33" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -234,7 +235,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		versionCmd(flags),
 		localgemmaCmd(flags),
 		prReviewsCmd(flags), // pr-review pool monitoring + control
-		reposCmd(flags),    // repo intelligence: index, scan, users, TUI
+		reposCmd(flags),     // repo intelligence: index, scan, users, TUI
 	)
 	return root
 }
@@ -354,6 +355,9 @@ func channelsFromCfg(cfg *config.Config) []string {
 	if cfg.Channels.WhatsApp != nil {
 		channels = append(channels, "WhatsApp")
 	}
+	if cfg.Channels.Teams != nil {
+		channels = append(channels, "Microsoft Teams")
+	}
 	return channels
 }
 
@@ -398,20 +402,20 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 	}
 	return tui.DashboardInfo{
-		Status:              status,
-		ConfigPath:          configPath,
-		StateDir:            cfg.StateDir,
-		CWD:                 cwd,
-		RoutingModel:        cfg.Routing.Default,
-		GatewayHostPort:     fmt.Sprintf("%s:%d", webHost, cfg.Gateway.Port),
-		GatewayPublicBase:   strings.TrimSuffix(strings.TrimSpace(cfg.PublicGatewayBaseURL()), "/"),
-		Enterprise:          cfg.Agent.Enterprise,
-		Planning:            optionalBoolString(cfg.Agent.Planning),
-		Reflection:          optionalBoolString(cfg.Agent.Reflection),
-		MemPalaceEnabled:    cfg.Memory.MemPalace.Enabled,
-		LocalIntelEnabled:   cfg.Agent.LocalIntel.Enabled,
-		MCPClientCount:      len(cfg.MCP.Clients),
-		Limits:              limits,
+		Status:            status,
+		ConfigPath:        configPath,
+		StateDir:          cfg.StateDir,
+		CWD:               cwd,
+		RoutingModel:      cfg.Routing.Default,
+		GatewayHostPort:   fmt.Sprintf("%s:%d", webHost, cfg.Gateway.Port),
+		GatewayPublicBase: strings.TrimSuffix(strings.TrimSpace(cfg.PublicGatewayBaseURL()), "/"),
+		Enterprise:        cfg.Agent.Enterprise,
+		Planning:          optionalBoolString(cfg.Agent.Planning),
+		Reflection:        optionalBoolString(cfg.Agent.Reflection),
+		MemPalaceEnabled:  cfg.Memory.MemPalace.Enabled,
+		LocalIntelEnabled: cfg.Agent.LocalIntel.Enabled,
+		MCPClientCount:    len(cfg.MCP.Clients),
+		Limits:            limits,
 	}
 }
 
@@ -942,6 +946,9 @@ Extend behavior via skills, MCP, channels, or prompt_files as needed.`,
 			if cfg.Channels.WhatsApp != nil {
 				ch = append(ch, "whatsapp")
 			}
+			if cfg.Channels.Teams != nil {
+				ch = append(ch, "msteams")
+			}
 			if len(ch) == 0 {
 				fmt.Println(dim.Render("  (none configured)"))
 			} else {
@@ -1246,6 +1253,7 @@ func buildWebhookAdapterRegistry(cfg *config.Config, log *zap.Logger) (*webhooka
 			Events:          ghCfg.Events,
 			Prompts:         ghCfg.Prompts,
 			AllowUnverified: ghCfg.AllowUnverified,
+			AutoReview:      ghCfg.AutoReview,
 		})
 		if err := reg.Register(adapter); err != nil {
 			return nil, fmt.Errorf("webhooks.adapters.github: %w", err)
@@ -1670,21 +1678,22 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		localIntelCache = filepath.Join(cfg.StateDir, "localintel")
 	}
 	runner := agent.NewRunner(agent.Config{
-		MaxIterations:         cfg.Agent.MaxIterations,
-		Model:                 modelInfo.ID,
-		ActiveSkillsContext:   skillsCtx,
-		EnabledSkillNames:     activeSkillNames,
-		RunTracePath:          masterRunTrace,
-		RunnerRole:            "master",
-		RunTraceMode:          cfg.Agent.RunTraceMode,
-		ProviderName:          providerNameForCaps,
-		ToolsProfile:          cfg.Security.Profile,
-		Enterprise:            cfg.Agent.Enterprise,
-		EnablePlanning:        agentPlanningEnabled(cfg),
-		EnableReflection:      agentReflectionEnabled(cfg),
-		GatewayPublicBaseURL:  cfg.PublicGatewayBaseURL(),
-		ExtensionPromptAppend: extPrompt,
-		StateDir:              cfg.StateDir,
+		MaxIterations:           cfg.Agent.MaxIterations,
+		MaxToolCallsPerUserTurn: cfg.Agent.Autonomy.MaxToolCallsPerTurn,
+		Model:                   modelInfo.ID,
+		ActiveSkillsContext:     skillsCtx,
+		EnabledSkillNames:       activeSkillNames,
+		RunTracePath:            masterRunTrace,
+		RunnerRole:              "master",
+		RunTraceMode:            cfg.Agent.RunTraceMode,
+		ProviderName:            providerNameForCaps,
+		ToolsProfile:            cfg.Security.Profile,
+		Enterprise:              cfg.Agent.Enterprise,
+		EnablePlanning:          agentPlanningEnabled(cfg),
+		EnableReflection:        agentReflectionEnabled(cfg),
+		GatewayPublicBaseURL:    cfg.PublicGatewayBaseURL(),
+		ExtensionPromptAppend:   extPrompt,
+		StateDir:                cfg.StateDir,
 		LocalIntel: agent.LocalIntelRunnerConfig{
 			Enabled:               cfg.Agent.LocalIntel.Enabled,
 			GGUFPath:              cfg.Agent.LocalIntel.GGUFPath,
@@ -1737,24 +1746,25 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 
 	// Sub-agents (delegation): register after security so child runs inherit guardrail/audit.
 	subSvc := &tools.SubAgentSvc{
-		Store:                 subagents.NewStore(cfg.StateDir),
-		Provider:              p,
-		ParentRegistry:        toolReg,
-		ToolGraph:             toolGraph,
-		Mem:                   memMgr,
-		Log:                   log,
-		Model:                 modelInfo.ID,
-		ActiveSkillsContext:   skillsCtx,
-		EnabledSkillNames:     activeSkillNames,
-		RunTracePath:          childRunTrace,
-		ProviderName:          providerNameForCaps,
-		GatewayPublicBaseURL:  cfg.PublicGatewayBaseURL(),
-		ExtensionPromptAppend: extPrompt,
-		DefaultToolsProfile:   cfg.Security.Profile,
-		Guardrail:             guardrail,
-		AuditLog:              auditLog,
-		Hardware:              hw,
-		RunTraceMode:          cfg.Agent.RunTraceMode,
+		Store:                   subagents.NewStore(cfg.StateDir),
+		MaxToolCallsPerUserTurn: cfg.Agent.Autonomy.MaxToolCallsPerTurn,
+		Provider:                p,
+		ParentRegistry:          toolReg,
+		ToolGraph:               toolGraph,
+		Mem:                     memMgr,
+		Log:                     log,
+		Model:                   modelInfo.ID,
+		ActiveSkillsContext:     skillsCtx,
+		EnabledSkillNames:       activeSkillNames,
+		RunTracePath:            childRunTrace,
+		ProviderName:            providerNameForCaps,
+		GatewayPublicBaseURL:    cfg.PublicGatewayBaseURL(),
+		ExtensionPromptAppend:   extPrompt,
+		DefaultToolsProfile:     cfg.Security.Profile,
+		Guardrail:               guardrail,
+		AuditLog:                auditLog,
+		Hardware:                hw,
+		RunTraceMode:            cfg.Agent.RunTraceMode,
 		LocalIntel: agent.LocalIntelRunnerConfig{
 			Enabled:               cfg.Agent.LocalIntel.Enabled,
 			GGUFPath:              cfg.Agent.LocalIntel.GGUFPath,
@@ -2060,6 +2070,23 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		if err == nil {
 			go wa.Start(ctx, runner.HandleChannelMessage)
 			log.Info("WhatsApp channel active")
+			activeChannels++
+		}
+	}
+	if cfg.Channels.Teams != nil {
+		teams, err := msteams.New(
+			cfg.Channels.Teams.AppID,
+			cfg.Channels.Teams.AppPassword,
+			cfg.Channels.Teams.ListenAddr,
+			cfg.Channels.Teams.DMMode,
+			cfg.Channels.Teams.AllowFrom,
+		)
+		if err == nil {
+			teamsRS := chadapter.NewReliableSender("msteams", teams, reliabilityCfg)
+			teams.WithReliableOutbound(teamsRS)
+			go teams.Start(ctx, runner.HandleChannelMessage)
+			channelSenders["msteams"] = reliableToolSender{rs: teamsRS}
+			log.Info("Microsoft Teams channel active")
 			activeChannels++
 		}
 	}
@@ -2675,9 +2702,9 @@ func (b *runnerStreamBridge) OnDone(res *agent.RunResult) {
 		Usage: tui.TokenUsageSnapshot{
 			PromptTokens:     res.Usage.PromptTokens,
 			CompletionTokens: res.Usage.CompletionTokens,
-			CacheReadTokens:    res.Usage.CacheReadTokens,
-			CacheWriteTokens:   res.Usage.CacheWriteTokens,
-			TotalTokens:        res.Usage.TotalTokens,
+			CacheReadTokens:  res.Usage.CacheReadTokens,
+			CacheWriteTokens: res.Usage.CacheWriteTokens,
+			TotalTokens:      res.Usage.TotalTokens,
 		},
 	})
 }

@@ -50,6 +50,8 @@ type SubAgentSvc struct {
 	EnabledSkillNames []string
 	// LocalIntel is copied from the parent agent so sub-agents get the same Gemma advisory + smart routing.
 	LocalIntel agent.LocalIntelRunnerConfig
+	// MaxToolCallsPerUserTurn is copied from parent agent.autonomy (0 = unlimited).
+	MaxToolCallsPerUserTurn int
 }
 
 // EnsureTaskManager wires a TaskManager that reuses the same sync executor as
@@ -186,21 +188,22 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		prof = "full"
 	}
 	run := agent.NewRunner(agent.Config{
-		MaxIterations:         maxIterations,
-		Model:                 s.Model,
-		ActiveSkillsContext:   s.ActiveSkillsContext,
-		EnabledSkillNames:     s.EnabledSkillNames,
-		RunTracePath:          s.RunTracePath,
-		RunnerRole:            "subagent",
-		RunTraceMode:          s.RunTraceMode,
-		ProviderName:          s.ProviderName,
-		ToolsProfile:          prof,
-		GatewayPublicBaseURL:  s.GatewayPublicBaseURL,
-		ExtensionPromptAppend: s.ExtensionPromptAppend,
-		EnablePlanning:        false,
-		EnableReflection:      false,
-		StateDir:              s.Store.StateDir(),
-		LocalIntel:            s.LocalIntel,
+		MaxIterations:           maxIterations,
+		MaxToolCallsPerUserTurn: s.MaxToolCallsPerUserTurn,
+		Model:                   s.Model,
+		ActiveSkillsContext:     s.ActiveSkillsContext,
+		EnabledSkillNames:       s.EnabledSkillNames,
+		RunTracePath:            s.RunTracePath,
+		RunnerRole:              "subagent",
+		RunTraceMode:            s.RunTraceMode,
+		ProviderName:            s.ProviderName,
+		ToolsProfile:            prof,
+		GatewayPublicBaseURL:    s.GatewayPublicBaseURL,
+		ExtensionPromptAppend:   s.ExtensionPromptAppend,
+		EnablePlanning:          false,
+		EnableReflection:        false,
+		StateDir:                s.Store.StateDir(),
+		LocalIntel:              s.LocalIntel,
 	}, s.Provider, childReg, s.Mem, s.Log, workspace)
 
 	run = run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)

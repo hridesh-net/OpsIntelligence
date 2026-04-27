@@ -15,6 +15,11 @@ const (
 
 	MetaSlackChannelID = "slack_channel_id"
 	MetaSlackThreadTS  = "slack_thread_ts"
+
+	MetaTeamsConversationID = "teams_conversation_id"
+	MetaTeamsServiceURL     = "teams_service_url"
+	MetaTeamsActivityID     = "teams_activity_id"
+	MetaTeamsTenantID       = "teams_tenant_id"
 )
 
 // MessageFromInbound maps a normalized adapter event to the legacy [Message] shape for [MessageHandler].

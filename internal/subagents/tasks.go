@@ -253,6 +253,7 @@ func (m *TaskManager) run(t *Task, timeout time.Duration) {
 	})
 	m.mu.Unlock()
 
+	// Cleanup runs second (LIFO): decrements the slot and signals waiters.
 	defer func() {
 		m.mu.Lock()
 		m.running--
@@ -266,6 +267,19 @@ func (m *TaskManager) run(t *Task, timeout time.Duration) {
 		})
 		m.mu.Unlock()
 		cancel()
+	}()
+
+	// Panic recovery runs first (LIFO): stops the panic from crashing the
+	// process and marks the task failed so Wait() callers are not blocked.
+	defer func() {
+		if r := recover(); r != nil {
+			m.mu.Lock()
+			if !t.Terminal() {
+				t.Status = StatusFailed
+				t.Error = fmt.Sprintf("panic in exec: %v", r)
+			}
+			m.mu.Unlock()
+		}
 	}()
 
 	resp, iters, err := m.exec(ctx, t.ID, t.SubAgentID, t.Task)

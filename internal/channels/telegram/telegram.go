@@ -107,12 +107,12 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	if err := ctx.Err(); err != nil {
 		return nil, adapter.NewChannelError(adapter.ErrorKindRetryable, "telegram send cancelled", err)
 	}
-	body := outboundBody(msg)
+	body := adapter.OutboundBody(msg)
 	if body == "" {
 		return nil, adapter.NewChannelError(adapter.ErrorKindPermanent, "telegram: empty outbound body", nil)
 	}
 	var sent tgbotapi.Message
-	for i, part := range splitTelegramMessage(body) {
+	for i, part := range adapter.SplitMessage(body, 4096) {
 		m := tgbotapi.NewMessage(target.ChatID, part)
 		if i == 0 {
 			if msg.ReplyToID != "" {
@@ -142,22 +142,15 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	}, nil
 }
 
-func outboundBody(msg adapter.OutboundMessage) string {
-	if msg.Text != "" {
-		return msg.Text
-	}
-	var b strings.Builder
-	for _, p := range msg.Parts {
-		if p.Type == provider.ContentTypeText && p.Text != "" {
-			b.WriteString(p.Text)
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
 type telegramTarget struct {
 	ChatID   int64
 	ThreadID int
+}
+
+// splitTelegramMessage keeps legacy test/API compatibility while delegating to
+// the shared channel adapter splitter.
+func splitTelegramMessage(s string) []string {
+	return adapter.SplitMessage(s, 4096)
 }
 
 func parseTelegramSession(sessionID string) (telegramTarget, error) {
@@ -328,7 +321,7 @@ func (c *Channel) legacyInboundHandler(handler channels.MessageHandler) adapter.
 }
 
 func (c *Channel) sendLegacyReplyText(ctx context.Context, chatID int64, replyToID int, text string) error {
-	for i, part := range splitTelegramMessage(text) {
+	for i, part := range adapter.SplitMessage(text, 4096) {
 		out := adapter.OutboundMessage{
 			SessionID: fmt.Sprintf("tg:%d", chatID),
 			Text:      part,
@@ -347,30 +340,6 @@ func (c *Channel) sendLegacyReplyText(ctx context.Context, chatID int64, replyTo
 		}
 	}
 	return nil
-}
-
-func splitTelegramMessage(s string) []string {
-	const maxLen = 4096
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	var out []string
-	for len(s) > maxLen {
-		cut := strings.LastIndex(s[:maxLen], "\n")
-		if cut < 120 {
-			cut = strings.LastIndex(s[:maxLen], " ")
-		}
-		if cut < 120 {
-			cut = maxLen
-		}
-		out = append(out, strings.TrimSpace(s[:cut]))
-		s = strings.TrimSpace(s[cut:])
-	}
-	if s != "" {
-		out = append(out, s)
-	}
-	return out
 }
 
 func (c *Channel) shouldAcceptMessage(m *tgbotapi.Message) bool {

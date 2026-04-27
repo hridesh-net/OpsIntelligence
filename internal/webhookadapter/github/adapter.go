@@ -31,6 +31,11 @@ type Config struct {
 	Events          map[string][]string `yaml:"events,omitempty"`
 	Prompts         map[string]string   `yaml:"prompts,omitempty"`
 	AllowUnverified bool                `yaml:"allow_unverified,omitempty"`
+	// AutoReview, when true, automatically routes PR-related events to
+	// devops.github.review_pr without requiring explicit per-event prompts in
+	// YAML. Covers pull_request (opened/synchronize/reopened/ready_for_review)
+	// and issue_comment on pull requests.
+	AutoReview bool `yaml:"auto_review,omitempty"`
 }
 
 // Adapter is the GitHub implementation of webhookadapter.Adapter.
@@ -43,6 +48,28 @@ type Adapter struct {
 func New(cfg Config) *Adapter {
 	if strings.TrimSpace(cfg.Path) == "" {
 		cfg.Path = "github"
+	}
+	if cfg.AutoReview {
+		// Inject PR-specific prompts when not already overridden by the operator.
+		if cfg.Prompts == nil {
+			cfg.Prompts = make(map[string]string)
+		}
+		if _, ok := cfg.Prompts["pull_request"]; !ok {
+			cfg.Prompts["pull_request"] = AutoReviewPRPrompt
+		}
+		if _, ok := cfg.Prompts["issue_comment"]; !ok {
+			cfg.Prompts["issue_comment"] = AutoReviewCommentPrompt
+		}
+		// Ensure the required events are in the allowlist.
+		if cfg.Events == nil {
+			cfg.Events = make(map[string][]string)
+		}
+		if _, ok := cfg.Events["pull_request"]; !ok {
+			cfg.Events["pull_request"] = []string{"opened", "synchronize", "reopened", "ready_for_review"}
+		}
+		if _, ok := cfg.Events["issue_comment"]; !ok {
+			cfg.Events["issue_comment"] = []string{"created"}
+		}
 	}
 	return &Adapter{Cfg: cfg}
 }
@@ -252,3 +279,35 @@ Dispatch independent sub-tasks with subagent_run_async / subagent_run_parallel
 so work runs in parallel without cross-contaminating context.
 
 Raw payload keys available: {{.payload_keys}}.`
+
+// AutoReviewPRPrompt is injected for pull_request events when auto_review is enabled.
+// It instructs the agent to call devops.github.review_pr directly and post the
+// result back to GitHub without needing explicit per-event YAML configuration.
+const AutoReviewPRPrompt = `GitHub pull_request event: action={{.action}}
+Repository: {{with .repository}}{{.full_name}}{{end}}
+PR: #{{with .pull_request}}{{.number}}{{end}} — {{with .pull_request}}{{.title}}{{end}}
+Author: @{{with .pull_request}}{{with .user}}{{.login}}{{end}}{{end}}
+PR URL: {{with .pull_request}}{{.html_url}}{{end}}
+
+A pull request was {{.action}} on a configured repository. Perform a full inline review now:
+
+Call devops.github.review_pr with:
+  pr_url = "{{with .pull_request}}{{.html_url}}{{end}}"
+
+The tool will fetch the diff, analyse it with the LLM, validate line anchors, and
+submit a formal GitHub review (APPROVE / REQUEST_CHANGES / COMMENT) with inline
+comments in a single atomic call. No further action is needed after the tool returns.`
+
+// AutoReviewCommentPrompt is injected for issue_comment events when auto_review is enabled.
+// It checks whether the comment is on a PR and triggers a re-review when relevant.
+const AutoReviewCommentPrompt = `GitHub issue_comment event: action={{.action}}
+Repository: {{with .repository}}{{.full_name}}{{end}}
+Issue/PR: {{with .issue}}{{.html_url}}{{end}}
+Commenter: @{{with .comment}}{{with .user}}{{.login}}{{end}}{{end}}
+Comment: {{with .comment}}{{.body}}{{end}}
+
+{{with .issue}}{{with .pull_request}}This comment is on a pull request (not a plain issue).
+If the comment raises a new concern, requests a change, or indicates updated code was pushed,
+re-review the PR now by calling devops.github.review_pr with:
+  pr_url = "{{.html_url}}"
+Otherwise acknowledge and summarise the comment for the team.{{end}}{{end}}`

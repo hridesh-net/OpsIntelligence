@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.33] — 2026-04-27
+
+### Added
+
+- **Enterprise roadmap docs**: Added `doc/enterprise_devops_agent_roadmap.md` with a prioritized governance-first rollout and gap-to-surface mapping for autonomous DevOps deployments.
+- **Policy fingerprinting**: Added security policy bundle hashing (`POLICIES.md` + `teams/**/*.md`) to support stronger audit correlation.
+- **MS Teams channel adapter baseline**: Added the initial Microsoft Teams channel adapter scaffolding and related inbound/outbound channel utilities.
+
+### Changed
+
+- **Bounded autonomy controls**: Added `agent.autonomy.max_tool_calls_per_turn` and enforced per-turn tool-call budgets in master and sub-agent runners.
+- **Tool-call audit metadata**: Extended security audit records with model and policy-bundle metadata while preserving hash-chain verification compatibility for legacy entries.
+
 ## [0.3.32] — 2026-04-24
 
 ### Fixed

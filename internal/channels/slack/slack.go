@@ -99,7 +99,7 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	if err != nil {
 		return nil, err
 	}
-	body := outboundBody(msg)
+	body := adapter.OutboundBody(msg)
 	if body == "" {
 		return nil, adapter.NewChannelError(adapter.ErrorKindPermanent, "slack: empty outbound body", nil)
 	}
@@ -120,19 +120,6 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 		IdempotencyKey:    msg.IdempotencyKey,
 		SentAt:            now,
 	}, nil
-}
-
-func outboundBody(msg adapter.OutboundMessage) string {
-	if msg.Text != "" {
-		return msg.Text
-	}
-	var b strings.Builder
-	for _, p := range msg.Parts {
-		if p.Type == provider.ContentTypeText && p.Text != "" {
-			b.WriteString(p.Text)
-		}
-	}
-	return strings.TrimSpace(b.String())
 }
 
 func parseSlackSession(sessionID string) (channelID, threadTS string, err error) {
