@@ -2,7 +2,9 @@ package repointel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +13,9 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/embeddings"
 	"go.uber.org/zap"
 )
+
+// Ensure embeddings import is used (suppress lint false-positive for IDE).
+var _ = embeddings.InputTypeDocument
 
 // ── ManagerConfig ─────────────────────────────────────────────────────────────
 
@@ -62,13 +67,14 @@ func (c *ManagerConfig) applyDefaults() {
 //
 // It owns the Registry, the Indexer, and the Scanner. When a repo is added
 // (or manually re-synced), the Manager enqueues it for sequential processing:
-// index first, then scan.  Progress events are streamed on the Progress channel.
+// index first, then scan, then chunk+embed into the hybrid store and generate
+// markdown files.  Progress events are streamed on the Progress channel.
 type Manager struct {
 	cfg      ManagerConfig
 	registry *Registry
 	indexer  *Indexer
 	scanner  *Scanner
-	vectors  *VectorStore // nil when no embedder configured
+	hybrid   *HybridStore // nil when no embedder configured
 	log      *zap.Logger
 
 	// workQueue receives repo IDs to process.
@@ -95,18 +101,20 @@ func NewManager(
 		return nil, fmt.Errorf("repointel manager: %w", err)
 	}
 
-	// Open vector store when an embedder is available.
-	var vs *VectorStore
+	// Open hybrid store when an embedder is available.
+	var hs *HybridStore
 	if cfg.Embedder != nil {
-		vsPath := filepath.Join(cfg.MemoryDir, "repointel.db")
-		vs, err = newVectorStore(vsPath, cfg.EmbeddingDimensions)
+		hsPath := filepath.Join(cfg.MemoryDir, "repointel.db")
+		hs, err = NewHybridStore(hsPath, cfg.EmbeddingDimensions)
 		if err != nil {
 			if log != nil {
-				log.Warn("repointel: vector store init failed; semantic search disabled", zap.Error(err))
+				log.Warn("repointel: hybrid store init failed; search disabled", zap.Error(err))
 			}
-			vs = nil
+			hs = nil
 		} else if log != nil {
-			log.Info("repointel: vector store ready", zap.String("path", vsPath), zap.Int("dims", cfg.EmbeddingDimensions))
+			log.Info("repointel: hybrid store ready",
+				zap.String("path", hsPath),
+				zap.Int("dims", cfg.EmbeddingDimensions))
 		}
 	}
 
@@ -115,7 +123,7 @@ func NewManager(
 		registry:  reg,
 		indexer:   indexer,
 		scanner:   scanner,
-		vectors:   vs,
+		hybrid:    hs,
 		log:       log,
 		workQueue: make(chan string, 256),
 		Progress:  make(chan ProgressEvent, cfg.ProgressBuf),
@@ -226,31 +234,31 @@ func (m *Manager) AddRepo(entry RepoEntry) error {
 	return nil
 }
 
-// RemoveRepo removes the repo from the registry and its vector store entry.
+// RemoveRepo removes the repo from the registry and clears its hybrid store entries.
 func (m *Manager) RemoveRepo(id string) error {
-	_ = m.vectors.Delete(id)
+	_ = m.hybrid.DeleteRepo(id)
 	return m.registry.Remove(id)
 }
 
-// SearchRepos performs a semantic similarity search over all indexed repo
-// memories. Returns up to k results ordered by relevance.
-// Returns nil when the vector store is not configured.
-func (m *Manager) SearchRepos(ctx context.Context, query string, k int) ([]VectorSearchResult, error) {
-	if m.vectors == nil || m.cfg.Embedder == nil {
+// SearchRepos performs a hybrid (keyword + semantic) search over all indexed
+// repo chunks. Returns up to k results ordered by RRF score.
+// Returns nil when hybrid store is not configured.
+func (m *Manager) SearchRepos(ctx context.Context, query string, k int) ([]HybridResult, error) {
+	if m.hybrid == nil {
 		return nil, nil
 	}
-	resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
-		Model:     m.cfg.Embedder.DefaultModel(),
-		Texts:     []string{query},
-		InputType: embeddings.InputTypeQuery,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("search repos: embed query: %w", err)
+	var queryVec []float32
+	if m.cfg.Embedder != nil && query != "" {
+		resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+			Model:     m.cfg.Embedder.DefaultModel(),
+			Texts:     []string{query},
+			InputType: embeddings.InputTypeQuery,
+		})
+		if err == nil && len(resp.Embeddings) > 0 {
+			queryVec = resp.Embeddings[0]
+		}
 	}
-	if len(resp.Embeddings) == 0 {
-		return nil, nil
-	}
-	return m.vectors.Search(resp.Embeddings[0], k)
+	return m.hybrid.Search(query, queryVec, k)
 }
 
 // GetRepo returns the registry entry for id.
@@ -310,6 +318,31 @@ func (m *Manager) LoadScan(id string) (*ScanResult, error) {
 	return LoadScan(path)
 }
 
+// LoadCallGraph reads the persisted CallGraph for a repo.
+// Returns nil, nil if the repo has not been indexed or graph was not generated.
+func (m *Manager) LoadCallGraph(id string) (*CallGraph, error) {
+	entry, err := m.registry.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if entry.CallGraphFile == "" {
+		return nil, nil
+	}
+	path := filepath.Join(m.cfg.MemoryDir, entry.CallGraphFile)
+	return LoadCallGraph(path)
+}
+
+// CallGraphHTMLPath returns the absolute path to the exported call graph HTML
+// for the given repo, or "" if no call graph has been generated.
+func (m *Manager) CallGraphHTMLPath(id string) string {
+	entry, err := m.registry.Get(id)
+	if err != nil || entry.CallGraphFile == "" {
+		return ""
+	}
+	base := strings.TrimSuffix(entry.CallGraphFile, "-callgraph.json")
+	return filepath.Join(m.cfg.MemoryDir, base+"-callgraph.html")
+}
+
 // MemoryForReview returns the ReviewContext markdown for a repo, or "" if not
 // yet indexed. Intended for injection into PR review prompts.
 func (m *Manager) MemoryForReview(id string) string {
@@ -344,24 +377,63 @@ func (m *Manager) emit(e ProgressEvent) {
 	default:
 		// Drop progress event if buffer full — non-fatal.
 	}
+	// Also persist to progress.json so out-of-process TUI instances can read it.
+	m.writeProgressFile(e)
 }
+
+// writeProgressFile updates the shared progress.json in MemoryDir.
+// Written on best-effort — failures are silently ignored (display-only data).
+func (m *Manager) writeProgressFile(e ProgressEvent) {
+	path := filepath.Join(m.cfg.MemoryDir, "progress.json")
+
+	// Read existing file (another repo may be tracked).
+	state := map[string]ProgressEvent{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &state)
+	}
+
+	if e.Kind == ProgressDone || e.Kind == ProgressError {
+		// Keep the final event so TUI can display it, then let next poll clear it.
+		state[e.RepoID] = e
+	} else {
+		state[e.RepoID] = e
+	}
+
+	b, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(m.cfg.MemoryDir, 0o755)
+	_ = os.WriteFile(path, b, 0o644)
+}
+
+// pipelineSteps is the total number of steps in the processing pipeline.
+// Used by the TUI to render a progress bar.
+const pipelineSteps = 6
 
 // process runs index → scan sequentially for one repo.
 func (m *Manager) process(ctx context.Context, id string) {
+	step := func(n int, kind ProgressKind, msg string) {
+		m.emit(ProgressEvent{RepoID: id, Kind: kind, Message: msg, Step: n, Total: pipelineSteps})
+	}
+	fail := func(n int, msg string, err error) {
+		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: msg, Step: n, Total: pipelineSteps, Error: err})
+	}
+
 	entry, err := m.registry.Get(id)
 	if err != nil {
-		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: err.Error(), Error: err})
+		fail(0, err.Error(), err)
 		return
 	}
 
-	// ── Index ──────────────────────────────────────────────────────────────────
-	m.emit(ProgressEvent{RepoID: id, Kind: ProgressIndexing, Message: "indexing codebase"})
+	// ── Step 1: Index codebase ────────────────────────────────────────────────
+	step(1, ProgressIndexing, "fetching and analysing codebase")
 	_ = m.registry.UpdateIndexStatus(id, IndexIndexing, "", "")
 
 	mem, err := m.indexer.Index(ctx, entry)
 	if err != nil {
 		_ = m.registry.UpdateIndexStatus(id, IndexError, "", err.Error())
-		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: "indexing failed: " + err.Error(), Error: err})
+		fail(1, "indexing failed: "+err.Error(), err)
 		return
 	}
 
@@ -370,7 +442,7 @@ func (m *Manager) process(ctx context.Context, id string) {
 	absPath := filepath.Join(m.cfg.MemoryDir, relPath)
 	if saveErr := SaveMemory(absPath, mem); saveErr != nil {
 		_ = m.registry.UpdateIndexStatus(id, IndexError, "", saveErr.Error())
-		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: "save memory: " + saveErr.Error(), Error: saveErr})
+		fail(1, "save memory: "+saveErr.Error(), saveErr)
 		return
 	}
 	_ = m.registry.SetMemoryFile(id, relPath)
@@ -379,41 +451,45 @@ func (m *Manager) process(ctx context.Context, id string) {
 		_ = m.registry.UpdateMetadata(id, "", mem.PrimaryLang)
 	}
 
-	// ── Scan ───────────────────────────────────────────────────────────────────
-	m.emit(ProgressEvent{RepoID: id, Kind: ProgressScanning, Message: "scanning for CVEs and bottlenecks"})
+	// ── Step 2: Scan for CVEs and bottlenecks ────────────────────────────────
+	step(2, ProgressScanning, "scanning for CVEs and bottlenecks")
 	_ = m.registry.UpdateScanStatus(id, ScanScanning, "", "")
 
-	// Re-fetch entry so we have the updated MemoryFile path.
 	entry, _ = m.registry.Get(id)
 
 	scanResult, err := m.scanner.Scan(ctx, entry, mem)
 	if err != nil {
 		_ = m.registry.UpdateScanStatus(id, ScanError, "", err.Error())
-		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: "scan failed: " + err.Error(), Error: err})
+		fail(2, "scan failed: "+err.Error(), err)
 		return
 	}
 
-	// Persist scan file.
 	scanRel := sanitiseID(id) + "-scan.json"
 	scanAbs := filepath.Join(m.cfg.MemoryDir, scanRel)
 	if saveErr := SaveScan(scanAbs, scanResult); saveErr != nil {
 		_ = m.registry.UpdateScanStatus(id, ScanError, "", saveErr.Error())
-		m.emit(ProgressEvent{RepoID: id, Kind: ProgressError, Message: "save scan: " + saveErr.Error(), Error: saveErr})
+		fail(2, "save scan: "+saveErr.Error(), saveErr)
 		return
 	}
 	_ = m.registry.SetScanFile(id, scanRel)
 	_ = m.registry.UpdateScanStatus(id, ScanDone, scanResult.RiskLevel, "")
 
-	// ── Vector memory base ─────────────────────────────────────────────────────
-	// Store a merged document (memory + scan summary) in the sqlite-vec store
-	// so agents can later search repos by semantic similarity.
-	m.indexVectors(ctx, id, mem, scanResult)
+	// ── Step 3: Generate markdown reference files ─────────────────────────────
+	step(3, ProgressIndexing, "generating reference docs (ref.md, summary.md)")
+	entry, _ = m.registry.Get(id)
+	m.generateMarkdown(id, entry, mem, scanResult)
 
-	m.emit(ProgressEvent{
-		RepoID:  id,
-		Kind:    ProgressDone,
-		Message: fmt.Sprintf("done — risk=%s cves=%d bottlenecks=%d", scanResult.RiskLevel, len(scanResult.CVEs), len(scanResult.Bottlenecks)),
-	})
+	// ── Step 4: Build function call graph ─────────────────────────────────────
+	step(4, ProgressIndexing, "building function call graph")
+	m.buildCallGraph(id, mem)
+
+	// ── Step 5: Hybrid search index (FTS5 + vec0) ─────────────────────────────
+	step(5, ProgressIndexing, "indexing into hybrid search store")
+	m.indexHybrid(ctx, id, mem, scanResult)
+
+	// ── Step 6: Done ──────────────────────────────────────────────────────────
+	doneMsg := fmt.Sprintf("done — risk=%s  CVEs=%d  bottlenecks=%d", scanResult.RiskLevel, len(scanResult.CVEs), len(scanResult.Bottlenecks))
+	step(6, ProgressDone, doneMsg)
 
 	if m.log != nil {
 		m.log.Info("repointel processing complete",
@@ -424,76 +500,124 @@ func (m *Manager) process(ctx context.Context, id string) {
 	}
 }
 
-// indexVectors embeds the merged repo document and stores it in the vector store.
-// Silently skips when no embedder or vector store is configured.
-func (m *Manager) indexVectors(ctx context.Context, id string, mem *RepoMemory, scan *ScanResult) {
-	if m.vectors == nil || m.cfg.Embedder == nil {
-		return
-	}
+// generateMarkdown writes ref.md and summary.md for the repo and records their
+// paths in the registry.
+func (m *Manager) generateMarkdown(id string, entry RepoEntry, mem *RepoMemory, scan *ScanResult) {
+	base := sanitiseID(id)
 
-	doc := buildVectorDoc(mem, scan)
-	if doc == "" {
-		return
-	}
-
-	resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
-		Model:     m.cfg.Embedder.DefaultModel(),
-		Texts:     []string{doc},
-		InputType: embeddings.InputTypeDocument,
-	})
-	if err != nil {
+	refRel := base + "-ref.md"
+	refAbs := filepath.Join(m.cfg.MemoryDir, refRel)
+	refContent := GenerateRefMD(entry, mem, scan)
+	if err := SaveRefMD(refAbs, refContent); err != nil {
 		if m.log != nil {
-			m.log.Warn("repointel: embed failed; skipping vector store", zap.String("repo", id), zap.Error(err))
+			m.log.Warn("repointel: save ref.md failed", zap.String("repo", id), zap.Error(err))
+		}
+	} else {
+		_ = m.registry.SetRefMDFile(id, refRel)
+	}
+
+	sumRel := base + "-summary.md"
+	sumAbs := filepath.Join(m.cfg.MemoryDir, sumRel)
+	sumContent := GenerateSummaryMD(entry, mem, scan)
+	if err := SaveSummaryMD(sumAbs, sumContent); err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: save summary.md failed", zap.String("repo", id), zap.Error(err))
+		}
+	} else {
+		_ = m.registry.SetSummaryMDFile(id, sumRel)
+		if m.log != nil {
+			m.log.Info("repointel: markdown files written", zap.String("repo", id))
+		}
+	}
+}
+
+// buildCallGraph extracts the function call graph from raw files and persists it.
+func (m *Manager) buildCallGraph(id string, mem *RepoMemory) {
+	if len(mem.RawFiles) == 0 {
+		return
+	}
+	cg := BuildCallGraph(id, mem.RawFiles)
+	if len(cg.Nodes) == 0 {
+		return
+	}
+
+	base := sanitiseID(id)
+	cgRel := base + "-callgraph.json"
+	cgAbs := filepath.Join(m.cfg.MemoryDir, cgRel)
+	if err := SaveCallGraph(cgAbs, cg); err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: save call graph failed", zap.String("repo", id), zap.Error(err))
 		}
 		return
 	}
-	if len(resp.Embeddings) == 0 {
+	_ = m.registry.SetCallGraphFile(id, cgRel)
+
+	// Also export an interactive HTML visualization.
+	htmlRel := base + "-callgraph.html"
+	htmlAbs := filepath.Join(m.cfg.MemoryDir, htmlRel)
+	if err := ExportGraphHTML(htmlAbs, cg); err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: save call graph HTML failed", zap.String("repo", id), zap.Error(err))
+		}
+	}
+
+	if m.log != nil {
+		m.log.Info("repointel: call graph built",
+			zap.String("repo", id),
+			zap.Int("nodes", len(cg.Nodes)),
+			zap.Int("edges", len(cg.Edges)),
+		)
+	}
+}
+
+// indexHybrid chunks memory + scan into FTS5 + vec0 for hybrid search.
+// Silently skips when hybrid store is not configured.
+func (m *Manager) indexHybrid(ctx context.Context, id string, mem *RepoMemory, scan *ScanResult) {
+	if m.hybrid == nil {
 		return
 	}
 
-	if err := m.vectors.Upsert(id, doc, resp.Embeddings[0]); err != nil {
+	// Build all chunks.
+	chunks := ChunksFromMemory(mem)
+	chunks = append(chunks, ChunksFromScan(id, scan)...)
+	if len(chunks) == 0 {
+		return
+	}
+
+	// Embed all chunks in one batch if embedder available.
+	var vecs [][]float32
+	if m.cfg.Embedder != nil {
+		texts := make([]string, len(chunks))
+		for i, c := range chunks {
+			texts[i] = c.Content
+		}
+		resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+			Model:     m.cfg.Embedder.DefaultModel(),
+			Texts:     texts,
+			InputType: embeddings.InputTypeDocument,
+		})
+		if err != nil {
+			if m.log != nil {
+				m.log.Warn("repointel: batch embed failed; FTS-only indexing", zap.String("repo", id), zap.Error(err))
+			}
+		} else {
+			vecs = resp.Embeddings
+		}
+	}
+
+	if err := m.hybrid.UpsertChunks(chunks, vecs); err != nil {
 		if m.log != nil {
-			m.log.Warn("repointel: vector store upsert failed", zap.String("repo", id), zap.Error(err))
+			m.log.Warn("repointel: hybrid store upsert failed", zap.String("repo", id), zap.Error(err))
 		}
 		return
 	}
 	if m.log != nil {
-		m.log.Info("repointel: vector memory stored", zap.String("repo", id))
+		m.log.Info("repointel: hybrid index updated",
+			zap.String("repo", id),
+			zap.Int("chunks", len(chunks)),
+			zap.Bool("vectors", len(vecs) > 0),
+		)
 	}
-}
-
-// buildVectorDoc merges memory + scan result into a searchable text document.
-func buildVectorDoc(mem *RepoMemory, scan *ScanResult) string {
-	if mem == nil {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("Repo: " + mem.RepoID + "\n")
-	if mem.Architecture != "" {
-		sb.WriteString("Architecture: " + mem.Architecture + "\n")
-	}
-	if mem.PrimaryLang != "" {
-		sb.WriteString("Language: " + mem.PrimaryLang + "\n")
-	}
-	if mem.ReviewHints != "" {
-		sb.WriteString("Review hints: " + mem.ReviewHints + "\n")
-	}
-	for _, c := range mem.CommonIssues {
-		sb.WriteString("Issue: " + c + "\n")
-	}
-	if scan != nil {
-		sb.WriteString("Risk: " + scan.RiskLevel + "\n")
-		if scan.Summary != "" {
-			sb.WriteString("Scan summary: " + scan.Summary + "\n")
-		}
-		for _, cve := range scan.CVEs {
-			sb.WriteString("CVE: " + cve.Package + " " + cve.Severity + " " + cve.Description + "\n")
-		}
-		for _, b := range scan.Bottlenecks {
-			sb.WriteString("Bottleneck: " + b.Location + " " + b.Description + "\n")
-		}
-	}
-	return sb.String()
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

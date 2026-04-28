@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.36] — 2026-04-28
+
+### Added
+
+- **Hybrid repo search backend**: Added `HybridStore` (FTS5 + sqlite-vec with reciprocal-rank fusion), structured chunking, call graph extraction, and markdown reference generation for richer RepoIntel retrieval.
+
+### Changed
+
+- **RepoIntel manager orchestration**: Extended manager/indexer/registry flow for hybrid memory persistence, improved synchronization bookkeeping, and more robust repo processing lifecycle behavior.
+- **Repo intelligence UX surfaces**: Updated `repos` command handling and Repo TUI workflows to better support large indexed memory/search interactions.
+
 ## [0.3.35] — 2026-04-28
 
 ### Added

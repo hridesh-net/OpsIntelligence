@@ -86,8 +86,11 @@ type RepoEntry struct {
 	Users []RepoUser `yaml:"users,omitempty" json:"users,omitempty"`
 
 	// Storage paths (relative to MemoryDir)
-	MemoryFile string `yaml:"memory_file,omitempty" json:"memory_file,omitempty"`
-	ScanFile   string `yaml:"scan_file,omitempty" json:"scan_file,omitempty"`
+	MemoryFile    string `yaml:"memory_file,omitempty" json:"memory_file,omitempty"`
+	ScanFile      string `yaml:"scan_file,omitempty" json:"scan_file,omitempty"`
+	RefMDFile     string `yaml:"ref_md_file,omitempty" json:"ref_md_file,omitempty"`         // human-readable reference
+	SummaryMDFile string `yaml:"summary_md_file,omitempty" json:"summary_md_file,omitempty"` // LLM-compact summary
+	CallGraphFile string `yaml:"call_graph_file,omitempty" json:"call_graph_file,omitempty"` // function call graph JSON
 
 	AddedAt time.Time `yaml:"added_at" json:"added_at"`
 }
@@ -131,8 +134,20 @@ type RepoMemory struct {
 	ReviewHints  string           `json:"review_hints,omitempty"`  // what reviewers should focus on
 	CommonIssues []string         `json:"common_issues,omitempty"` // patterns that cause bugs
 
-	// Raw key files fetched during indexing (not persisted — for prompt use only)
-	rawContent string `json:"-"`
+	// UserContext is free-form context provided by the operator to augment or
+	// correct the LLM's understanding. Injected into PR review prompts alongside
+	// the LLM-extracted fields.
+	UserContext string `json:"user_context,omitempty"`
+
+	// RawFiles holds the raw file contents fetched during indexing.
+	// Not persisted to JSON — populated by the Indexer for chunking / MD gen.
+	RawFiles []RawFile `json:"-"`
+}
+
+// RawFile is one source file fetched from the repo during indexing.
+type RawFile struct {
+	Path    string
+	Content string // may be truncated at 8 KiB
 }
 
 // ReviewContext returns a compact markdown block for injection into PR review prompts.
@@ -164,6 +179,9 @@ func (m *RepoMemory) ReviewContext() string {
 	}
 	if m.TestPatterns != "" {
 		out += "\n**Test patterns:** " + m.TestPatterns + "\n"
+	}
+	if m.UserContext != "" {
+		out += "\n**Operator notes:** " + m.UserContext + "\n"
 	}
 	return out
 }
@@ -273,6 +291,9 @@ func ScanPath(memoryDir, repoID string) string {
 	return filepath.Join(memoryDir, sanitiseID(repoID)+"-scan.json")
 }
 
+// SanitiseID converts a repo ID into a filesystem-safe string.
+func SanitiseID(id string) string { return sanitiseID(id) }
+
 func sanitiseID(id string) string {
 	out := make([]byte, 0, len(id))
 	for i := 0; i < len(id); i++ {
@@ -304,7 +325,22 @@ type ProgressEvent struct {
 	RepoID  string
 	Kind    ProgressKind
 	Message string
-	Error   error
+	// Step and Total allow UIs to compute a percentage. Step is 1-based.
+	Step  int
+	Total int
+	Error error
+}
+
+// Pct returns 0–100 completion percentage, or -1 if unknown.
+func (p ProgressEvent) Pct() int {
+	if p.Total <= 0 {
+		return -1
+	}
+	v := (p.Step * 100) / p.Total
+	if v > 100 {
+		return 100
+	}
+	return v
 }
 
 // contextKey is used for context values.

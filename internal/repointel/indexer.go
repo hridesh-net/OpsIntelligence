@@ -71,7 +71,7 @@ func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, er
 	}
 
 	// ── Step 1: fetch key files ────────────────────────────────────────────────
-	content, headSHA, err := idx.fetchRepoContent(ctx, entry)
+	content, rawFiles, headSHA, err := idx.fetchRepoContent(ctx, entry)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: fetch %s: %w", entry.ID, err)
 	}
@@ -91,6 +91,7 @@ func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, er
 	mem.RepoID = entry.ID
 	mem.UpdatedAt = time.Now()
 	mem.HeadSHA = headSHA
+	mem.RawFiles = rawFiles // available to caller for chunking; not persisted to JSON
 
 	idx.router.RecordSuccess(route.ProviderID)
 
@@ -116,25 +117,25 @@ type ghTreeEntry struct {
 }
 
 // fetchRepoContent fetches key file contents via the GitHub Trees API.
-// Returns a concatenated string of file contents and the HEAD commit SHA.
-func (idx *Indexer) fetchRepoContent(ctx context.Context, entry RepoEntry) (string, string, error) {
+// Returns concatenated content for LLM, per-file raw files for chunking, and HEAD SHA.
+func (idx *Indexer) fetchRepoContent(ctx context.Context, entry RepoEntry) (string, []RawFile, string, error) {
 	base := idx.cfg.GitHubBaseURL
 
 	// 1. Resolve HEAD SHA.
 	headSHA, err := idx.fetchHeadSHA(ctx, base, entry.Owner, entry.Name)
 	if err != nil {
-		return "", "", err
+		return "", nil, "", err
 	}
 
-	// 2. Fetch the full tree (truncated OK — we only need candidates).
+	// 2. Fetch the full tree.
 	treeURL := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1",
 		base, entry.Owner, entry.Name, headSHA)
 	var treeResp struct {
-		Tree     []ghTreeEntry `json:"tree"`
-		Truncated bool         `json:"truncated"`
+		Tree      []ghTreeEntry `json:"tree"`
+		Truncated bool          `json:"truncated"`
 	}
 	if err := idx.ghGet(ctx, treeURL, &treeResp); err != nil {
-		return "", "", fmt.Errorf("fetch tree: %w", err)
+		return "", nil, "", fmt.Errorf("fetch tree: %w", err)
 	}
 
 	// 3. Select key files.
@@ -142,31 +143,36 @@ func (idx *Indexer) fetchRepoContent(ctx context.Context, entry RepoEntry) (stri
 
 	// 4. Fetch each file's content.
 	var sb strings.Builder
+	var rawFiles []RawFile
 	for _, f := range files {
 		rawURL := fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s",
 			base, entry.Owner, entry.Name, f, headSHA)
 		var contentResp struct {
-			Content  string `json:"content"`   // base64-encoded
+			Content  string `json:"content"`
 			Encoding string `json:"encoding"`
 		}
 		if err := idx.ghGet(ctx, rawURL, &contentResp); err != nil {
-			// Non-fatal: skip files we can't read.
 			continue
 		}
 		decoded, err := decodeBase64Content(contentResp.Content)
 		if err != nil {
 			continue
 		}
+		// Cap per-file content for the LLM prompt and for chunk storage.
+		const maxFileBytes = 8000
+		snippet := decoded
+		if len(snippet) > maxFileBytes {
+			snippet = snippet[:maxFileBytes]
+		}
+		rawFiles = append(rawFiles, RawFile{Path: f, Content: snippet})
 		sb.WriteString("### File: " + f + "\n```\n")
-		if len(decoded) > 8000 {
-			sb.WriteString(decoded[:8000])
+		sb.WriteString(snippet)
+		if len(decoded) > maxFileBytes {
 			sb.WriteString("\n... (truncated)\n")
-		} else {
-			sb.WriteString(decoded)
 		}
 		sb.WriteString("\n```\n\n")
 	}
-	return sb.String(), headSHA, nil
+	return sb.String(), rawFiles, headSHA, nil
 }
 
 // CurrentHeadSHA fetches the current HEAD commit SHA for the repo via a

@@ -175,6 +175,42 @@ func (r *Registry) SetScanFile(id, relPath string) error {
 	return r.save()
 }
 
+// SetRefMDFile records the relative path to the human-readable reference markdown.
+func (r *Registry) SetRefMDFile(id, relPath string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.data[id]
+	if !ok {
+		return fmt.Errorf("repointel: repo %q not found", id)
+	}
+	e.RefMDFile = relPath
+	return r.save()
+}
+
+// SetSummaryMDFile records the relative path to the LLM-compact summary markdown.
+func (r *Registry) SetSummaryMDFile(id, relPath string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.data[id]
+	if !ok {
+		return fmt.Errorf("repointel: repo %q not found", id)
+	}
+	e.SummaryMDFile = relPath
+	return r.save()
+}
+
+// SetCallGraphFile records the relative path to the repo's call graph JSON file.
+func (r *Registry) SetCallGraphFile(id, relPath string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.data[id]
+	if !ok {
+		return fmt.Errorf("repointel: repo %q not found", id)
+	}
+	e.CallGraphFile = relPath
+	return r.save()
+}
+
 // AddUser adds or replaces a user on the repo.
 func (r *Registry) AddUser(id string, u RepoUser) error {
 	r.mu.Lock()

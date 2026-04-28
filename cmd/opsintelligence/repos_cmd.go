@@ -457,9 +457,34 @@ func reposTUICmd(gf *globalFlags) *cobra.Command {
 }
 
 func runReposTUI(gf *globalFlags) error {
-	reg, err := openRegistry(gf)
+	cfg, err := loadConfig(gf.configPath, nil)
 	if err != nil {
 		return err
 	}
-	return tui.ReposTUIRun(reg)
+
+	registryFile := cfg.RepoIntel.RegistryFile
+	if registryFile == "" {
+		registryFile = "repointel/repos.yaml"
+	}
+	if !filepath.IsAbs(registryFile) {
+		registryFile = filepath.Join(cfg.StateDir, registryFile)
+	}
+
+	memDir := cfg.RepoIntel.MemoryDir
+	if memDir == "" {
+		memDir = "repointel/memory"
+	}
+	if !filepath.IsAbs(memDir) {
+		memDir = filepath.Join(cfg.StateDir, memDir)
+	}
+
+	reg, err := repointel.NewRegistry(registryFile)
+	if err != nil {
+		return err
+	}
+
+	return tui.ReposTUIRun(tui.ReposTUIConfig{
+		Registry:  reg,
+		MemoryDir: memDir,
+	})
 }
