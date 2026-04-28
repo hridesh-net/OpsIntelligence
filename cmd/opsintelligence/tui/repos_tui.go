@@ -141,6 +141,7 @@ func newReposTUIModel(cfg ReposTUIConfig) reposTUIModel {
 		width:    100,
 		height:   30,
 	}
+	m.loadProgressFile()
 	m.loadSelectedContent()
 	return m
 }
@@ -390,7 +391,7 @@ func (m reposTUIModel) View() string {
 	if len(m.entries) > 0 && m.selectedRepo < len(m.entries) {
 		e := m.entries[m.selectedRepo]
 		// Prefer live progress message from the Manager channel.
-		if ev, ok := m.progress[e.ID]; ok && ev.Kind != repointel.ProgressDone {
+		if ev, ok := m.effectiveProgress(e); ok && ev.Kind != repointel.ProgressDone {
 			pct := ""
 			if ev.Pct() >= 0 {
 				pct = fmt.Sprintf(" %d%%", ev.Pct())
@@ -538,7 +539,7 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		lines = append(lines, row)
 
 		// Progress bar / error detail line (indented under the repo row).
-		if ev, ok := m.progress[e.ID]; ok {
+		if ev, ok := m.effectiveProgress(e); ok {
 			switch ev.Kind {
 			case repointel.ProgressError:
 				errLine := lipgloss.NewStyle().Foreground(ColorError).
@@ -564,6 +565,34 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// effectiveProgress returns a known progress event for repo entry e, or a
+// synthetic status-derived event when explicit progress payloads are absent.
+func (m reposTUIModel) effectiveProgress(e repointel.RepoEntry) (repointel.ProgressEvent, bool) {
+	if ev, ok := m.progress[e.ID]; ok {
+		return ev, true
+	}
+	switch {
+	case e.IndexStatus == repointel.IndexIndexing:
+		return repointel.ProgressEvent{
+			RepoID:  e.ID,
+			Kind:    repointel.ProgressIndexing,
+			Message: "indexing codebase",
+			Step:    1,
+			Total:   6,
+		}, true
+	case e.ScanStatus == repointel.ScanScanning:
+		return repointel.ProgressEvent{
+			RepoID:  e.ID,
+			Kind:    repointel.ProgressScanning,
+			Message: "scanning for CVEs and bottlenecks",
+			Step:    4,
+			Total:   6,
+		}, true
+	default:
+		return repointel.ProgressEvent{}, false
+	}
 }
 
 func (m reposTUIModel) colorizeStatus(s string) string {

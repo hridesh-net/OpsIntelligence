@@ -163,11 +163,19 @@
   // whether to attempt secrets.read / settings.write.
   let ME = null;
   let runTracePollId = null;
+  let reposPollId = null;
 
   function clearRunTracePoll() {
     if (runTracePollId != null) {
       clearInterval(runTracePollId);
       runTracePollId = null;
+    }
+  }
+
+  function clearReposPoll() {
+    if (reposPollId != null) {
+      clearInterval(reposPollId);
+      reposPollId = null;
     }
   }
 
@@ -225,6 +233,7 @@
 
   function route() {
     clearRunTracePoll();
+    clearReposPoll();
     const { view, sub } = parseHash();
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
@@ -267,6 +276,11 @@
         subEl.textContent =
           "NDJSON execution events (task_start, model_iteration, tools, chain_run, task_done).";
         renderRunTraceView(actionsEl);
+        break;
+      case "repos":
+        titleEl.textContent = "Repo Intelligence";
+        subEl.textContent = "Configured repositories, live index/scan status, and quick sync actions.";
+        renderReposView(actionsEl);
         break;
       case "settings":
         titleEl.textContent = "Settings";
@@ -734,6 +748,39 @@
             { key: "tool_routing", label: "Tool routing", type: "checkbox" },
             { key: "fail_open", label: "Fail open", type: "checkbox" },
             { key: "log_decisions", label: "Log decisions", type: "checkbox" },
+          ],
+        },
+      ],
+    },
+
+    repo_intel: {
+      summary:
+        "Repository intelligence registry, memory/index directories, scan policy and watcher interval.",
+      fields: [
+        { key: "enabled", label: "Enabled", type: "checkbox" },
+        { key: "registry_file", label: "Registry file", type: "text" },
+        { key: "memory_dir", label: "Memory dir", type: "text" },
+        { key: "docs_dir", label: "Docs dir", type: "text" },
+        { key: "check_interval", label: "Check interval", type: "duration" },
+        {
+          key: "scan",
+          label: "Scan policy",
+          type: "object",
+          fields: [
+            { key: "enabled", label: "Enabled", type: "checkbox" },
+            { key: "max_findings", label: "Max findings", type: "number", min: 0 },
+            {
+              key: "severity_floor",
+              label: "Severity floor",
+              type: "select",
+              options: [
+                { value: "", label: "(default)" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+                { value: "critical", label: "critical" },
+              ],
+            },
           ],
         },
       ],
@@ -1938,6 +1985,80 @@
       }
     } catch (err) {
       body.innerHTML = errorBlock(err.message || "failed to load API keys");
+    }
+  }
+
+  // ─────────────────────── repo intel view ───────────────────────
+
+  async function renderReposView(actionsEl) {
+    const body = document.getElementById("repos-body");
+    if (!body) return;
+    body.innerHTML = `<div class="loading">Loading repos…</div>`;
+    actionsEl.innerHTML = "";
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "primary";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.addEventListener("click", () => loadReposBody(body));
+    actionsEl.appendChild(refreshBtn);
+
+    await loadReposBody(body);
+    reposPollId = setInterval(() => loadReposBody(body), 3000);
+  }
+
+  async function loadReposBody(body) {
+    try {
+      const data = await fetchJSON(`${API}/repos`);
+      const repos = Array.isArray(data.repos) ? data.repos : [];
+      if (!repos.length) {
+        body.innerHTML = `<div class="placeholder"><h2>No repos configured</h2><p>Add one via CLI: <code>opsintelligence repos add owner/name --platform github</code></p></div>`;
+        return;
+      }
+      body.innerHTML = `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th>Platform</th>
+                <th>Index</th>
+                <th>Scan</th>
+                <th>Risk</th>
+                <th>Users</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="repos-tbody"></tbody>
+          </table>
+        </div>
+      `;
+      const tbody = document.getElementById("repos-tbody");
+      repos.forEach((r) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><div class="primary-cell">${escapeHTML(r.full_name || r.id || "—")}</div><div class="secondary-cell mono-cell">${escapeHTML(r.id || "—")}</div></td>
+          <td>${escapeHTML(r.platform || "—")}</td>
+          <td><span class="pill pill-${escapeHTML((r.index_status || "pending").toLowerCase())}">${escapeHTML(r.index_status || "pending")}</span></td>
+          <td><span class="pill pill-${escapeHTML((r.scan_status || "pending").toLowerCase())}">${escapeHTML(r.scan_status || "pending")}</span></td>
+          <td>${escapeHTML(r.risk_level || "—")}</td>
+          <td>${Number(r.user_count || 0)}</td>
+          <td class="col-actions"></td>
+        `;
+        const actions = tr.querySelector(".col-actions");
+        actions.appendChild(
+          makeButton("Sync", "ghost", async () => {
+            try {
+              await sendJSON(`${API}/repos/${encodeURIComponent(r.id)}/sync`, "POST");
+              showToast(`Queued sync for ${r.full_name || r.id}`, "ok");
+              loadReposBody(body);
+            } catch (err) {
+              showToast(err.message || "sync failed", "error");
+            }
+          })
+        );
+        tbody.appendChild(tr);
+      });
+    } catch (err) {
+      body.innerHTML = errorBlock(err.message || "failed to load repos");
     }
   }
 

@@ -204,6 +204,15 @@ func (s *AuthService) putConfigSection(r *http.Request, section, expectedRevisio
 			cfg.Agent = v
 			return nil
 		})
+	case "repo_intel":
+		var v config.RepoIntelConfig
+		if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+			return "", errInvalidConfigPayload
+		}
+		return s.cfgSvc().UpdateWithRevision(r.Context(), expectedRevision, func(cfg *config.Config) error {
+			cfg.RepoIntel = v
+			return nil
+		})
 	case "devops":
 		var v config.DevOpsConfig
 		if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
@@ -236,6 +245,8 @@ func sectionValue(cfg *config.Config, section string) (any, bool) {
 		return cfg.MCP, true
 	case "agent":
 		return cfg.Agent, true
+	case "repo_intel":
+		return cfg.RepoIntel, true
 	case "devops":
 		return cfg.DevOps, true
 	default:

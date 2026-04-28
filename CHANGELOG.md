@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.37] — 2026-04-28
+
+### Added
+
+- **RepoIntel dashboard surface**: Added a dedicated `#/repos` dashboard view that lists configured repositories with live index/scan status, risk, user counts, and one-click sync actions.
+- **RepoIntel settings in dashboard**: Added `repo_intel` to the settings UI and config API wiring so YAML-backed RepoIntel values are visible/editable from the web dashboard.
+
+### Changed
+
+- **Repo TUI progress visibility**: Repo TUI now loads `progress.json` on startup and derives fallback progress rows from registry status (`indexing`/`scanning`) so progress bars and context-strip updates remain visible even when explicit step events are sparse.
+
 ## [0.3.36] — 2026-04-28
 
 ### Added
