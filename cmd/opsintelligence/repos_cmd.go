@@ -14,7 +14,11 @@ package main
 //	repos tui                                               Open interactive TUI.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,6 +144,10 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("enable repo_intel: %w", err)
 			}
+			cfg, err := loadConfig(gf.configPath, nil)
+			if err != nil {
+				return err
+			}
 			reg, err := openRegistry(gf)
 			if err != nil {
 				return err
@@ -162,7 +170,17 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			fmt.Printf("Repo %s/%s added (platform: %s).\n", owner, name, platform)
-			fmt.Println("Queued initial indexing + scan. A running agent will pick it up automatically.")
+			mode, syncErr := notifyRepoSyncViaGateway(cfg, entry.ID)
+			switch {
+			case syncErr != nil:
+				fmt.Println("Queued initial indexing + scan in registry.")
+				fmt.Printf("Live enqueue unavailable (%v). A running agent will pick it up on poll.\n", syncErr)
+			case mode == "live":
+				fmt.Println("Queued initial indexing + scan and notified the running manager immediately.")
+			default:
+				fmt.Println("Queued initial indexing + scan in registry.")
+				fmt.Println("The running manager did not accept a live enqueue, so it will pick this up on poll.")
+			}
 			if enabledNow {
 				fmt.Println("Repo Intelligence was disabled in config and has been auto-enabled.")
 				fmt.Println("If an agent is already running, restart once: `opsintelligence restart`.")
@@ -251,6 +269,10 @@ func reposSyncCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("enable repo_intel: %w", err)
 			}
+			cfg, err := loadConfig(gf.configPath, nil)
+			if err != nil {
+				return err
+			}
 			reg, err := openRegistry(gf)
 			if err != nil {
 				return err
@@ -264,7 +286,15 @@ func reposSyncCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			fmt.Printf("Repo %s/%s queued for re-sync.\n", owner, name)
-			fmt.Println("The agent will pick it up on the next processing cycle.")
+			mode, syncErr := notifyRepoSyncViaGateway(cfg, id)
+			switch {
+			case syncErr != nil:
+				fmt.Printf("Live enqueue unavailable (%v). Falling back to file-backed queue.\n", syncErr)
+			case mode == "live":
+				fmt.Println("Running manager notified immediately.")
+			default:
+				fmt.Println("Running manager did not accept a live enqueue; it will pick this up on poll.")
+			}
 			if enabledNow {
 				fmt.Println("Repo Intelligence was disabled in config and has been auto-enabled.")
 				fmt.Println("If an agent is already running, restart once: `opsintelligence restart`.")
@@ -488,3 +518,45 @@ func runReposTUI(gf *globalFlags) error {
 		MemoryDir: memDir,
 	})
 }
+
+func notifyRepoSyncViaGateway(cfg *config.Config, repoID string) (string, error) {
+	if cfg == nil {
+		return "fallback", fmt.Errorf("config not loaded")
+	}
+	base := strings.TrimSuffix(cfg.PublicGatewayBaseURL(), "/")
+	if base == "" {
+		return "fallback", fmt.Errorf("gateway base URL is empty")
+	}
+	url := fmt.Sprintf("%s/api/v1/repos/%s/sync", base, repoPathEscape(repoID))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return "fallback", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := strings.TrimSpace(cfg.Gateway.Token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "fallback", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusAccepted:
+		return "live", nil
+	case http.StatusNotFound:
+		return "fallback", nil
+	default:
+		return "fallback", fmt.Errorf("gateway returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+}
+
+func repoPathEscape(id string) string {
+	id = strings.ReplaceAll(id, ":", "%3A")
+	id = strings.ReplaceAll(id, "/", "%2F")
+	return id
+}
+
+var _ = json.Valid

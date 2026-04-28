@@ -173,6 +173,9 @@ func (m *Manager) Start(ctx context.Context) {
 
 // enqueuePending enqueues every repo that is in a pending index or scan state.
 func (m *Manager) enqueuePending() {
+	if err := m.registry.Reload(); err != nil && m.log != nil {
+		m.log.Warn("repointel: registry reload for pending scan failed", zap.Error(err))
+	}
 	entries := m.registry.List()
 	enqueued := 0
 	for _, e := range entries {
@@ -189,6 +192,9 @@ func (m *Manager) enqueuePending() {
 // enqueueChanged checks HEAD SHA for all indexed repos and re-enqueues those
 // that have new commits since the last index.
 func (m *Manager) enqueueChanged(ctx context.Context) {
+	if err := m.registry.Reload(); err != nil && m.log != nil {
+		m.log.Warn("repointel: registry reload for monitor scan failed", zap.Error(err))
+	}
 	entries := m.registry.List()
 	for _, e := range entries {
 		if e.IndexStatus != IndexReady {
@@ -268,16 +274,40 @@ func (m *Manager) GetRepo(id string) (RepoEntry, error) {
 
 // ListRepos returns all registered repos.
 func (m *Manager) ListRepos() []RepoEntry {
+	_ = m.registry.Reload()
 	return m.registry.List()
 }
 
 // SyncRepo re-enqueues an existing repo for a fresh index+scan.
 func (m *Manager) SyncRepo(id string) error {
+	if err := m.registry.Reload(); err != nil && m.log != nil {
+		m.log.Warn("repointel: registry reload before sync failed", zap.Error(err))
+	}
+	if err := m.registry.UpdateIndexStatus(id, IndexPending, "", ""); err != nil {
+		return err
+	}
+	if err := m.registry.UpdateScanStatus(id, ScanPending, "", ""); err != nil {
+		return err
+	}
 	if _, err := m.registry.Get(id); err != nil {
 		return err
 	}
 	m.enqueue(id)
 	return nil
+}
+
+// ProgressSnapshot returns the latest persisted cross-process progress state.
+func (m *Manager) ProgressSnapshot() map[string]ProgressEvent {
+	path := filepath.Join(m.cfg.MemoryDir, "progress.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]ProgressEvent{}
+	}
+	state := map[string]ProgressEvent{}
+	if err := json.Unmarshal(b, &state); err != nil {
+		return map[string]ProgressEvent{}
+	}
+	return state
 }
 
 // AddUser adds or replaces a user on the repo.

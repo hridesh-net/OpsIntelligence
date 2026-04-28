@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.38] — 2026-04-28
+
+### Added
+
+- **Repo progress API**: Added `GET /api/v1/repos/progress` to expose persisted cross-process RepoIntel progress state for shared runtime visibility.
+- **Queue reliability regression tests**: Added coverage for live sync notify path and registry/manager reload behavior across multi-process updates.
+
+### Changed
+
+- **Direct live enqueue from CLI**: `repos add` and `repos sync` now attempt immediate notify of the running RepoIntel manager via gateway sync endpoint, with durable file-backed queue fallback.
+- **Manager cross-process consistency**: RepoIntel manager now reloads registry state during pending/monitor scans and sync operations, preventing stale in-memory views from leaving jobs stuck in `pending` until restart.
+- **Runtime mode visibility**: Repo TUI context strip now shows whether it is operating in `live` manager mode or `file-backed` mode.
+
 ## [0.3.37] — 2026-04-28
 
 ### Added

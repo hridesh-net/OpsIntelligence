@@ -57,6 +57,15 @@ func (a *RepoIntelAdapter) HandleRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// /api/v1/repos/progress
+	if path == "progress" {
+		if r.Method == http.MethodGet {
+			a.handleProgress(w, r)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
 
 	// Split off the first segment (repo ID) and the rest.
 	parts := strings.SplitN(path, "/", 3)
@@ -231,6 +240,16 @@ func (a *RepoIntelAdapter) handleScan(w http.ResponseWriter, _ *http.Request, id
 		return
 	}
 	repoWriteJSON(w, http.StatusOK, scan)
+}
+
+// ── /api/v1/repos/progress ─────────────────────────────────────────────────────
+
+func (a *RepoIntelAdapter) handleProgress(w http.ResponseWriter, _ *http.Request) {
+	state := a.mgr.ProgressSnapshot()
+	repoWriteJSON(w, http.StatusOK, map[string]any{
+		"progress": state,
+		"total":    len(state),
+	})
 }
 
 // ── /api/v1/repos/{id}/users ──────────────────────────────────────────────────

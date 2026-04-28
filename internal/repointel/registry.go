@@ -63,6 +63,21 @@ func (r *Registry) List() []RepoEntry {
 	return out
 }
 
+// Reload refreshes the in-memory registry map from disk.
+// Useful for long-running manager processes when another process updates repos.yaml.
+func (r *Registry) Reload() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.load(); err != nil {
+		if os.IsNotExist(err) {
+			r.data = make(map[string]*RepoEntry)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
 // Add inserts a new repo entry. Returns an error if the ID already exists.

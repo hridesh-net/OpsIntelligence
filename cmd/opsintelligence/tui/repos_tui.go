@@ -408,7 +408,8 @@ func (m reposTUIModel) View() string {
 	}
 	contextStrip := chromeBg.Render(
 		lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Repo Intelligence") +
-			"  " + Muted.Render(fmt.Sprintf("%d repos", len(m.entries))) + statusHint,
+			"  " + Muted.Render(fmt.Sprintf("%d repos", len(m.entries))) +
+			"  " + Muted.Render("mode:"+m.runtimeMode()) + statusHint,
 	)
 
 	// ── Tab pills ────────────────────────────────────────────────────────────
@@ -477,6 +478,13 @@ func (m reposTUIModel) footerHint() string {
 		base = style.Render(m.editFormError) + "  " + base
 	}
 	return base
+}
+
+func (m reposTUIModel) runtimeMode() string {
+	if m.cfg.Manager != nil {
+		return "live"
+	}
+	return "file-backed"
 }
 
 func (m reposTUIModel) viewEditForm() string {
