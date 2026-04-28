@@ -66,7 +66,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.34" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.35" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1858,10 +1858,18 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				MaxFilesPerRepo: maxFiles,
 			}, riRouter, log)
 			scnr := repointel.NewScanner(riRouter, log)
-			mgr, mgrErr := repointel.NewManager(repointel.ManagerConfig{
+
+			riMgrCfg := repointel.ManagerConfig{
 				RegistryPath: registryFile,
 				MemoryDir:    memDir,
-			}, idxr, scnr, log)
+			}
+			// Wire embedding provider for the vector memory base when available.
+			if e, ok := embedReg.Default(); ok {
+				riMgrCfg.Embedder = e
+				riMgrCfg.EmbeddingDimensions = dims
+			}
+
+			mgr, mgrErr := repointel.NewManager(riMgrCfg, idxr, scnr, log)
 			if mgrErr != nil {
 				log.Warn("repo intelligence manager init failed", zap.Error(mgrErr))
 			} else {

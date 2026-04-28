@@ -169,6 +169,12 @@ func (idx *Indexer) fetchRepoContent(ctx context.Context, entry RepoEntry) (stri
 	return sb.String(), headSHA, nil
 }
 
+// CurrentHeadSHA fetches the current HEAD commit SHA for the repo via a
+// lightweight API call (no file content fetched). Used by the monitor loop.
+func (idx *Indexer) CurrentHeadSHA(ctx context.Context, entry RepoEntry) (string, error) {
+	return idx.fetchHeadSHA(ctx, idx.cfg.GitHubBaseURL, entry.Owner, entry.Name)
+}
+
 func (idx *Indexer) fetchHeadSHA(ctx context.Context, base, owner, name string) (string, error) {
 	u := fmt.Sprintf("%s/repos/%s/%s/commits?per_page=1", base, owner, name)
 	var commits []struct {

@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.35] — 2026-04-28
+
+### Added
+
+- **RepoIntel semantic memory store**: Added sqlite-vec backed vector storage for per-repo memory documents, enabling semantic similarity search across indexed repositories.
+
+### Changed
+
+- **RepoIntel manager processing loop**: Manager now enqueues pending repos on startup, periodically polls for newly pending repos, and monitors indexed repositories for HEAD SHA changes to auto-trigger re-index/re-scan.
+- **Indexer API surface**: Added lightweight current HEAD SHA lookup used by the monitor loop for change detection.
+
 ## [0.3.34] — 2026-04-27
 
 ### Added

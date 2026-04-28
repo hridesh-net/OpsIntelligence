@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/opsintelligence/opsintelligence/internal/embeddings"
 	"go.uber.org/zap"
 )
 
@@ -22,11 +24,35 @@ type ManagerConfig struct {
 
 	// ProgressBuf is the buffer size for the Progress channel. Default 64.
 	ProgressBuf int
+
+	// Embedder is the optional embedding provider used to build the vector
+	// memory base after indexing. If nil, vector storage is disabled.
+	Embedder embeddings.Embedder
+
+	// EmbeddingDimensions must match Embedder's output dimension. Default 1536.
+	EmbeddingDimensions int
+
+	// PollInterval is how often Start() scans for newly-pending repos added via
+	// CLI while the agent is already running. Default 60s.
+	PollInterval time.Duration
+
+	// MonitorInterval is how often Start() polls each indexed repo's HEAD SHA
+	// and re-enqueues it when the remote has new commits. Default 6h.
+	MonitorInterval time.Duration
 }
 
 func (c *ManagerConfig) applyDefaults() {
 	if c.ProgressBuf <= 0 {
 		c.ProgressBuf = 64
+	}
+	if c.PollInterval <= 0 {
+		c.PollInterval = 60 * time.Second
+	}
+	if c.MonitorInterval <= 0 {
+		c.MonitorInterval = 6 * time.Hour
+	}
+	if c.EmbeddingDimensions <= 0 {
+		c.EmbeddingDimensions = 1536
 	}
 }
 
@@ -42,6 +68,7 @@ type Manager struct {
 	registry *Registry
 	indexer  *Indexer
 	scanner  *Scanner
+	vectors  *VectorStore // nil when no embedder configured
 	log      *zap.Logger
 
 	// workQueue receives repo IDs to process.
@@ -67,11 +94,28 @@ func NewManager(
 	if err != nil {
 		return nil, fmt.Errorf("repointel manager: %w", err)
 	}
+
+	// Open vector store when an embedder is available.
+	var vs *VectorStore
+	if cfg.Embedder != nil {
+		vsPath := filepath.Join(cfg.MemoryDir, "repointel.db")
+		vs, err = newVectorStore(vsPath, cfg.EmbeddingDimensions)
+		if err != nil {
+			if log != nil {
+				log.Warn("repointel: vector store init failed; semantic search disabled", zap.Error(err))
+			}
+			vs = nil
+		} else if log != nil {
+			log.Info("repointel: vector store ready", zap.String("path", vsPath), zap.Int("dims", cfg.EmbeddingDimensions))
+		}
+	}
+
 	return &Manager{
 		cfg:       cfg,
 		registry:  reg,
 		indexer:   indexer,
 		scanner:   scanner,
+		vectors:   vs,
 		log:       log,
 		workQueue: make(chan string, 256),
 		Progress:  make(chan ProgressEvent, cfg.ProgressBuf),
@@ -82,18 +126,93 @@ func NewManager(
 
 // Start runs the sequential processing loop. Call in a goroutine; returns
 // when ctx is cancelled.
+//
+// On startup it immediately enqueues any repos that are still pending (e.g.,
+// added via CLI before the agent started).  It then polls for newly-pending
+// repos every PollInterval and re-checks HEAD SHAs every MonitorInterval.
 func (m *Manager) Start(ctx context.Context) {
 	if m.log != nil {
 		m.log.Info("repointel manager started")
 	}
+
+	// Bootstrap: enqueue all repos that are pending from a previous CLI add or
+	// an interrupted processing run.
+	m.enqueuePending()
+
+	pollTick := time.NewTicker(m.cfg.PollInterval)
+	monitorTick := time.NewTicker(m.cfg.MonitorInterval)
+	defer pollTick.Stop()
+	defer monitorTick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
 		case id := <-m.workQueue:
 			m.process(ctx, id)
+
+		case <-pollTick.C:
+			// Pick up repos added via CLI while the agent is running.
+			m.enqueuePending()
+
+		case <-monitorTick.C:
+			// Re-index repos whose HEAD SHA has changed since last index.
+			m.enqueueChanged(ctx)
 		}
 	}
+}
+
+// enqueuePending enqueues every repo that is in a pending index or scan state.
+func (m *Manager) enqueuePending() {
+	entries := m.registry.List()
+	enqueued := 0
+	for _, e := range entries {
+		if e.IndexStatus == IndexPending || e.ScanStatus == ScanPending {
+			m.enqueue(e.ID)
+			enqueued++
+		}
+	}
+	if enqueued > 0 && m.log != nil {
+		m.log.Info("repointel: enqueued pending repos", zap.Int("count", enqueued))
+	}
+}
+
+// enqueueChanged checks HEAD SHA for all indexed repos and re-enqueues those
+// that have new commits since the last index.
+func (m *Manager) enqueueChanged(ctx context.Context) {
+	entries := m.registry.List()
+	for _, e := range entries {
+		if e.IndexStatus != IndexReady {
+			continue
+		}
+		current, err := m.indexer.CurrentHeadSHA(ctx, e)
+		if err != nil {
+			if m.log != nil {
+				m.log.Warn("repointel: head SHA check failed", zap.String("repo", e.ID), zap.Error(err))
+			}
+			continue
+		}
+		if current != "" && current != e.HeadSHA {
+			if m.log != nil {
+				m.log.Info("repointel: repo has new commits, scheduling re-index",
+					zap.String("repo", e.ID),
+					zap.String("old_sha", e.HeadSHA[:min8(e.HeadSHA)]),
+					zap.String("new_sha", current[:min8(current)]),
+				)
+			}
+			_ = m.registry.UpdateIndexStatus(e.ID, IndexPending, "", "")
+			_ = m.registry.UpdateScanStatus(e.ID, ScanPending, "", "")
+			m.enqueue(e.ID)
+		}
+	}
+}
+
+func min8(s string) int {
+	if len(s) < 8 {
+		return len(s)
+	}
+	return 8
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -107,9 +226,31 @@ func (m *Manager) AddRepo(entry RepoEntry) error {
 	return nil
 }
 
-// RemoveRepo removes the repo from the registry.
+// RemoveRepo removes the repo from the registry and its vector store entry.
 func (m *Manager) RemoveRepo(id string) error {
+	_ = m.vectors.Delete(id)
 	return m.registry.Remove(id)
+}
+
+// SearchRepos performs a semantic similarity search over all indexed repo
+// memories. Returns up to k results ordered by relevance.
+// Returns nil when the vector store is not configured.
+func (m *Manager) SearchRepos(ctx context.Context, query string, k int) ([]VectorSearchResult, error) {
+	if m.vectors == nil || m.cfg.Embedder == nil {
+		return nil, nil
+	}
+	resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+		Model:     m.cfg.Embedder.DefaultModel(),
+		Texts:     []string{query},
+		InputType: embeddings.InputTypeQuery,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search repos: embed query: %w", err)
+	}
+	if len(resp.Embeddings) == 0 {
+		return nil, nil
+	}
+	return m.vectors.Search(resp.Embeddings[0], k)
 }
 
 // GetRepo returns the registry entry for id.
@@ -263,6 +404,11 @@ func (m *Manager) process(ctx context.Context, id string) {
 	_ = m.registry.SetScanFile(id, scanRel)
 	_ = m.registry.UpdateScanStatus(id, ScanDone, scanResult.RiskLevel, "")
 
+	// ── Vector memory base ─────────────────────────────────────────────────────
+	// Store a merged document (memory + scan summary) in the sqlite-vec store
+	// so agents can later search repos by semantic similarity.
+	m.indexVectors(ctx, id, mem, scanResult)
+
 	m.emit(ProgressEvent{
 		RepoID:  id,
 		Kind:    ProgressDone,
@@ -276,6 +422,78 @@ func (m *Manager) process(ctx context.Context, id string) {
 			zap.Int("cves", len(scanResult.CVEs)),
 		)
 	}
+}
+
+// indexVectors embeds the merged repo document and stores it in the vector store.
+// Silently skips when no embedder or vector store is configured.
+func (m *Manager) indexVectors(ctx context.Context, id string, mem *RepoMemory, scan *ScanResult) {
+	if m.vectors == nil || m.cfg.Embedder == nil {
+		return
+	}
+
+	doc := buildVectorDoc(mem, scan)
+	if doc == "" {
+		return
+	}
+
+	resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+		Model:     m.cfg.Embedder.DefaultModel(),
+		Texts:     []string{doc},
+		InputType: embeddings.InputTypeDocument,
+	})
+	if err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: embed failed; skipping vector store", zap.String("repo", id), zap.Error(err))
+		}
+		return
+	}
+	if len(resp.Embeddings) == 0 {
+		return
+	}
+
+	if err := m.vectors.Upsert(id, doc, resp.Embeddings[0]); err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: vector store upsert failed", zap.String("repo", id), zap.Error(err))
+		}
+		return
+	}
+	if m.log != nil {
+		m.log.Info("repointel: vector memory stored", zap.String("repo", id))
+	}
+}
+
+// buildVectorDoc merges memory + scan result into a searchable text document.
+func buildVectorDoc(mem *RepoMemory, scan *ScanResult) string {
+	if mem == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("Repo: " + mem.RepoID + "\n")
+	if mem.Architecture != "" {
+		sb.WriteString("Architecture: " + mem.Architecture + "\n")
+	}
+	if mem.PrimaryLang != "" {
+		sb.WriteString("Language: " + mem.PrimaryLang + "\n")
+	}
+	if mem.ReviewHints != "" {
+		sb.WriteString("Review hints: " + mem.ReviewHints + "\n")
+	}
+	for _, c := range mem.CommonIssues {
+		sb.WriteString("Issue: " + c + "\n")
+	}
+	if scan != nil {
+		sb.WriteString("Risk: " + scan.RiskLevel + "\n")
+		if scan.Summary != "" {
+			sb.WriteString("Scan summary: " + scan.Summary + "\n")
+		}
+		for _, cve := range scan.CVEs {
+			sb.WriteString("CVE: " + cve.Package + " " + cve.Severity + " " + cve.Description + "\n")
+		}
+		for _, b := range scan.Bottlenecks {
+			sb.WriteString("Bottleneck: " + b.Location + " " + b.Description + "\n")
+		}
+	}
+	return sb.String()
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
