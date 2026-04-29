@@ -171,6 +171,24 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// phase2OrLegacyAuth uses cookie sessions + API keys when AuthService is
+	// wired (dashboard); otherwise the legacy gateway Bearer gate. GET/HEAD
+	// skip CSRF; mutating verbs require CSRF for browser sessions (same as
+	// /api/v1/config and /api/v1/users).
+	phase2OrLegacyAuth := func(h http.HandlerFunc) http.Handler {
+		core := s.withCorrelation(h)
+		if s.AuthService != nil {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet || r.Method == http.MethodHead {
+					s.AuthService.Protect(http.HandlerFunc(core)).ServeHTTP(w, r)
+					return
+				}
+				s.AuthService.ProtectCSRF(http.HandlerFunc(core)).ServeHTTP(w, r)
+			})
+		}
+		return auth(core)
+	}
+
 	// ── Phase-2 auth endpoints + dashboard shell ─────────────────────────────
 	// When an AuthService is wired the gateway exposes:
 	//   GET  /api/v1/auth/status
@@ -229,14 +247,14 @@ func (s *Server) Start() error {
 
 	// ── API: PR Review pool ───────────────────────────────────────────────────
 	if s.PRReview != nil {
-		mux.HandleFunc("/api/v1/pr-reviews", auth(s.withCorrelation(s.PRReview.handleList)))
-		mux.HandleFunc("/api/v1/pr-reviews/", auth(s.withCorrelation(s.PRReview.handleDetail)))
+		mux.Handle("/api/v1/pr-reviews", phase2OrLegacyAuth(s.PRReview.handleList))
+		mux.Handle("/api/v1/pr-reviews/", phase2OrLegacyAuth(s.PRReview.handleDetail))
 	}
 
 	// ── API: Repo Intelligence ────────────────────────────────────────────────
 	if s.RepoIntel != nil {
-		mux.HandleFunc("/api/v1/repos", auth(s.withCorrelation(s.RepoIntel.HandleRepos)))
-		mux.HandleFunc("/api/v1/repos/", auth(s.withCorrelation(s.RepoIntel.HandleRepos)))
+		mux.Handle("/api/v1/repos", phase2OrLegacyAuth(s.RepoIntel.HandleRepos))
+		mux.Handle("/api/v1/repos/", phase2OrLegacyAuth(s.RepoIntel.HandleRepos))
 	}
 
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
