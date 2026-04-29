@@ -47,6 +47,11 @@ type Channel struct {
 	serviceURLsMu sync.RWMutex
 	serviceURLs   map[string]string
 
+	// convOwner maps conversationID -> Teams user id (activity from.id) for the first
+	// qualified inbound message, used to enforce allowlist on outbound Send.
+	convOwnerMu sync.RWMutex
+	convOwner   map[string]string
+
 	tokenMu     sync.Mutex
 	cachedToken string
 	tokenExpiry time.Time
@@ -59,14 +64,28 @@ func New(appID, appPassword, listenAddr, dmMode string, allowFrom []string) (*Ch
 	if listenAddr == "" {
 		listenAddr = ":3978"
 	}
+	dmMode = strings.ToLower(strings.TrimSpace(dmMode))
+	var trimmedAllow []string
+	for _, a := range allowFrom {
+		if s := strings.TrimSpace(a); s != "" {
+			trimmedAllow = append(trimmedAllow, s)
+		}
+	}
+	if len(trimmedAllow) > 0 && dmMode == "" {
+		dmMode = "allowlist"
+	}
+	if dmMode == "" {
+		dmMode = "open"
+	}
 	return &Channel{
 		appID:       appID,
 		appPassword: appPassword,
 		listenAddr:  listenAddr,
 		dmMode:      dmMode,
-		allowFrom:   allowFrom,
+		allowFrom:   trimmedAllow,
 		stopCh:      make(chan struct{}),
 		serviceURLs: make(map[string]string),
+		convOwner:   make(map[string]string),
 	}, nil
 }
 
@@ -120,6 +139,10 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	c.serviceURLsMu.RUnlock()
 	if serviceURL == "" {
 		return nil, adapter.NewChannelError(adapter.ErrorKindPermanent, "msteams: no service URL for conversation — bot must receive a message first", nil)
+	}
+
+	if err := c.assertOutboundAllowlisted(convID); err != nil {
+		return nil, err
 	}
 
 	token, err := c.bearerToken(ctx)
@@ -218,6 +241,11 @@ func (c *Channel) StartInbound(ctx context.Context, h adapter.InboundHandler) er
 		}
 
 		if c.dmMode == "allowlist" {
+			if act.Conversation.IsGroup {
+				log.Printf("msteams: blocked group conversation in allowlist mode")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			allowed := false
 			for _, a := range c.allowFrom {
 				if senderID == a {
@@ -230,6 +258,12 @@ func (c *Channel) StartInbound(ctx context.Context, h adapter.InboundHandler) er
 				w.WriteHeader(http.StatusOK)
 				return
 			}
+		}
+
+		if act.Conversation.ID != "" && senderID != "" {
+			c.convOwnerMu.Lock()
+			c.convOwner[act.Conversation.ID] = senderID
+			c.convOwnerMu.Unlock()
 		}
 
 		ts := act.Timestamp
@@ -399,6 +433,30 @@ func (c *Channel) bearerToken(ctx context.Context) (string, error) {
 	c.cachedToken = tr.AccessToken
 	c.tokenExpiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
 	return c.cachedToken, nil
+}
+
+func (c *Channel) assertOutboundAllowlisted(convID string) error {
+	if c.dmMode == "disabled" {
+		return adapter.NewChannelError(adapter.ErrorKindPermanent,
+			"msteams: outbound blocked — dm_mode is disabled", nil)
+	}
+	if c.dmMode != "allowlist" {
+		return nil
+	}
+	c.convOwnerMu.RLock()
+	owner, ok := c.convOwner[convID]
+	c.convOwnerMu.RUnlock()
+	if !ok {
+		return adapter.NewChannelError(adapter.ErrorKindPermanent,
+			"msteams: outbound blocked — no allowlisted inbound for this conversation yet", nil)
+	}
+	for _, a := range c.allowFrom {
+		if owner == a {
+			return nil
+		}
+	}
+	return adapter.NewChannelError(adapter.ErrorKindPermanent,
+		"msteams: outbound blocked — conversation owner not in allow_from", nil)
 }
 
 func parseTeamsSession(sessionID string) (string, error) {

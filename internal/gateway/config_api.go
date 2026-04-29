@@ -332,6 +332,11 @@ func redactedConfig(cfg *config.Config) *config.Config {
 		cp.AppToken = ""
 		out.Channels.Slack = &cp
 	}
+	if out.Channels.Teams != nil {
+		cp := *out.Channels.Teams
+		cp.AppPassword = ""
+		out.Channels.Teams = &cp
+	}
 	out.Webhooks.Token = ""
 	out.Webhooks.Adapters.GitHub.Secret = ""
 	out.Datastore.DSN = ""
@@ -368,6 +373,11 @@ func redactedSection(section string, val any) any {
 			cp.BotToken = ""
 			cp.AppToken = ""
 			v.Slack = &cp
+		}
+		if v.Teams != nil {
+			cp := *v.Teams
+			cp.AppPassword = ""
+			v.Teams = &cp
 		}
 		return v
 	case "webhooks":

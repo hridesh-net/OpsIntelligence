@@ -14,7 +14,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
-	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/localintel"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
@@ -233,7 +232,11 @@ func runDoctorChecks(ctx context.Context, cfg *config.Config, skipNetwork bool, 
 			Message:  "Channel API checks skipped (--skip-network).",
 		})
 	} else {
-		checks = append(checks, pingSlack(ctx, cfg, channelTimeout)...)
+		pctx, cancel := context.WithTimeout(ctx, channelTimeout)
+		defer cancel()
+		for _, rc := range buildChannelRegistry(cfg, nil).DoctorChecks(pctx) {
+			checks = append(checks, doctorCheck{ID: rc.ID, Severity: rc.Severity, Message: rc.Message})
+		}
 	}
 
 	checks = append(checks, runDoctorDevOpsChecks(ctx, cfg, skipNetwork, channelTimeout)...)
@@ -373,42 +376,3 @@ func checkLocalIntel(cfg *config.Config) doctorCheck {
 	}
 }
 
-func pingSlack(ctx context.Context, cfg *config.Config, channelTimeout time.Duration) []doctorCheck {
-	ch := cfg.Channels.Slack
-	if ch == nil || ch.BotToken == "" || ch.AppToken == "" {
-		return []doctorCheck{{
-			ID:       "channel.slack",
-			Severity: "skipped",
-			Message:  "Not configured (need channels.slack bot_token + app_token).",
-		}}
-	}
-	if err := validateSlackTokenFormats(ch.BotToken, ch.AppToken); err != nil {
-		return []doctorCheck{{
-			ID:       "channel.slack",
-			Severity: "error",
-			Message:  formatChannelTokenError("slack token format", err),
-		}}
-	}
-	sl, err := slack.New(ch.BotToken, ch.AppToken, ch.DMMode, ch.AllowFrom)
-	if err != nil {
-		return []doctorCheck{{
-			ID:       "channel.slack",
-			Severity: "error",
-			Message:  formatChannelPingError("channel.slack", "init", err),
-		}}
-	}
-	pctx, cancel := context.WithTimeout(ctx, channelTimeout)
-	defer cancel()
-	if err := sl.Ping(pctx); err != nil {
-		return []doctorCheck{{
-			ID:       "channel.slack",
-			Severity: "error",
-			Message:  formatChannelPingError("channel.slack", "auth.test", err),
-		}}
-	}
-	return []doctorCheck{{
-		ID:       "channel.slack",
-		Severity: "ok",
-		Message:  "Slack: token prefixes OK; auth.test succeeded (workspace + socket credentials).",
-	}}
-}

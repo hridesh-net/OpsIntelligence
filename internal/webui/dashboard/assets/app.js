@@ -825,6 +825,32 @@
             { key: "allow_from", label: "Allow-from IDs", type: "tags" },
           ],
         },
+        {
+          key: "teams",
+          label: "Microsoft Teams (Bot Framework)",
+          type: "nullable-object",
+          fields: [
+            { key: "app_id", label: "Azure Bot App ID", type: "text" },
+            { key: "app_password", label: "Azure Bot App password", type: "password", sensitive: true },
+            { key: "listen_addr", label: "Webhook listen addr", type: "text" },
+            {
+              key: "dm_mode",
+              label: "DM mode",
+              type: "select",
+              options: [
+                { value: "", label: "(default)" },
+                { value: "open", label: "open" },
+                { value: "allowlist", label: "allowlist" },
+                { value: "disabled", label: "disabled" },
+              ],
+            },
+            {
+              key: "allow_from",
+              label: "Allow-from (Teams user / AAD object IDs)",
+              type: "tags",
+            },
+          ],
+        },
       ],
     },
 

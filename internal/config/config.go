@@ -1020,8 +1020,8 @@ type MSTeamsConfig struct {
 	AppID       string   `yaml:"app_id"`       // Azure Bot App ID (Microsoft App ID)
 	AppPassword string   `yaml:"app_password"` // Azure Bot App Password
 	ListenAddr  string   `yaml:"listen_addr"`  // HTTP listen address for Bot Framework webhook (default :3978)
-	DMMode      string   `yaml:"dm_mode"`      // open, allowlist, disabled
-	AllowFrom   []string `yaml:"allow_from"`   // Whitelisted Teams user IDs
+	DMMode      string   `yaml:"dm_mode"`      // open, allowlist, disabled (empty + non-empty allow_from defaults to allowlist)
+	AllowFrom   []string `yaml:"allow_from"`   // Whitelisted Teams user IDs (from.id / AAD object id)
 }
 
 // ─────────────────────────────────────────────
@@ -1327,6 +1327,22 @@ func applyDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Channels.Outbound.DLQPath) == "" {
 		cfg.Channels.Outbound.DLQPath = filepath.Join(cfg.StateDir, "channels", "dlq.ndjson")
 	}
+	if t := cfg.Channels.Teams; t != nil {
+		t.DMMode = strings.ToLower(strings.TrimSpace(t.DMMode))
+		allowN := 0
+		for _, id := range t.AllowFrom {
+			if strings.TrimSpace(id) != "" {
+				allowN++
+			}
+		}
+		// With an explicit allowlist, default to allowlist mode so outbound matches inbound policy.
+		if allowN > 0 && t.DMMode == "" {
+			t.DMMode = "allowlist"
+		}
+		if t.DMMode == "" {
+			t.DMMode = "open"
+		}
+	}
 	if strings.TrimSpace(cfg.Tracing.OTLPEndpoint) == "" {
 		cfg.Tracing.OTLPEndpoint = "localhost:4317"
 	}
@@ -1430,6 +1446,30 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Channels.Outbound.BreakerCooldownS < 1 {
 		issues = append(issues, "channels.outbound.breaker_cooldown_s must be >= 1")
+	}
+	if t := cfg.Channels.Teams; t != nil {
+		partial := strings.TrimSpace(t.AppID) != "" || strings.TrimSpace(t.AppPassword) != ""
+		if partial {
+			if strings.TrimSpace(t.AppID) == "" || strings.TrimSpace(t.AppPassword) == "" {
+				issues = append(issues, "channels.teams requires both app_id and app_password when either is set")
+			}
+		}
+		if strings.TrimSpace(t.AppID) != "" {
+			switch t.DMMode {
+			case "open", "allowlist", "disabled":
+			default:
+				issues = append(issues, fmt.Sprintf("channels.teams.dm_mode must be open, allowlist, or disabled (got %q)", t.DMMode))
+			}
+			allowCount := 0
+			for _, id := range t.AllowFrom {
+				if strings.TrimSpace(id) != "" {
+					allowCount++
+				}
+			}
+			if t.DMMode == "allowlist" && allowCount == 0 {
+				issues = append(issues, "channels.teams: dm_mode allowlist requires at least one non-empty allow_from entry")
+			}
+		}
 	}
 	if cfg.Memory.SemanticBackend != "sqlite_vec" {
 		if strings.EqualFold(cfg.Memory.SemanticBackend, "mempalace") {

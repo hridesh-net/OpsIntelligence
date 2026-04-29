@@ -25,6 +25,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
+	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
@@ -1360,13 +1361,7 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 	parts = append(parts, base+dashboardHint)
 
 	if ch := strings.TrimSpace(r.channelID); ch != "" {
-		var chExtra string
-		switch strings.ToLower(ch) {
-		case "slack":
-			chExtra = "\n- **Slack:** short replies, mrkdwn, small snippets—link out to PRs/pipelines for detail."
-		case "whatsapp":
-			chExtra = "\n- **WhatsApp:** short paragraphs; avoid dumping huge logs or raw diffs in one message."
-		}
+		chExtra := chadapter.HintFor(ch)
 		parts = append(parts, `## Messages on this channel
 - Write what the human should read: clear language only. Do **not** paste internal scaffolding (`+"`<planning>`"+`, `+"`<function=`"+`, long XML tool dumps, or giant checklists) into the user-visible reply.`+chExtra)
 	}

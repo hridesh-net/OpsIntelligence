@@ -27,11 +27,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/automation"
 	"github.com/opsintelligence/opsintelligence/internal/autotool"
-	"github.com/opsintelligence/opsintelligence/internal/channels/discord"
-	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
-	"github.com/opsintelligence/opsintelligence/internal/channels/slack"
-	"github.com/opsintelligence/opsintelligence/internal/channels/telegram"
-	"github.com/opsintelligence/opsintelligence/internal/channels/whatsapp"
+	chanregistry "github.com/opsintelligence/opsintelligence/internal/channels/registry"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/cron"
 	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
@@ -66,7 +62,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.38" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.39" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -342,23 +338,7 @@ func stopCmd(gf *globalFlags) *cobra.Command {
 }
 
 func channelsFromCfg(cfg *config.Config) []string {
-	var channels []string
-	if cfg.Channels.Telegram != nil {
-		channels = append(channels, "Telegram")
-	}
-	if cfg.Channels.Discord != nil {
-		channels = append(channels, "Discord")
-	}
-	if cfg.Channels.Slack != nil {
-		channels = append(channels, "Slack")
-	}
-	if cfg.Channels.WhatsApp != nil {
-		channels = append(channels, "WhatsApp")
-	}
-	if cfg.Channels.Teams != nil {
-		channels = append(channels, "Microsoft Teams")
-	}
-	return channels
+	return buildChannelRegistry(cfg, nil).ConfiguredDisplayNames()
 }
 
 func optionalBoolString(p *bool) string {
@@ -933,22 +913,7 @@ Extend behavior via skills, MCP, channels, or prompt_files as needed.`,
 			dim := lipgloss.NewStyle().Foreground(tui.ColorMuted)
 
 			fmt.Println(prim.Render("Channels (in-process, not npm plugins)"))
-			var ch []string
-			if cfg.Channels.Telegram != nil {
-				ch = append(ch, "telegram")
-			}
-			if cfg.Channels.Discord != nil {
-				ch = append(ch, "discord")
-			}
-			if cfg.Channels.Slack != nil {
-				ch = append(ch, "slack")
-			}
-			if cfg.Channels.WhatsApp != nil {
-				ch = append(ch, "whatsapp")
-			}
-			if cfg.Channels.Teams != nil {
-				ch = append(ch, "msteams")
-			}
+			ch := buildChannelRegistry(cfg, nil).ConfiguredIDs()
 			if len(ch) == 0 {
 				fmt.Println(dim.Render("  (none configured)"))
 			} else {
@@ -2015,89 +1980,17 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		},
 		DLQPath: cfg.Channels.Outbound.DLQPath,
 	}
-	if cfg.Channels.Telegram != nil {
-		requireMention := true
-		if cfg.Channels.Telegram.RequireMention != nil {
-			requireMention = *cfg.Channels.Telegram.RequireMention
-		}
-		tg, err := telegram.New(
-			cfg.Channels.Telegram.BotToken,
-			cfg.Channels.Telegram.DMMode,
-			cfg.Channels.Telegram.AllowFrom,
-			requireMention,
-		)
-		if err == nil {
-			tgRS := chadapter.NewReliableSender("telegram", tg, reliabilityCfg)
-			tg.WithReliableOutbound(tgRS)
-			go tg.Start(ctx, runner.HandleChannelMessage)
-			channelSenders["telegram"] = reliableToolSender{
-				rs: tgRS,
-			}
-			log.Info("Telegram channel active")
-			activeChannels++
-		}
+	deps := &channelStartDeps{
+		reliabilityCfg: reliabilityCfg,
+		channelSenders: channelSenders,
+		voiceClient:    voiceClient,
+		stateDir:       cfg.StateDir,
+		logLevel:       gf.logLevel,
 	}
-	if cfg.Channels.Discord != nil {
-		discordRequireMention := true
-		if cfg.Channels.Discord.RequireMention != nil {
-			discordRequireMention = *cfg.Channels.Discord.RequireMention
-		}
-		dc, err := discord.New(
-			cfg.Channels.Discord.BotToken,
-			cfg.Channels.Discord.DMMode,
-			cfg.Channels.Discord.AllowFrom,
-			discordRequireMention,
-			voiceClient,
-		)
-		if err == nil {
-			dcRS := chadapter.NewReliableSender("discord", dc, reliabilityCfg)
-			dc.WithReliableOutbound(dcRS)
-			go dc.Start(ctx, runner.HandleChannelMessage)
-			channelSenders["discord"] = reliableToolSender{
-				rs: dcRS,
-			}
-			log.Info("Discord channel active")
-			activeChannels++
-		}
-	}
-	if cfg.Channels.Slack != nil {
-		sl, err := slack.New(cfg.Channels.Slack.BotToken, cfg.Channels.Slack.AppToken, cfg.Channels.Slack.DMMode, cfg.Channels.Slack.AllowFrom)
-		if err == nil {
-			slRS := chadapter.NewReliableSender("slack", sl, reliabilityCfg)
-			sl.WithReliableOutbound(slRS)
-			go sl.Start(ctx, runner.HandleChannelMessage)
-			channelSenders["slack"] = reliableToolSender{
-				rs: slRS,
-			}
-			log.Info("Slack channel active")
-			activeChannels++
-		}
-	}
-	if cfg.Channels.WhatsApp != nil {
-		wa, err := whatsapp.New(filepath.Join(cfg.StateDir, "whatsapp.db"), cfg.Channels.WhatsApp.SessionID, cfg.Channels.WhatsApp.DMMode, cfg.Channels.WhatsApp.AllowFrom, gf.logLevel, voiceClient)
-		if err == nil {
-			go wa.Start(ctx, runner.HandleChannelMessage)
-			log.Info("WhatsApp channel active")
-			activeChannels++
-		}
-	}
-	if cfg.Channels.Teams != nil {
-		teams, err := msteams.New(
-			cfg.Channels.Teams.AppID,
-			cfg.Channels.Teams.AppPassword,
-			cfg.Channels.Teams.ListenAddr,
-			cfg.Channels.Teams.DMMode,
-			cfg.Channels.Teams.AllowFrom,
-		)
-		if err == nil {
-			teamsRS := chadapter.NewReliableSender("msteams", teams, reliabilityCfg)
-			teams.WithReliableOutbound(teamsRS)
-			go teams.Start(ctx, runner.HandleChannelMessage)
-			channelSenders["msteams"] = reliableToolSender{rs: teamsRS}
-			log.Info("Microsoft Teams channel active")
-			activeChannels++
-		}
-	}
+	activeChannels = buildChannelRegistry(cfg, deps).StartAll(ctx, func(ctx context.Context, ch chanregistry.Channel) {
+		go ch.Start(ctx, runner.HandleChannelMessage)
+		log.Info("channel active", zap.String("channel", ch.Name()))
+	})
 
 	// Heartbeats: periodic synthetic turns on a dedicated session (no chat spam).
 	hb := cfg.Agent.Heartbeat
