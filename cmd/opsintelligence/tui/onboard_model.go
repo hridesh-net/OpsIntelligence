@@ -229,7 +229,6 @@ func (m *onboardWizardModel) View() string {
 	if m.width == 0 {
 		return lipgloss.Place(80, 24, lipgloss.Left, lipgloss.Top,
 			lipgloss.NewStyle().Foreground(ColorMuted).Padding(1, 2).Render("\n  Loading…\n"),
-			lipgloss.WithWhitespaceBackground(ColorBackground),
 		)
 	}
 	var inner string
@@ -238,18 +237,13 @@ func (m *onboardWizardModel) View() string {
 	} else {
 		inner = m.viewChrome()
 	}
-	// Full-bleed canvas: set the background on the padded wrapper so its
-	// spacing areas show ColorBackground (warm charcoal) instead of the
-	// terminal's own pure black, then fill any remaining whitespace the
-	// same way so not a single pixel of terminal-native black leaks through.
+	// Use the terminal's own background everywhere — no background fill.
+	// Text colours, borders and indicators provide all the visual structure.
 	padded := lipgloss.NewStyle().
 		Foreground(ColorOnSurface).
-		Background(ColorBackground).
 		Padding(1, 2).
 		Render(inner)
-	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, padded,
-		lipgloss.WithWhitespaceBackground(ColorBackground),
-	)
+	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, padded)
 }
 
 func (m *onboardWizardModel) viewChrome() string {

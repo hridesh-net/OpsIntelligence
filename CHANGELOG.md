@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.47] — 2026-04-30
+
+### Changed
+
+- **Use terminal's native background everywhere** (`onboard_model.go`, `repos_tui.go`, `onboard_step.go`, `theme.go`): Removed all `WithWhitespaceBackground`, `Background(ColorBackground)`, `Background(ColorSurface)`, and `Background(ColorDashboardBg)` fills. The terminal's own background colour shows through at all times; text colours, borders and selection indicators provide the visual structure. Both light and dark terminal profiles are fully respected.
+
 ## [0.3.46] — 2026-04-30
 
 ### Fixed / Changed

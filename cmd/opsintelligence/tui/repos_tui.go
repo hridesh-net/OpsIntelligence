@@ -444,16 +444,12 @@ func (m reposTUIModel) View() string {
 	// ── Content ──────────────────────────────────────────────────────────────
 	var content string
 	if m.activeTab == reposTabRepos {
-		// Repos list doesn't use the viewport — it's always short.
 		content = lipgloss.NewStyle().
-			Background(ColorDashboardBg).
 			Width(m.width-2).
 			Padding(1, 2).
 			Render(m.renderReposTab(strings.ToLower(m.search.Value())))
 	} else {
-		// Memory, Scans, Users, Graph go through the viewport for scrollability.
 		content = lipgloss.NewStyle().
-			Background(ColorDashboardBg).
 			Width(m.width-2).
 			Padding(1, 2).
 			Render(m.viewport.View())
@@ -462,12 +458,8 @@ func (m reposTUIModel) View() string {
 	// ── Footer ───────────────────────────────────────────────────────────────
 	footer := chromeBg.Render(Muted.Render(m.footerHint()))
 
-	inner := strings.Join([]string{contextStrip, tabRow, searchBar, divider, content, footer}, "\n")
-	// Fill the entire alt-screen canvas with the warm-dark background so the
-	// terminal's own black never bleeds through between rendered elements.
-	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, inner,
-		lipgloss.WithWhitespaceBackground(ColorBackground),
-	)
+	// Use the terminal's own background; no canvas fill needed.
+	return strings.Join([]string{contextStrip, tabRow, searchBar, divider, content, footer}, "\n")
 }
 
 func (m reposTUIModel) footerHint() string {

@@ -146,7 +146,6 @@ var (
 			Padding(0, 1)
 
 	DashboardPanel = lipgloss.NewStyle().
-			Background(ColorDashboardBg).
 			Foreground(ColorOnSurface).
 			Padding(1, 2)
 

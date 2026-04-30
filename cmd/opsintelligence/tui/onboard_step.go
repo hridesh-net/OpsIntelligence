@@ -16,14 +16,13 @@ const stepWidth = 70
 func applyOpsHuhTheme(t *huh.Theme) {
 	button := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 
-	// Form.Base uses ColorSurface so the form card sits visually above the
-	// page canvas (ColorBackground), mirroring the website's card-on-cream pattern.
-	t.Form.Base = lipgloss.NewStyle().Foreground(ColorOnSurface).Background(ColorSurface)
-	t.Group.Base = lipgloss.NewStyle().Foreground(ColorOnSurface).Background(ColorSurface)
+	// No background fills — let the terminal's own background show through.
+	t.Form.Base = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Group.Base = lipgloss.NewStyle().Foreground(ColorOnSurface)
 	t.Group.Title = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
 	t.Group.Description = lipgloss.NewStyle().Foreground(ColorMuted)
 
-	t.Focused.Base = t.Focused.Base.BorderForeground(ColorOutline).Foreground(ColorOnSurface).Background(ColorSurface)
+	t.Focused.Base = t.Focused.Base.BorderForeground(ColorOutline).Foreground(ColorOnSurface)
 	t.Focused.Card = t.Focused.Card.BorderForeground(ColorOutline)
 	t.Focused.Title = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
 	t.Focused.NoteTitle = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).MarginBottom(1)
