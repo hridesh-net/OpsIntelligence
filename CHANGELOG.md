@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.42] — 2026-04-30
+
+### Added
+
+- **Architecture diagrams**: `architecture-overview.drawio`, `architecture-memory-flow.drawio` (runtime + ingest tabs), `architecture-memory.drawio`, and `architecture-connectivity.drawio` in the repo root for docs and reviews.
+- **Draw.io agent skill**: `skills/drawio-skill/` (SKILL.md, styles, references, assets) for consistent diagram generation aligned with project conventions.
+
 ## [0.3.41] — 2026-04-30
 
 ### Added

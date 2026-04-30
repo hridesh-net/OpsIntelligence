@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram id="runtime" name="1 Runtime (LTR)">
+    <mxGraphModel dx="1400" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="920" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="t1" value="&lt;b&gt;OpsIntelligence memory — runtime&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:10px&quot;&gt;Tab 1 of 2 · Primary flow reads left → right · Cross-store dashed routes use the right gutter only (no overlap with ingest lanes on tab 2)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="16" width="1180" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="t1r" value="&lt;font style=&quot;font-size:10px&quot;&gt;&lt;b&gt;Ref:&lt;/b&gt; tab &lt;i&gt;2 Ingest pipelines&lt;/i&gt; — how Semantic / Hybrid are populated&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;align=left;spacingLeft=8;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="880" y="64" width="340" height="44" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="slw" value="&lt;b&gt;Conversation write&lt;/b&gt; (hot path)" style="swimlane;startSize=32;horizontal=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="1180" height="168" as="geometry"/>
+        </mxCell>
+        <mxCell id="n1" value="Ingress" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="slw">
+          <mxGeometry x="48" y="48" width="120" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2" value="&lt;b&gt;Runner&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;Run / RunStream&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="slw">
+          <mxGeometry x="220" y="42" width="140" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="n3" value="&lt;b&gt;WorkingMemory&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;RAM · budget · Compact&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="slw">
+          <mxGeometry x="420" y="42" width="160" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="n4" value="&lt;b&gt;Episodic&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;SQLite FTS5 · Save()&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="slw">
+          <mxGeometry x="640" y="40" width="170" height="72" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="slr" value="&lt;b&gt;Read and use&lt;/b&gt; (parallel inputs → consumer on the right)" style="swimlane;startSize=32;horizontal=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="1180" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="n5" value="&lt;b&gt;Prompt&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;from Working&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="slr">
+          <mxGeometry x="48" y="52" width="132" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="n6" value="&lt;b&gt;memory_search&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;FTS + vector + opt. MemPalace&lt;/font&gt;&#xa;&lt;font style=&quot;font-size:8px&quot; color=&quot;#666666&quot;&gt;(Semantic build → tab 2)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontStyle=1;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="slr">
+          <mxGeometry x="220" y="48" width="210" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="n7" value="&lt;b&gt;memory_get&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;GetSnippet&lt;/font&gt;&#xa;&lt;font style=&quot;font-size:8px&quot; color=&quot;#666666&quot;&gt;(snippets from Semantic — tab 2)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="slr">
+          <mxGeometry x="470" y="52" width="150" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n8" value="&lt;b&gt;RepoIntel&lt;/b&gt; tools&#xa;&lt;font style=&quot;font-size:8px&quot; color=&quot;#666666&quot;&gt;(Hybrid store — tab 2)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="slr">
+          <mxGeometry x="660" y="54" width="150" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="n9" value="&lt;b&gt;LLM&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=14;fontFamily=Helvetica;" vertex="1" parent="slr">
+          <mxGeometry x="920" y="120" width="148" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="fn" value="Code: internal/agent/runner.go · internal/memory/sync.go · internal/repointel/manager.go · cmd/opsintelligence/main.go (memSearchFn)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;fontColor=#666666;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="40" y="620" width="1100" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ew1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="slw" source="n1" target="n2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ew2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="slw" source="n2" target="n3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ew3" value="append + Save" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=9;" edge="1" parent="slw" source="n3" target="n4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="er1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c62828;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.12;entryY=0;" edge="1" parent="slr" source="n5" target="n9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="er2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c62828;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.32;entryY=0;" edge="1" parent="slr" source="n6" target="n9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="er3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c62828;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.52;entryY=0;" edge="1" parent="slr" source="n7" target="n9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="er4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c62828;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.72;entryY=0;" edge="1" parent="slr" source="n8" target="n9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="xc1" value="FTS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;dashed=1;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=9;" edge="1" parent="1" source="n4" target="n6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="765" y="288"/>
+              <mxPoint x="1230" y="288"/>
+              <mxPoint x="1230" y="392"/>
+              <mxPoint x="365" y="392"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="xc2" value="context" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;strokeWidth=2;endArrow=block;endFill=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;fontSize=9;" edge="1" parent="1" source="n3" target="n5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="211"/>
+              <mxPoint x="20" y="396"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="ingest" name="2 Ingest pipelines">
+    <mxGraphModel dx="1400" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="h0" value="&lt;b&gt;OpsIntelligence memory — ingest &amp; backing stores&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:10px&quot;&gt;Tab 2 of 2 · Independent async pipelines (LTR) · Shown separately from runtime so edges do not cross unrelated swimlanes&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="16" width="1180" height="48" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="s1" value="&lt;b&gt;Markdown → semantic&lt;/b&gt; (async)" style="swimlane;startSize=32;horizontal=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="1180" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="a1" value="MEMORY.md&#xa;memory/*.md" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s1">
+          <mxGeometry x="48" y="48" width="130" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="a2" value="Sync / Mine / Watch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s1">
+          <mxGeometry x="240" y="48" width="140" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="a3" value="Chunk + embed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s1">
+          <mxGeometry x="460" y="48" width="140" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="a4" value="&lt;b&gt;Semantic&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;sqlite-vec&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fffde7;strokeColor=#f9a825;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="s1">
+          <mxGeometry x="700" y="44" width="170" height="68" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="s2" value="&lt;b&gt;RepoIntel&lt;/b&gt; (per repo)" style="swimlane;startSize=32;horizontal=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="1180" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="b1" value="Registry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s2">
+          <mxGeometry x="48" y="48" width="110" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="b2" value="Indexer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s2">
+          <mxGeometry x="240" y="48" width="110" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="b3" value="JSON + scans" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s2">
+          <mxGeometry x="420" y="48" width="130" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="b4" value="&lt;b&gt;Hybrid store&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;FTS + vec&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#e8f5e9;strokeColor=#2e7d32;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="s2">
+          <mxGeometry x="680" y="44" width="170" height="68" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="s3" value="&lt;b&gt;Query-time reads&lt;/b&gt; (how runtime tools touch these stores)" style="swimlane;startSize=32;horizontal=1;fillColor=#f3e5f5;strokeColor=#9673a6;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="560" width="1180" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="c1" value="&lt;b&gt;Episodic&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;(same as tab 1)&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="80" y="52" width="140" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="c2" value="&lt;b&gt;Semantic&lt;/b&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fffde7;strokeColor=#f9a825;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="320" y="54" width="140" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="c3" value="&lt;b&gt;Hybrid&lt;/b&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#e8f5e9;strokeColor=#2e7d32;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="560" y="54" width="140" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="c4" value="&lt;b&gt;memory_search&lt;/b&gt;&#xa;&lt;font style=&quot;font-size:9px&quot;&gt;FTS + vector&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="800" y="56" width="160" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="c5" value="&lt;b&gt;memory_get&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="1000" y="60" width="120" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="c6" value="&lt;b&gt;RepoIntel tools&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;fontFamily=Helvetica;fontSize=10;" vertex="1" parent="s3">
+          <mxGeometry x="820" y="140" width="160" height="48" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ea1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="s1" source="a1" target="a2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ea2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="s1" source="a2" target="a3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ea3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f9a825;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="s1" source="a3" target="a4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="eb1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="s2" source="b1" target="b2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eb2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="s2" source="b2" target="b3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eb3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2e7d32;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="s2" source="b3" target="b4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ec1" value="FTS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;dashed=1;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.35;fontSize=9;" edge="1" parent="s3" source="c1" target="c4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ec2" value="vector" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f9a825;dashed=1;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.65;fontSize=9;" edge="1" parent="s3" source="c2" target="c4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ec3" value="snippet" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#f9a825;dashed=1;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=9;" edge="1" parent="s3" source="c2" target="c5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ec4" value="read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2e7d32;dashed=1;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=9;" edge="1" parent="s3" source="c3" target="c6">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

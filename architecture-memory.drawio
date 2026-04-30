@@ -1,0 +1,223 @@
+<mxfile host="app.diagrams.net" modified="2026-04-30" agent="cursor" version="22.1.0" type="device">
+  <diagram id="m00" name="00 — Memory overview">
+    <mxGraphModel dx="1280" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="note" value="&lt;b&gt;OpsIntelligence memory&lt;/b&gt; — three tiers in &lt;i&gt;internal/memory&lt;/i&gt; (&lt;a href=&quot;https://github.com/opsintelligence/opsintelligence&quot;&gt;see package doc&lt;/a&gt;).&lt;br&gt;&lt;b&gt;Important:&lt;/b&gt; &lt;i&gt;agent.palace&lt;/i&gt; + &lt;i&gt;HeuristicPalaceRouter&lt;/i&gt; = &lt;b&gt;local&lt;/b&gt; taxonomy for sqlite-vec &lt;b&gt;only&lt;/b&gt;. It is &lt;b&gt;not&lt;/b&gt; the MemPalace Python product.&lt;br&gt;MemPalace = optional &lt;b&gt;separate&lt;/b&gt; store via MCP / subprocess bridge (&lt;i&gt;memory.mempalace&lt;/i&gt;)." style="shape=note;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;size=18;align=left;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="520" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r1" value="&lt;b&gt;REF → Tab 01&lt;/b&gt;&lt;br&gt;Working memory + compaction" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;strokeWidth=2;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="200" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2" value="&lt;b&gt;REF → Tab 02&lt;/b&gt;&lt;br&gt;memory_search merge path" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="240" width="200" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="r3" value="&lt;b&gt;REF → Tab 03&lt;/b&gt;&lt;br&gt;Chunks + semantic store" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=2;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="310" width="200" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="r4" value="&lt;b&gt;REF → Tab 04&lt;/b&gt;&lt;br&gt;MemPalace (Python) wiring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;strokeWidth=2;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="380" width="200" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="r5" value="&lt;b&gt;REF → Tab 05&lt;/b&gt;&lt;br&gt;Why fewer tokens" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;strokeWidth=2;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="450" width="200" height="52" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="t1" value="&lt;b&gt;Tier 1 · Working&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;In-RAM per session · token budget · &lt;i&gt;Compact()&lt;/i&gt; drops oldest (keeps system)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="160" width="360" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="t2" value="&lt;b&gt;Tier 2 · Episodic&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;SQLite + &lt;b&gt;FTS5&lt;/b&gt; · durable turns · keyword search&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="260" width="360" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="t3" value="&lt;b&gt;Tier 3 · Semantic&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;&lt;b&gt;sqlite-vec&lt;/b&gt; · embeddings · docs tagged palace/wing/room · &lt;i&gt;memory_get&lt;/i&gt; pulls snippets by line range&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="360" width="360" height="88" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="agent" value="&lt;b&gt;agent.Runner&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Builds provider messages from working set; syncs turns to episodic; search/embed semantic&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1bee7;strokeColor=#7b1fa2;strokeWidth=2;align=center;" vertex="1" parent="1">
+          <mxGeometry x="360" y="500" width="360" height="76" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;strokeColor=#2e7d32;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="t1" target="t2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;strokeColor=#1565c0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="t2" target="t3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;strokeColor=#7b1fa2;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="t3" target="agent"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="idx" value="Use tabs &lt;b&gt;01–05&lt;/b&gt; for detail. This page stays a single vertical spine (no crossed edges)." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;fontColor=#555;" vertex="1" parent="1">
+          <mxGeometry x="780" y="170" width="360" height="40" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="m01" name="01 — Working memory &amp; context">
+    <mxGraphModel dx="1000" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="800" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;Per-session context&lt;/b&gt; — only recent messages stay in the prompt-sized &lt;i&gt;working&lt;/i&gt; buffer." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="30" width="640" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="a1" value="New user / assistant / tool messages" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="280" y="90" width="240" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="a2" value="&lt;b&gt;WorkingMemory&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Append · per-session map in Manager&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="280" y="170" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="a3" value="&lt;b&gt;Token budget&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;memory.working_token_budget (ManagerConfig)&lt;/font&gt;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="310" y="280" width="180" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="a4" value="&lt;b&gt;Compact()&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Drop oldest turns until under budget · system msg kept&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="120" y="430" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="a5" value="Messages sent to LLM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="480" y="440" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="a6" value="&lt;b&gt;Episodic persist&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Turns also written to SQLite FTS (tier 2) for search — not all kept in RAM&lt;/font&gt;" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="260" y="540" width="280" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ea1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="a1" target="a2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ea2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="a2" target="a3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ea3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="a3" target="a4"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="400" y="400"/><mxPoint x="220" y="400"/></Array></mxGeometry></mxCell>
+        <mxCell id="ea4" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="a3" target="a5"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="400" y="400"/><mxPoint x="580" y="400"/></Array></mxGeometry></mxCell>
+        <mxCell id="ea5" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=1;dashed=1;strokeColor=#1565c0;" edge="1" parent="1" source="a2" target="a6"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="m02" name="02 — memory_search tool">
+    <mxGraphModel dx="1100" dy="780" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="780" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;memory_search&lt;/b&gt; — one tool; &lt;i&gt;cmd/opsintelligence&lt;/i&gt; merges episodic + semantic (+ optional MemPalace). Agent sees &lt;b&gt;short result strings&lt;/b&gt;, not whole DBs." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="800" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="b0" value="Agent calls &lt;b&gt;memory_search&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1bee7;strokeColor=#7b1fa2;" vertex="1" parent="1">
+          <mxGeometry x="340" y="100" width="200" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="b1" value="1 · &lt;b&gt;Episodic FTS&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;SQLite keyword match · capped rows&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="80" y="200" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="b2" value="2 · &lt;b&gt;Semantic vector&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Embed query → sqlite-vec top‑k&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="340" y="200" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="b2a" value="2a · Optional &lt;b&gt;Palace route&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;agent.palace + HeuristicPalaceRouter — filter docs by taxonomy&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#43a047;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="200" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="b3" value="3 · Optional &lt;b&gt;MemPalace&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;If inject_into_memory_search: MCP mempalace_search merged in&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
+          <mxGeometry x="200" y="320" width="480" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="b4" value="Concatenated text hits → agent context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="430" width="280" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="b5" value="&lt;b&gt;memory_get&lt;/b&gt; (optional next step)&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Fetch &lt;i&gt;only&lt;/i&gt; line range from a path — avoids dumping full files into prompt&lt;/font&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#fbc02d;size=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="520" y="360" width="300" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="eb1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="b0" target="b1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="440" y="160"/><mxPoint x="180" y="160"/></Array></mxGeometry></mxCell>
+        <mxCell id="eb2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="b0" target="b2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eb2a" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;dashed=1;strokeColor=#43a047;" edge="1" parent="1" source="b2" target="b2a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eb3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="b1" target="b3"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="300"/><mxPoint x="440" y="300"/></Array></mxGeometry></mxCell>
+        <mxCell id="eb4" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="b2" target="b3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eb5" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="b3" target="b4"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="m03" name="03 — Semantic chunks &amp; mining">
+    <mxGraphModel dx="1000" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="820" pageHeight="720" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;Why semantic is token-efficient:&lt;/b&gt; workspace text is split into &lt;b&gt;chunks&lt;/b&gt; with overlap; each chunk is embedded once. At query time only &lt;b&gt;top‑k&lt;/b&gt; chunks return — not the whole repo in context." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="720" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="c1" value="Markdown / workspace files" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="300" y="100" width="220" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="c2" value="&lt;b&gt;ChunkMarkdown&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;chunk_size · chunk_overlap (Manager defaults e.g. 512 / 64)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="300" y="180" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="c3" value="Batch embed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="300" y="290" width="220" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="c4" value="&lt;b&gt;sqlite-vec&lt;/b&gt; store&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Documents + taxonomy metadata&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fffde7;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="300" y="370" width="220" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="c5" value="&lt;b&gt;Mining&lt;/b&gt; (&lt;i&gt;internal/memory/miner&lt;/i&gt;)&lt;br&gt;indexes workspace into semantic tier on a schedule / manual run" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#43a047;size=12;align=left;spacingLeft=8;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="180" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ec1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="c1" target="c2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ec2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="c2" target="c3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ec3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="c3" target="c4"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="m04" name="04 — MemPalace integration">
+    <mxGraphModel dx="1000" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="860" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;MemPalace&lt;/b&gt; (Python project) is &lt;b&gt;orthogonal&lt;/b&gt; to the three Go tiers. It adds an external &quot;world&quot; of memories. OpsIntelligence can:&lt;br&gt;• attach MCP server (&lt;i&gt;python -m mempalace.mcp_server&lt;/i&gt;) · &lt;i&gt;memory.mempalace.auto_start&lt;/i&gt;&lt;br&gt;• &lt;b&gt;InjectIntoMemorySearch&lt;/b&gt;: append MCP &lt;i&gt;mempalace_search&lt;/i&gt; into the same tool output as episodic/semantic&lt;br&gt;• &lt;b&gt;mempalace.Bridge&lt;/b&gt;: thin subprocess &lt;i&gt;recall&lt;/i&gt;/&lt;i&gt;store&lt;/i&gt; CLI for Go callers (authoritative data stays in Python world)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="780" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="go" value="&lt;b&gt;OpsIntelligence&lt;/b&gt; (Go)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="320" y="130" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="mcp" value="MCP stdio / HTTP&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;mcp:&amp;lt;client&amp;gt;:mempalace_search&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
+          <mxGeometry x="120" y="240" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="br" value="&lt;b&gt;Bridge&lt;/b&gt; subprocess&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/mempalace · recall/store&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="520" y="240" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="py" value="&lt;b&gt;MemPalace Python&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;separate world dir under state_dir&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="380" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="note" value="Episodic + semantic DBs in Go &lt;b&gt;remain&lt;/b&gt;. MemPalace does &lt;b&gt;not&lt;/b&gt; replace them — it &lt;b&gt;extends&lt;/b&gt; recall when enabled." style="shape=note;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#fbc02d;size=12;align=left;spacingLeft=8;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="500" width="320" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="go" target="mcp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="200"/><mxPoint x="220" y="200"/></Array></mxGeometry></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="go" target="br"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="460" y="200"/><mxPoint x="620" y="200"/></Array></mxGeometry></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="mcp" target="py"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="br" target="py"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="m05" name="05 — Token efficiency">
+    <mxGraphModel dx="900" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="760" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;Summary — how the stack keeps context cheap&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=13;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="500" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="t1" value="&lt;b&gt;1&lt;/b&gt; · &lt;b&gt;Hard cap&lt;/b&gt; on working RAM tokens — old turns evicted before every provider call." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t2" value="&lt;b&gt;2&lt;/b&gt; · &lt;b&gt;Episodic&lt;/b&gt; keeps full text on disk; only &lt;b&gt;matching snippets&lt;/b&gt; enter the tool result string (bounded limit)." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="140" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t3" value="&lt;b&gt;3&lt;/b&gt; · &lt;b&gt;Semantic&lt;/b&gt; stores &lt;b&gt;chunks&lt;/b&gt;, not whole files — retrieval returns top‑k chunks + metadata." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="200" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t4" value="&lt;b&gt;4&lt;/b&gt; · Optional &lt;b&gt;Palace routing&lt;/b&gt; narrows vector hits by taxonomy so fewer irrelevant chunks are appended." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f1f8e9;strokeColor=#689f38;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="260" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t5" value="&lt;b&gt;5&lt;/b&gt; · &lt;b&gt;memory_get&lt;/b&gt; — second-stage &lt;i&gt;line-range&lt;/i&gt; read so the model does not paste entire files after search." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t6" value="&lt;b&gt;6&lt;/b&gt; · &lt;b&gt;Provider guardrails&lt;/b&gt; — runner truncates oversized messages / digests for retries (e.g. stream resilience path)." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="380" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="t7" value="&lt;b&gt;7&lt;/b&gt; · &lt;b&gt;MemPalace&lt;/b&gt; (optional) — extra hits merged into the same bounded &lt;i&gt;memory_search&lt;/i&gt; response; still capped by limit / search_limit." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ede7f6;strokeColor=#5e35b1;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="440" width="640" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="foot" value="No edges on this page — checklist only. Cross-check code: &lt;i&gt;internal/memory/memory.go&lt;/i&gt;, &lt;i&gt;internal/memory/sync.go&lt;/i&gt;, &lt;i&gt;cmd/opsintelligence/main.go&lt;/i&gt; (memSearchFn), &lt;i&gt;internal/agent/runner.go&lt;/i&gt; (Compact, Palace), &lt;i&gt;internal/mempalace&lt;/i&gt;." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;fontColor=#666;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="40" y="520" width="660" height="60" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
