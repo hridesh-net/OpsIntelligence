@@ -204,8 +204,19 @@ func (m *onboardWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, fc)
 		if m.form.State == huh.StateCompleted || m.form.State == huh.StateAborted {
 			m.idx++
-			cmds = append(cmds, m.activateStep())
+			// Clear the completed form BEFORE activateStep sets the next one,
+			// so the assignment in activateStep is not immediately overwritten.
 			m.form = nil
+			initCmd := m.activateStep()
+			cmds = append(cmds, initCmd)
+			// Forward current terminal dimensions to the freshly created form so
+			// it renders immediately without waiting for a resize event.
+			if !m.running && m.form != nil {
+				w, h := m.width, m.height
+				cmds = append(cmds, func() tea.Msg {
+					return tea.WindowSizeMsg{Width: w, Height: h}
+				})
+			}
 		}
 	}
 

@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.44] — 2026-04-30
+
+### Fixed
+
+- **Onboarding wizard blank body** (`onboard_model.go`): When a form step completed, `activateStep()` set `m.form` to the next form and then the caller immediately overwrote it with `m.form = nil`, leaving every subsequent step with no form to render (black body area). Fixed by clearing `m.form = nil` *before* calling `activateStep()`. Also injects a synthetic `tea.WindowSizeMsg` with the current terminal dimensions into the freshly created form so it renders at the correct size immediately, without waiting for a terminal resize event.
+
 ## [0.3.43] — 2026-04-30
 
 ### Added
