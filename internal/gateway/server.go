@@ -27,6 +27,7 @@ import (
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
+	authpkg "github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
 	"github.com/opsintelligence/opsintelligence/internal/webui/dashboard"
 )
@@ -175,10 +176,22 @@ func (s *Server) Start() error {
 	// wired (dashboard); otherwise the legacy gateway Bearer gate. GET/HEAD
 	// skip CSRF; mutating verbs require CSRF for browser sessions (same as
 	// /api/v1/config and /api/v1/users).
+	//
+	// CLI / machine callers that present the static gateway Bearer token
+	// (s.Token) are accepted even when AuthService is wired: they are
+	// not browser sessions so CSRF does not apply. A system principal is
+	// injected so downstream RBAC and audit still see an identity.
 	phase2OrLegacyAuth := func(h http.HandlerFunc) http.Handler {
 		core := s.withCorrelation(h)
 		if s.AuthService != nil {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if s.Token != "" {
+					if tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); tok == s.Token {
+						ctx := authpkg.WithPrincipal(r.Context(), authpkg.SystemPrincipal("gateway-cli"))
+						core(w, r.WithContext(ctx))
+						return
+					}
+				}
 				if r.Method == http.MethodGet || r.Method == http.MethodHead {
 					s.AuthService.Protect(http.HandlerFunc(core)).ServeHTTP(w, r)
 					return

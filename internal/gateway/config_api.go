@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/configsvc"
@@ -13,6 +15,22 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"go.uber.org/zap"
 )
+
+// yamlToJSONVal converts a typed config struct to a JSON-serializable value
+// whose keys match the yaml tags (snake_case) rather than Go field names
+// (PascalCase). Config structs only carry yaml: tags, so without this
+// round-trip the JSON API would return "OpenAI" instead of "openai", etc.
+func yamlToJSONVal(v any) any {
+	b, err := yaml.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if err := yaml.Unmarshal(b, &out); err != nil {
+		return v
+	}
+	return out
+}
 
 type configResponse struct {
 	Revision string `json:"revision"`
@@ -41,7 +59,7 @@ func (s *AuthService) handleConfigRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, configResponse{
 		Revision: snap.Revision,
-		Config:   cfg,
+		Config:   yamlToJSONVal(cfg),
 	})
 }
 
@@ -84,7 +102,7 @@ func (s *AuthService) handleConfigSectionGet(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, configResponse{
 		Revision: snap.Revision,
-		Config:   val,
+		Config:   yamlToJSONVal(val),
 	})
 }
 

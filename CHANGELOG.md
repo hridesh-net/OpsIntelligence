@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.41] — 2026-04-30
+
+### Added
+
+- **Dashboard repo drill-down**: Clicking a repository row on `#/repos` opens a detail view with scan results, index memory, and users tabs, plus sync actions.
+
+### Changed
+
+- **Onboarding progress**: `opsintelligence onboard` now prints one full-width overall progress line per step (no duplicate mini-bar in the step header) and a final 100% line after configuration is saved.
+- **Gateway config JSON**: Config API responses round-trip through YAML so JSON keys match `yaml` tags (snake_case) instead of Go struct field names.
+- **Gateway auth**: Static gateway Bearer token is honored for API calls when session auth is enabled, with a system principal for RBAC and audit.
+- **Repos API**: Repo routes use `RawPath` so repo IDs containing slashes stay correctly encoded; sync errors map to 404 vs 500 more accurately.
+
 ## [0.3.38] — 2026-04-28
 
 ### Added

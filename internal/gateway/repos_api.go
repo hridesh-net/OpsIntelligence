@@ -41,8 +41,14 @@ func NewRepoIntelAdapter(mgr *repointel.Manager) *RepoIntelAdapter {
 
 // HandleRepos dispatches /api/v1/repos and /api/v1/repos/* requests.
 func (a *RepoIntelAdapter) HandleRepos(w http.ResponseWriter, r *http.Request) {
-	// Strip /api/v1/repos prefix.
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/repos")
+	// Use RawPath when set: Go decodes %2F→/ in r.URL.Path, which would
+	// break path splitting for repo IDs that contain slashes (e.g.
+	// "github:owner/repo"). RawPath preserves the percent-encoded form.
+	rawPath := r.URL.Path
+	if r.URL.RawPath != "" {
+		rawPath = r.URL.RawPath
+	}
+	path := strings.TrimPrefix(rawPath, "/api/v1/repos")
 	path = strings.TrimPrefix(path, "/")
 
 	// /api/v1/repos  (no trailing segment)
@@ -206,7 +212,12 @@ func (a *RepoIntelAdapter) handleRemove(w http.ResponseWriter, _ *http.Request, 
 
 func (a *RepoIntelAdapter) handleSync(w http.ResponseWriter, _ *http.Request, id string) {
 	if err := a.mgr.SyncRepo(id); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		if strings.Contains(msg, "not found") || strings.Contains(msg, "no such") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, msg, status)
 		return
 	}
 	repoWriteJSON(w, http.StatusAccepted, map[string]string{"status": "queued", "repo_id": id})

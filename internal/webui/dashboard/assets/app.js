@@ -2060,6 +2060,7 @@
       const tbody = document.getElementById("repos-tbody");
       repos.forEach((r) => {
         const tr = document.createElement("tr");
+        tr.style.cursor = "pointer";
         tr.innerHTML = `
           <td><div class="primary-cell">${escapeHTML(r.full_name || r.id || "—")}</div><div class="secondary-cell mono-cell">${escapeHTML(r.id || "—")}</div></td>
           <td>${escapeHTML(r.platform || "—")}</td>
@@ -2069,6 +2070,11 @@
           <td>${Number(r.user_count || 0)}</td>
           <td class="col-actions"></td>
         `;
+        tr.addEventListener("click", (ev) => {
+          if (ev.target.closest("button")) return;
+          clearReposPoll();
+          renderRepoDetail(body, r);
+        });
         const actions = tr.querySelector(".col-actions");
         actions.appendChild(
           makeButton("Sync", "ghost", async () => {
@@ -2086,6 +2092,122 @@
     } catch (err) {
       body.innerHTML = errorBlock(err.message || "failed to load repos");
     }
+  }
+
+  async function renderRepoDetail(container, repo) {
+    const enc = encodeURIComponent(repo.id);
+    container.innerHTML = `<div class="loading">Loading repo details…</div>`;
+
+    let scan = null, memory = null, users = [];
+    try {
+      [scan, memory, users] = await Promise.allSettled([
+        fetchJSON(`${API}/repos/${enc}/scan`),
+        fetchJSON(`${API}/repos/${enc}/memory`),
+        fetchJSON(`${API}/repos/${enc}/users`),
+      ]).then((results) => results.map((r) => (r.status === "fulfilled" ? r.value : null)));
+    } catch (_) {}
+
+    const riskClass = (repo.risk_level || "").toLowerCase();
+    container.innerHTML = `
+      <div class="repo-detail">
+        <div class="repo-detail-header">
+          <button id="repo-back-btn" class="ghost small">← Back</button>
+          <h2>${escapeHTML(repo.full_name || repo.id)}</h2>
+          <span class="secondary-cell mono-cell">${escapeHTML(repo.id)}</span>
+        </div>
+        <div class="repo-detail-meta">
+          <span class="pill pill-${escapeHTML((repo.index_status || "pending").toLowerCase())}">Index: ${escapeHTML(repo.index_status || "pending")}</span>
+          <span class="pill pill-${escapeHTML((repo.scan_status || "pending").toLowerCase())}">Scan: ${escapeHTML(repo.scan_status || "pending")}</span>
+          ${repo.risk_level ? `<span class="pill pill-${riskClass}">Risk: ${escapeHTML(repo.risk_level)}</span>` : ""}
+          <span class="pill">${escapeHTML(repo.platform || "github")}</span>
+        </div>
+        <div class="repo-detail-actions" id="repo-detail-actions"></div>
+        <div class="repo-tabs">
+          <button class="tab-btn active" data-tab="scan">Scan Results</button>
+          <button class="tab-btn" data-tab="memory">Index Memory</button>
+          <button class="tab-btn" data-tab="users">Users (${Array.isArray(users) ? users.length : 0})</button>
+        </div>
+        <div id="repo-tab-content" class="repo-tab-content"></div>
+      </div>
+    `;
+
+    document.getElementById("repo-back-btn").addEventListener("click", () => {
+      reposPollId = setInterval(() => loadReposBody(container), 3000);
+      loadReposBody(container);
+    });
+
+    const actionsDiv = document.getElementById("repo-detail-actions");
+    actionsDiv.appendChild(makeButton("Sync now", "primary", async () => {
+      try {
+        await sendJSON(`${API}/repos/${enc}/sync`, "POST");
+        showToast(`Queued sync for ${repo.full_name || repo.id}`, "ok");
+      } catch (err) {
+        showToast(err.message || "sync failed", "error");
+      }
+    }));
+
+    const tabContent = document.getElementById("repo-tab-content");
+    function showTab(name) {
+      container.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+      if (name === "scan") {
+        if (!scan) {
+          tabContent.innerHTML = `<div class="placeholder"><p>No scan results yet. Trigger a sync to run a security scan.</p></div>`;
+          return;
+        }
+        const findings = Array.isArray(scan.findings) ? scan.findings : [];
+        tabContent.innerHTML = `
+          <div class="scan-summary">
+            <div class="scan-meta">
+              <span>Risk: <strong>${escapeHTML(scan.risk_level || "—")}</strong></span>
+              ${scan.scanned_at ? `<span>Scanned: ${escapeHTML(new Date(scan.scanned_at).toLocaleString())}</span>` : ""}
+              <span>${findings.length} finding${findings.length !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+          ${findings.length ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Severity</th><th>Rule</th><th>File</th><th>Message</th></tr></thead>
+            <tbody>${findings.map((f) => `<tr>
+              <td><span class="pill pill-${escapeHTML((f.severity || "info").toLowerCase())}">${escapeHTML(f.severity || "info")}</span></td>
+              <td class="mono-cell">${escapeHTML(f.rule_id || "—")}</td>
+              <td class="mono-cell">${escapeHTML(f.path || "—")}${f.line ? `:${f.line}` : ""}</td>
+              <td>${escapeHTML(f.message || "—")}</td>
+            </tr>`).join("")}</tbody>
+          </table></div>` : `<div class="placeholder"><p>No findings — repo looks clean.</p></div>`}
+        `;
+      } else if (name === "memory") {
+        if (!memory) {
+          tabContent.innerHTML = `<div class="placeholder"><p>No index memory yet. Trigger a sync to index this repository.</p></div>`;
+          return;
+        }
+        const summary = memory.summary || memory.description || "";
+        const files = Array.isArray(memory.key_files) ? memory.key_files : [];
+        const techs = Array.isArray(memory.technologies) ? memory.technologies : [];
+        tabContent.innerHTML = `
+          <div class="memory-view">
+            ${summary ? `<section><h3>Summary</h3><p>${escapeHTML(summary)}</p></section>` : ""}
+            ${techs.length ? `<section><h3>Technologies</h3><p>${techs.map((t) => `<span class="pill">${escapeHTML(t)}</span>`).join(" ")}</p></section>` : ""}
+            ${files.length ? `<section><h3>Key Files</h3><ul class="file-list">${files.map((f) => `<li class="mono-cell">${escapeHTML(typeof f === "string" ? f : f.path || JSON.stringify(f))}</li>`).join("")}</ul></section>` : ""}
+            ${!summary && !files.length ? `<pre class="code-block">${escapeHTML(JSON.stringify(memory, null, 2))}</pre>` : ""}
+          </div>
+        `;
+      } else if (name === "users") {
+        const list = Array.isArray(users) ? users : [];
+        tabContent.innerHTML = list.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>Handle</th><th>Platform</th><th>Role</th></tr></thead>
+              <tbody>${list.map((u) => `<tr>
+                <td>${escapeHTML(u.handle || u.username || "—")}</td>
+                <td>${escapeHTML(u.platform || "—")}</td>
+                <td>${escapeHTML(u.role || "member")}</td>
+              </tr>`).join("")}</tbody>
+            </table></div>`
+          : `<div class="placeholder"><p>No users linked to this repo yet.</p></div>`;
+      }
+    }
+
+    container.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => showTab(btn.dataset.tab));
+    });
+    showTab("scan");
   }
 
   function openMintKeyModal(canManageAll) {

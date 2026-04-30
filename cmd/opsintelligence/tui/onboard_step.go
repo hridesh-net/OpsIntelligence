@@ -29,9 +29,37 @@ func OnboardTheme() *huh.Theme {
 
 // ── Step Progress Header ──────────────────────────────────────────────────────
 
+// PrintOnboardOverallProgress prints one full-width line for the whole wizard.
+// completed is how many steps are already finished (0..total). When entering
+// step N, pass completed=N-1 so the bar reflects work done so far; pass
+// completed=total when the wizard is finished.
+func PrintOnboardOverallProgress(completed, total int) {
+	if total <= 0 {
+		return
+	}
+	if completed < 0 {
+		completed = 0
+	}
+	if completed > total {
+		completed = total
+	}
+	pct := float64(completed) / float64(total) * 100
+	bar := ProgressBarLavender(pct, 36)
+	label := fmt.Sprintf("%d / %d steps complete", completed, total)
+	if completed >= total {
+		label = "All steps complete"
+	}
+	labelStyled := lipgloss.NewStyle().Foreground(ColorMuted).Render(label)
+	line := lipgloss.JoinHorizontal(lipgloss.Left, "  ", bar, "  ", labelStyled)
+	fmt.Println(line)
+}
+
 // PrintOnboardStep prints a styled step header before each wizard section.
 // Call this before running a huh form to give users clear positional context.
+// Overall progress uses a single wide bar (see PrintOnboardOverallProgress), not a per-header mini-bar.
 func PrintOnboardStep(step, total int, icon, title, subtitle string) {
+	PrintOnboardOverallProgress(step-1, total)
+
 	// Step pill: e.g. "  1 / 10  "
 	pill := lipgloss.NewStyle().
 		Background(ColorPrimary).
@@ -40,16 +68,12 @@ func PrintOnboardStep(step, total int, icon, title, subtitle string) {
 		Padding(0, 1).
 		Render(fmt.Sprintf(" %d / %d ", step, total))
 
-	// Progress bar: filled up to previous step
-	pct := float64(step-1) / float64(total) * 100
-	bar := ProgressBarLavender(pct, 16)
-
 	// Title (neon + icon)
 	titleStr := lipgloss.NewStyle().Foreground(ColorNeon).Bold(true).
 		Render(icon + "  " + title)
 
-	// Assemble top row
-	topRow := "  " + pill + "  " + bar + "  " + titleStr
+	// Assemble top row (no second progress bar — overall bar is the line above)
+	topRow := "  " + pill + "  " + titleStr
 
 	// Subtitle in muted
 	subRow := ""
