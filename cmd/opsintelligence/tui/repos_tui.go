@@ -462,7 +462,12 @@ func (m reposTUIModel) View() string {
 	// ── Footer ───────────────────────────────────────────────────────────────
 	footer := chromeBg.Render(Muted.Render(m.footerHint()))
 
-	return strings.Join([]string{contextStrip, tabRow, searchBar, divider, content, footer}, "\n")
+	inner := strings.Join([]string{contextStrip, tabRow, searchBar, divider, content, footer}, "\n")
+	// Fill the entire alt-screen canvas with the warm-dark background so the
+	// terminal's own black never bleeds through between rendered elements.
+	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, inner,
+		lipgloss.WithWhitespaceBackground(ColorBackground),
+	)
 }
 
 func (m reposTUIModel) footerHint() string {
@@ -503,7 +508,7 @@ func (m reposTUIModel) viewEditForm() string {
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorAccentLavender).
+		BorderForeground(ColorOutline).
 		Width(m.width-4).
 		Padding(1, 2).
 		Render(title + "\n" + sub + "\n\n" + m.form.View() + "\n" + hint)
@@ -519,7 +524,7 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		return Muted.Render("No repos match. Add one: opsintelligence repos add <owner/name>")
 	}
 
-	header := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).
+	header := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render(fmt.Sprintf("%-36s  %-10s  %-10s  %-8s  %s", "REPO", "INDEX", "SCAN", "RISK", "LANG"))
 	div := Muted.Render(strings.Repeat("─", m.width-8))
 
@@ -538,10 +543,12 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		riskStyled := riskColor(e.RiskLevel).Render(risk)
 
 		prefix := "  "
-		nameStyle := lipgloss.NewStyle().Foreground(ColorWhite)
+		nameStyle := lipgloss.NewStyle().Foreground(ColorOnSurface)
 		if i == m.selectedRepo {
-			prefix = lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("▶ ")
-			nameStyle = lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true)
+			// Orange ▶ is the single selection indicator; row name uses emphasis
+			// white so the accent stays purposeful (not repeated on every column).
+			prefix = lipgloss.NewStyle().Foreground(ColorBrandAccent).Bold(true).Render("▶ ")
+			nameStyle = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
 		}
 
 		name := nameStyle.Render(truncate36(e.FullName))
@@ -621,7 +628,7 @@ func (m reposTUIModel) colorizeStatus(s string) string {
 
 func (m reposTUIModel) renderMemoryTab() string {
 	entry := m.selectedEntry()
-	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).
+	title := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render("Memory — " + entry.FullName)
 
 	if entry.IndexStatus == repointel.IndexIndexing {
@@ -720,7 +727,7 @@ func (m reposTUIModel) renderMemoryTab() string {
 	// Operator notes
 	if mem.UserContext != "" {
 		sb.WriteString(sectionHeader("Operator Notes"))
-		sb.WriteString(lipgloss.NewStyle().Foreground(ColorAccentLavender).
+		sb.WriteString(lipgloss.NewStyle().Foreground(ColorOnSurface).
 			Render(wrapText(mem.UserContext, m.width-10)) + "\n\n")
 	} else {
 		sb.WriteString(Muted.Render("  ─  No operator notes. Press e to add your context.") + "\n")
@@ -731,7 +738,7 @@ func (m reposTUIModel) renderMemoryTab() string {
 
 func (m reposTUIModel) renderScansTab() string {
 	entry := m.selectedEntry()
-	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).
+	title := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render("Security Scan — " + entry.FullName)
 
 	if entry.ScanStatus == repointel.ScanScanning {
@@ -806,7 +813,7 @@ func (m reposTUIModel) renderScansTab() string {
 		sb.WriteString(sectionHeader(fmt.Sprintf("Suggestions (%d)", len(sc.Suggestions))))
 		for _, s := range sc.Suggestions {
 			priBadge := Muted.Render(fmt.Sprintf("[%s]", s.Priority))
-			sb.WriteString("  " + priBadge + "  " + lipgloss.NewStyle().Foreground(ColorAccentLavender).Render(s.Area) + "\n")
+			sb.WriteString("  " + priBadge + "  " + lipgloss.NewStyle().Foreground(ColorOnSurface).Render(s.Area) + "\n")
 			sb.WriteString("       " + s.Suggestion + "\n\n")
 		}
 	}
@@ -816,7 +823,7 @@ func (m reposTUIModel) renderScansTab() string {
 
 func (m reposTUIModel) renderGraphTab() string {
 	entry := m.selectedEntry()
-	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).
+	title := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render("Call Graph — " + entry.FullName)
 
 	if entry.IndexStatus != repointel.IndexReady {
@@ -1032,7 +1039,7 @@ func truncateN(s string, n int) string {
 
 func (m reposTUIModel) renderUsersTab() string {
 	entry := m.selectedEntry()
-	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).
+	title := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render("Users — " + entry.FullName)
 
 	if len(entry.Users) == 0 {
@@ -1041,7 +1048,7 @@ func (m reposTUIModel) renderUsersTab() string {
 
 	var sb strings.Builder
 	sb.WriteString(title + "\n\n")
-	sb.WriteString(lipgloss.NewStyle().Foreground(ColorAccentLavender).
+	sb.WriteString(lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
 		Render(fmt.Sprintf("  %-22s  %-14s  %s", "HANDLE", "ROLE", "EMAIL")) + "\n")
 	sb.WriteString(Muted.Render("  "+strings.Repeat("─", 54)) + "\n")
 
@@ -1248,8 +1255,8 @@ func riskColor(risk string) lipgloss.Style {
 }
 
 func sectionHeader(title string) string {
-	return lipgloss.NewStyle().Foreground(ColorNeon).Bold(true).Render("  "+title) +
-		"\n" + Muted.Render("  "+strings.Repeat("─", len(title)+2)) + "\n"
+	return lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).Render("  "+title) +
+		"\n" + lipgloss.NewStyle().Foreground(ColorOutlineVariant).Render("  "+strings.Repeat("─", len(title)+2)) + "\n"
 }
 
 func kvLine(k, v string) string {

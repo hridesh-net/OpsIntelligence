@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.45] — 2026-04-30
+
+### Changed
+
+- **Repos dashboard visual overhaul** (`repos_tui.go`, `theme.go`):
+  - Fill the entire alt-screen canvas with the warm-dark background (`ColorBackground`) via `lipgloss.Place + WithWhitespaceBackground` — terminal's own pure black no longer bleeds through between rendered elements.
+  - Reduce orange to its single purposeful role: the `▶` selection cursor and progress-bar fill. All other elements (table headers, section headers, tab titles, selected-row text, dividers, borders) now use `ColorEmphasis` (cream/white) or `ColorOutlineVariant` to match the website's "minimal orange" philosophy.
+  - `TabActive` changed from a solid orange background pill to bold orange text only — the website uses orange as one tiny accent dot, not as a fill colour.
+  - `DashboardDivider` changed from `ColorAccentLavender` (orange) to `ColorOutlineVariant` (subtle grey).
+
 ## [0.3.44] — 2026-04-30
 
 ### Fixed

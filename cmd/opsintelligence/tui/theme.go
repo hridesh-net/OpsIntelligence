@@ -127,9 +127,11 @@ var (
 			Foreground(ColorMuted)
 
 	// TabActive / TabInactive style the dashboard tab row.
+	// Active tab uses brand orange text + bold — no background fill — so the
+	// orange accent stays a single purposeful role (matching the website's
+	// "one tiny dot" use of the accent colour).
 	TabActive = lipgloss.NewStyle().
-			Background(ColorAccentLavender).
-			Foreground(ColorTabActiveFG).
+			Foreground(ColorBrandAccent).
 			Bold(true).
 			Padding(0, 1).
 			MarginRight(1)
@@ -149,7 +151,7 @@ var (
 			Padding(1, 2)
 
 	DashboardDivider = lipgloss.NewStyle().
-				Foreground(ColorAccentLavender)
+				Foreground(ColorOutlineVariant)
 )
 
 // ── Helpers ───────────────────────────────────────────────────────────────
