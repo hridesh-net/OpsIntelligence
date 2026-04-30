@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,9 +235,24 @@ func (idx *Indexer) ghGet(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// isLikelySourcePath matches common implementation files so they are not
+// starved out by tier-4 noise (tiny JSON/YAML) when MaxFilesPerRepo is tight.
+// That starvation produced empty call graphs for Go repos while TS repos
+// often won via package.json + index.ts entry-point tiering.
+func isLikelySourcePath(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".py", ".rs", ".java", ".cs", ".php", ".rb",
+		".cpp", ".cc", ".cxx", ".c", ".h", ".hpp":
+		return true
+	default:
+		return false
+	}
+}
+
 // selectKeyFiles picks the most useful files from the tree for LLM analysis.
 func selectKeyFiles(tree []ghTreeEntry, max int) []string {
-	// Priority tiers: manifests > CI > source entry points > docs.
+	// Priority tiers: manifests > CI > (entry points + source) > docs > other.
 	tier := func(path string) int {
 		p := strings.ToLower(path)
 		switch {
@@ -243,7 +260,7 @@ func selectKeyFiles(tree []ghTreeEntry, max int) []string {
 			return 0
 		case isCI(p):
 			return 1
-		case isEntryPoint(p):
+		case isEntryPoint(p), isLikelySourcePath(path):
 			return 2
 		case isDoc(p):
 			return 3
@@ -269,17 +286,25 @@ func selectKeyFiles(tree []ghTreeEntry, max int) []string {
 		cands = append(cands, candidate{e.Path, tier(e.Path), e.Size})
 	}
 
-	// Sort by tier then size ascending.
-	for i := 1; i < len(cands); i++ {
-		for j := i; j > 0; j-- {
-			a, b := cands[j-1], cands[j]
-			if a.tier > b.tier || (a.tier == b.tier && a.size > b.size) {
-				cands[j-1], cands[j] = cands[j], cands[j-1]
-			} else {
-				break
-			}
+	// Sort by tier, then:
+	//   tier 2 (source): larger files first — more defs/imports per 8 KiB cap;
+	//   other tiers: smaller first — token budget for manifests and misc.
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.tier != b.tier {
+			return a.tier < b.tier
 		}
-	}
+		if a.tier == 2 {
+			if a.size != b.size {
+				return a.size > b.size
+			}
+			return a.path < b.path
+		}
+		if a.size != b.size {
+			return a.size < b.size
+		}
+		return a.path < b.path
+	})
 
 	out := make([]string, 0, max)
 	for _, c := range cands {

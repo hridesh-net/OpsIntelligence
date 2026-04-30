@@ -123,6 +123,11 @@ type RepoIntelConfig struct {
 	// Default: 32 (applied by the indexer when unset or zero).
 	MaxFilesPerRepo int `yaml:"max_files_per_repo"`
 
+	// ShowCallgraphLibraryPackages, when true, allows the Repo Intel dashboard
+	// call graph to show external library / package nodes and import edges.
+	// Default false so operators opt in explicitly (Settings → repo_intel or YAML).
+	ShowCallgraphLibraryPackages bool `yaml:"show_callgraph_library_packages"`
+
 	// WorkQueueDepth is the channel buffer for the sequential processing queue.
 	// Default: 256.
 	WorkQueueDepth int `yaml:"work_queue_depth"`

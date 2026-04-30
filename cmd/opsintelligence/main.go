@@ -62,7 +62,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.48" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.49" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -2039,7 +2039,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv.Config = cfg
 		srv.Logger = log
 		srv.PRReview = gateway.NewPRReviewAdapter(prReviewHandler) // exposes /api/v1/pr-reviews on the dashboard
-		srv.RepoIntel = gateway.NewRepoIntelAdapter(repoMgr)
+		srv.RepoIntel = gateway.NewRepoIntelAdapter(repoMgr, cfg)
 		if waReg, err := buildWebhookAdapterRegistry(cfg, log); err != nil {
 			return err
 		} else if waReg != nil {

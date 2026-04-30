@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
 )
 
@@ -29,14 +30,32 @@ import (
 // It is stored on Server.RepoIntel and is nil when the feature is disabled.
 type RepoIntelAdapter struct {
 	mgr *repointel.Manager
+	// Cfg is the gateway process config snapshot; RepoIntel.show_callgraph_library_packages
+	// is read on each repo JSON response. Operators must restart the gateway after
+	// changing that flag (dashboard Settings writes to the config service / file, but
+	// this pointer is not hot-reloaded here). Nil-safe: treated as false.
+	Cfg *config.Config
 }
 
 // NewRepoIntelAdapter wraps a Manager. Returns nil when mgr is nil.
-func NewRepoIntelAdapter(mgr *repointel.Manager) *RepoIntelAdapter {
+func NewRepoIntelAdapter(mgr *repointel.Manager, cfg *config.Config) *RepoIntelAdapter {
 	if mgr == nil {
 		return nil
 	}
-	return &RepoIntelAdapter{mgr: mgr}
+	return &RepoIntelAdapter{mgr: mgr, Cfg: cfg}
+}
+
+func (a *RepoIntelAdapter) showCallgraphLibraryPackages() bool {
+	if a == nil || a.Cfg == nil {
+		return false
+	}
+	return a.Cfg.RepoIntel.ShowCallgraphLibraryPackages
+}
+
+// repoEntryResponse is the registry entry plus read-only UI flags from server config.
+type repoEntryResponse struct {
+	repointel.RepoEntry
+	ShowCallgraphLibraryPackages bool `json:"show_callgraph_library_packages"`
 }
 
 // ── Route dispatcher ──────────────────────────────────────────────────────────
@@ -198,7 +217,10 @@ func (a *RepoIntelAdapter) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e, _ := a.mgr.GetRepo(entry.ID)
-	repoWriteJSON(w, http.StatusCreated, e)
+	repoWriteJSON(w, http.StatusCreated, repoEntryResponse{
+		RepoEntry:                    e,
+		ShowCallgraphLibraryPackages: a.showCallgraphLibraryPackages(),
+	})
 }
 
 // ── /api/v1/repos/{id} — get ─────────────────────────────────────────────────
@@ -209,7 +231,10 @@ func (a *RepoIntelAdapter) handleGet(w http.ResponseWriter, _ *http.Request, id 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	repoWriteJSON(w, http.StatusOK, e)
+	repoWriteJSON(w, http.StatusOK, repoEntryResponse{
+		RepoEntry:                    e,
+		ShowCallgraphLibraryPackages: a.showCallgraphLibraryPackages(),
+	})
 }
 
 // ── /api/v1/repos/{id} — remove ──────────────────────────────────────────────

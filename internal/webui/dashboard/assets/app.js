@@ -760,6 +760,12 @@
         { key: "enabled", label: "Enabled", type: "checkbox" },
         { key: "registry_file", label: "Registry file", type: "text" },
         { key: "memory_dir", label: "Memory dir", type: "text" },
+        { key: "max_files_per_repo", label: "Max files fetched per repo (index + graph)", type: "number", min: 1 },
+        {
+          key: "show_callgraph_library_packages",
+          label: "Show external library / package nodes in call graph",
+          type: "checkbox",
+        },
         { key: "docs_dir", label: "Docs dir", type: "text" },
         { key: "check_interval", label: "Check interval", type: "duration" },
         {
@@ -2359,64 +2365,121 @@
               return `<li class="mono-cell">${escapeHTML(p)}</li>`;
             })
             .join("");
+          const rawNodes = cg.nodes;
+          const edgesArr = Array.isArray(cg.edges) ? cg.edges : [];
+          const importEdgeCount = edgesArr.filter((e) => e.kind === "import").length;
+          const callEdgeCount = edgesArr.length - importEdgeCount;
+          const libPkgAllowed = !!fullRepo.show_callgraph_library_packages;
+          const showImportsInitially = libPkgAllowed && importEdgeCount <= 22;
+          const orientHint = libPkgAllowed
+            ? `Solid: function calls. Dashed: imports / packages. Busy graphs default to <strong>calls only</strong> — use the toolbar checkbox to show import edges. Click a node for file and line.`
+            : `Solid: <strong>function calls only</strong>. External library / package nodes and import edges stay hidden until an operator sets <code>repo_intel.show_callgraph_library_packages: true</code> (Settings → Repo Intelligence → <strong>Show external library / package nodes in call graph</strong>) and <strong>restarts the gateway</strong> so the process picks up config. Then reload this page. Click a node for file and line.`;
+          const toolbarImports = libPkgAllowed
+            ? `<label class="repo-graph-toolbar-label">
+                    <input type="checkbox" id="repo-graph-show-imports" ${showImportsInitially ? "checked" : ""} />
+                    Show package / import edges
+                  </label>
+                  <span class="repo-graph-toolbar-meta muted">${callEdgeCount} call · ${importEdgeCount} import</span>`
+            : `<p class="repo-graph-toolbar-note muted">Import / package edges hidden by policy (${importEdgeCount} not shown). Enable <strong>Show external library / package nodes in call graph</strong> under Settings → Repo Intelligence, save, restart the gateway, and reload this page.</p>
+                  <span class="repo-graph-toolbar-meta muted">${callEdgeCount} call edges</span>`;
           tabContent.innerHTML = `
             <div class="repo-graph-layout">
               <aside class="repo-graph-sidebar">
                 <h3 class="repo-graph-sidebar-title">Orient</h3>
-                <p class="repo-graph-sidebar-hint muted">Solid edges: function calls. Dashed: imports / external modules. Click a node for file and line.</p>
+                <p class="repo-graph-sidebar-hint muted">${orientHint}</p>
                 ${arch ? `<section class="repo-graph-section"><h4>Architecture</h4><div class="repo-graph-prose">${arch}</div></section>` : ""}
                 ${kfList ? `<section class="repo-graph-section"><h4>Key files</h4><ul class="repo-graph-file-list">${kfList}</ul></section>` : ""}
                 ${hints ? `<section class="repo-graph-section"><h4>Review focus</h4><div class="repo-graph-prose">${hints}</div></section>` : ""}
                 <div id="repo-graph-node-detail" class="repo-graph-node-detail muted">Click a node…</div>
               </aside>
               <div class="repo-graph-canvas-wrap">
+                <div class="repo-graph-toolbar">
+                  ${toolbarImports}
+                  <button type="button" class="ghost" id="repo-graph-fit">Fit view</button>
+                  <button type="button" class="ghost" id="repo-graph-physics">Re-layout</button>
+                </div>
                 <div id="repo-vis-network" class="repo-vis-network" role="img" aria-label="Call graph"></div>
               </div>
             </div>`;
           const detailEl = tabContent.querySelector("#repo-graph-node-detail");
-          const rawNodes = cg.nodes;
-          const edgesArr = Array.isArray(cg.edges) ? cg.edges : [];
-          const nodesVis = rawNodes.map((n) => ({
-            id: n.id,
-            label: n.name || n.id,
-            title:
-              n.kind === "module" || n.kind === "file"
-                ? `${n.name}\n${n.file}`
-                : `${n.name}\n${n.file}:${n.line}`,
-            group:
-              n.kind === "module" ? "module" : n.kind === "file" ? "file" : n.file || "unknown",
-          }));
-          const edgesVis = edgesArr.map((e, i) => ({
-            id: `e${i}`,
-            from: e.from,
-            to: e.to,
-            arrows: "to",
-            dashes: e.kind === "import",
-          }));
+          const toVisNodes = (showImports) =>
+            rawNodes
+              .filter((n) => showImports || n.kind !== "module")
+              .map((n) => ({
+                id: n.id,
+                label: n.name || n.id,
+                title:
+                  n.kind === "module" || n.kind === "file"
+                    ? `${n.name}\n${n.file}`
+                    : `${n.name}\n${n.file}:${n.line}`,
+                group:
+                  n.kind === "module" ? "module" : n.kind === "file" ? "file" : n.file || "unknown",
+              }));
+          const toVisEdges = (showImports) =>
+            edgesArr
+              .filter((e) => showImports || e.kind !== "import")
+              .map((e) => ({
+                id: `${e.from}→${e.to}→${e.kind}`,
+                from: e.from,
+                to: e.to,
+                arrows: "to",
+                dashes: e.kind === "import",
+                color:
+                  e.kind === "import"
+                    ? { color: "#5c6570", highlight: "#8b98a8" }
+                    : { color: "#5b8def", highlight: "#9dc0ff" },
+              }));
           const el = tabContent.querySelector("#repo-vis-network");
           if (!el) {
             return;
           }
+          let showImports = libPkgAllowed && showImportsInitially;
           const data = {
-            nodes: new vis.DataSet(nodesVis),
-            edges: new vis.DataSet(edgesVis),
+            nodes: new vis.DataSet(toVisNodes(showImports)),
+            edges: new vis.DataSet(toVisEdges(showImports)),
           };
           const opts = {
-            physics: { stabilization: { iterations: 100 } },
-            edges: { smooth: { type: "dynamic" } },
+            physics: {
+              enabled: true,
+              stabilization: { iterations: 260, updateInterval: 30, fit: true },
+              barnesHut: {
+                gravitationalConstant: -10000,
+                centralGravity: 0.1,
+                springLength: 220,
+                springConstant: 0.032,
+                damping: 0.58,
+              },
+            },
+            edges: {
+              smooth: { type: "continuous", roundness: 0.22 },
+              selectionWidth: 2,
+            },
             groups: {
               module: {
                 color: { background: "#6e7681", border: "#484f58" },
-                font: { color: "#f0f0f0" },
+                font: { color: "#f0f0f0", size: 13 },
               },
               file: {
                 color: { background: "#1f6feb55", border: "#388bfd" },
-                font: { color: "#f0f6fc" },
+                font: { color: "#f0f6fc", size: 13 },
               },
             },
-            nodes: { font: { size: 13 } },
+            nodes: {
+              font: { size: 14, face: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" },
+              margin: 12,
+              borderWidth: 1,
+            },
+            interaction: { hover: true, tooltipDelay: 80, zoomView: true, dragView: true },
           };
           graphNetwork = new vis.Network(el, data, opts);
+          graphNetwork.once("stabilizationIterationsDone", () => {
+            try {
+              graphNetwork.setOptions({ physics: false });
+              graphNetwork.fit({ animation: { duration: 280, easingFunction: "easeInOutQuad" } });
+            } catch (_) {
+              /* ignore */
+            }
+          });
           graphNetwork.on("click", (params) => {
             if (!detailEl || !params.nodes.length) {
               return;
@@ -2431,6 +2494,51 @@
               node.kind === "module" || node.kind === "file" ? node.file : `${node.file}:${node.line}`;
             detailEl.innerHTML = `<strong>${escapeHTML(node.name || nid)}</strong> <span class="pill">${escapeHTML(kind)}</span><br/><span class="mono-cell">${escapeHTML(loc)}</span>`;
           });
+          const chk = libPkgAllowed ? tabContent.querySelector("#repo-graph-show-imports") : null;
+          if (chk) {
+            chk.addEventListener("change", () => {
+              showImports = chk.checked;
+              data.nodes.clear();
+              data.edges.clear();
+              data.nodes.add(toVisNodes(showImports));
+              data.edges.add(toVisEdges(showImports));
+              graphNetwork.setData(data);
+              graphNetwork.setOptions({ physics: true });
+              graphNetwork.startSimulation();
+              graphNetwork.once("stabilizationIterationsDone", () => {
+                try {
+                  graphNetwork.setOptions({ physics: false });
+                  graphNetwork.fit({ animation: { duration: 220, easingFunction: "easeInOutQuad" } });
+                } catch (_) {
+                  /* ignore */
+                }
+              });
+            });
+          }
+          const fitBtn = tabContent.querySelector("#repo-graph-fit");
+          if (fitBtn) {
+            fitBtn.addEventListener("click", () => {
+              try {
+                graphNetwork.fit({ animation: { duration: 220, easingFunction: "easeInOutQuad" } });
+              } catch (_) {
+                /* ignore */
+              }
+            });
+          }
+          const physBtn = tabContent.querySelector("#repo-graph-physics");
+          if (physBtn) {
+            physBtn.addEventListener("click", () => {
+              try {
+                graphNetwork.setOptions({ physics: true });
+                graphNetwork.startSimulation();
+                graphNetwork.once("stabilizationIterationsDone", () => {
+                  graphNetwork.setOptions({ physics: false });
+                });
+              } catch (_) {
+                /* ignore */
+              }
+            });
+          }
         })();
       } else if (name === "users") {
         const list = userList;

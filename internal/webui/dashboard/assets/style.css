@@ -1014,6 +1014,38 @@ button.ghost.danger:hover {
   font-size: 13px;
   line-height: 1.5;
 }
+.repo-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.repo-graph-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.repo-graph-toolbar-meta {
+  font-size: 12px;
+}
+.repo-graph-toolbar-note {
+  margin: 0;
+  max-width: 40rem;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.repo-graph-toolbar .ghost {
+  font-size: 12px;
+  padding: 6px 12px;
+}
 .repo-graph-canvas-wrap {
   border: 1px solid var(--border);
   border-radius: var(--radius);

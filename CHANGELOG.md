@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.49] — 2026-04-30
+
+### Added
+
+- **Repo Intel call graph policy** (`internal/config/config.go`, `internal/gateway/repos_api.go`, dashboard): `repo_intel.show_callgraph_library_packages` (default **false**). External package/module nodes and import edges stay out of the dashboard graph until operators opt in via Settings → Repo Intelligence or YAML. `GET /api/v1/repos/{id}` includes `show_callgraph_library_packages` for the UI. Settings schema documents `max_files_per_repo` and the new flag.
+
+### Changed
+
+- **Indexer file selection for graphs** (`internal/repointel/indexer.go`, `indexer_select_test.go`): Treat common source extensions (`.go`, `.ts`, …) as high-priority tier with entry points; within that tier prefer **larger** files so small config blobs no longer starve Go repos out of the snapshot (empty call graphs).
+- **Dashboard call graph** (`app.js`, `style.css`): Stronger physics and stabilization, Fit / Re-layout controls, optional import edges when policy allows (busy graphs default to calls-only), toolbar copy when packages are disabled by policy.
+
 ## [0.3.48] — 2026-04-30
 
 ### Added
