@@ -120,7 +120,7 @@ type RepoIntelConfig struct {
 	MemoryDir string `yaml:"memory_dir"`
 
 	// MaxFilesPerRepo caps the number of files fetched per repo during indexing.
-	// Default: 20.
+	// Default: 32 (applied by the indexer when unset or zero).
 	MaxFilesPerRepo int `yaml:"max_files_per_repo"`
 
 	// WorkQueueDepth is the channel buffer for the sequential processing queue.

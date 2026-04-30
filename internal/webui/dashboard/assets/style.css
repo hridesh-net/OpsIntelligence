@@ -958,6 +958,13 @@ button.ghost.danger:hover {
 
 .repo-tab-content { padding-top: 16px; min-height: 120px; }
 
+.repo-detail-facts { margin-top: 12px; font-size: 13px; line-height: 1.55; }
+.repo-detail-desc { margin: 0 0 8px; color: var(--fg); max-width: 72ch; }
+.repo-detail-facts-row { margin: 0; }
+.repo-detail-err { margin: 6px 0 0; color: var(--danger, #c00); font-size: 13px; }
+.repo-detail-artifacts { margin-top: 8px; font-size: 12px; line-height: 1.5; }
+.memory-prose { margin: 0; white-space: pre-wrap; line-height: 1.55; font-size: 14px; }
+
 .scan-summary { margin-bottom: 16px; }
 .scan-meta { display: flex; gap: 20px; font-size: 13px; color: var(--fg-muted); flex-wrap: wrap; }
 .scan-meta strong { color: var(--fg); }
@@ -967,3 +974,51 @@ button.ghost.danger:hover {
 .memory-view section p { margin: 0; font-size: 14px; line-height: 1.6; }
 .file-list { margin: 0; padding-left: 20px; font-family: monospace; font-size: 12px; color: var(--fg-muted); line-height: 1.8; }
 .code-block { background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-size: 12px; overflow: auto; max-height: 400px; }
+
+/* Repo call graph (vis-network) */
+.repo-graph-loading { padding: 24px; color: var(--fg-muted); font-size: 14px; }
+.repo-graph-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 16px;
+  align-items: stretch;
+  min-height: 420px;
+}
+@media (max-width: 900px) {
+  .repo-graph-layout { grid-template-columns: 1fr; }
+}
+.repo-graph-sidebar {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--bg-elev-1);
+  overflow: auto;
+  max-height: 70vh;
+}
+.repo-graph-sidebar-title { margin: 0 0 8px; font-size: 15px; }
+.repo-graph-sidebar-hint { margin: 0 0 14px; font-size: 12px; line-height: 1.5; }
+.repo-graph-section { margin-bottom: 16px; }
+.repo-graph-section h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+.repo-graph-prose { font-size: 13px; line-height: 1.55; color: var(--fg); white-space: pre-wrap; }
+.repo-graph-file-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+.repo-graph-node-detail {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.repo-graph-canvas-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  min-height: 420px;
+  overflow: hidden;
+}
+.repo-vis-network { width: 100%; height: min(70vh, 560px); }

@@ -10,6 +10,8 @@ package gateway
 //   DELETE /api/v1/repos/{id}        Remove a repo.
 //   POST /api/v1/repos/{id}/sync     Queue a re-index + re-scan.
 //   GET  /api/v1/repos/{id}/memory   Return the repo's LLM-extracted memory.
+//   GET  /api/v1/repos/{id}/callgraph Return the function/module call graph JSON.
+//   GET  /api/v1/repos/{id}/symbols   Return persisted symbol index (from graph).
 //   GET  /api/v1/repos/{id}/scan     Return the latest scan result.
 //   GET  /api/v1/repos/{id}/users    List users for a repo.
 //   POST /api/v1/repos/{id}/users    Add a user to a repo.
@@ -107,6 +109,18 @@ func (a *RepoIntelAdapter) HandleRepos(w http.ResponseWriter, r *http.Request) {
 	case "scan":
 		if r.Method == http.MethodGet {
 			a.handleScan(w, r, repoID)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "callgraph":
+		if r.Method == http.MethodGet {
+			a.handleCallGraph(w, r, repoID)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "symbols":
+		if r.Method == http.MethodGet {
+			a.handleSymbols(w, r, repoID)
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -251,6 +265,36 @@ func (a *RepoIntelAdapter) handleScan(w http.ResponseWriter, _ *http.Request, id
 		return
 	}
 	repoWriteJSON(w, http.StatusOK, scan)
+}
+
+// ── /api/v1/repos/{id}/callgraph ─────────────────────────────────────────────
+
+func (a *RepoIntelAdapter) handleCallGraph(w http.ResponseWriter, _ *http.Request, id string) {
+	cg, err := a.mgr.LoadCallGraph(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if cg == nil {
+		http.Error(w, "call graph not available yet; run sync after indexing", http.StatusNotFound)
+		return
+	}
+	repoWriteJSON(w, http.StatusOK, cg)
+}
+
+// ── /api/v1/repos/{id}/symbols ────────────────────────────────────────────────
+
+func (a *RepoIntelAdapter) handleSymbols(w http.ResponseWriter, _ *http.Request, id string) {
+	sym, err := a.mgr.LoadSymbols(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if sym == nil {
+		http.Error(w, "symbol index not available yet; run sync after indexing", http.StatusNotFound)
+		return
+	}
+	repoWriteJSON(w, http.StatusOK, sym)
 }
 
 // ── /api/v1/repos/progress ─────────────────────────────────────────────────────

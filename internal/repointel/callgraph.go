@@ -19,15 +19,15 @@ type CallNode struct {
 	Name    string `json:"name"`
 	File    string `json:"file"`
 	Line    int    `json:"line"`
-	Kind    string `json:"kind"`    // "function" | "method" | "class"
+	Kind    string `json:"kind"` // "function" | "method" | "class" | "module" | "file"
 	Package string `json:"package,omitempty"`
 }
 
-// CallEdge is a directed call relationship: From calls To.
+// CallEdge is a directed relationship in the graph.
 type CallEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
-	Kind string `json:"kind"` // "call"
+	Kind string `json:"kind"` // "call" | "import"
 }
 
 // CallGraph is the full function call network extracted from a repo.
@@ -75,11 +75,11 @@ func (g *CallGraph) NodeByID(id string) (CallNode, bool) {
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 type funcSpan struct {
-	name    string
-	nodeID  string
-	start   int // line number (1-based)
-	end     int // exclusive; 0 = unknown (uses next span start)
-	body    string
+	name   string
+	nodeID string
+	start  int // line number (1-based)
+	end    int // exclusive; 0 = unknown (uses next span start)
+	body   string
 }
 
 // BuildCallGraph analyses raw files and constructs a call graph.
@@ -91,9 +91,9 @@ func BuildCallGraph(repoID string, files []RawFile) *CallGraph {
 	}
 
 	// Maps for dedup and lookup.
-	nodeIndex := map[string]CallNode{}         // id → node
-	byName := map[string][]string{}             // name → []id
-	edgeSet := map[string]struct{}{}            // "from→to"
+	nodeIndex := map[string]CallNode{} // id → node
+	byName := map[string][]string{}    // name → []id
+	edgeSet := map[string]struct{}{}   // "from→to"
 
 	// Pass 1: extract all function definitions.
 	var spans []funcSpan // all spans across all files, for body extraction
@@ -152,8 +152,24 @@ func BuildCallGraph(repoID string, files []RawFile) *CallGraph {
 		}
 	}
 
-	// Stable edge sort.
+	// Pass 3: lightweight import / module edges (same-repo files → external modules).
+	appendImportEdges(cg, files, edgeSet)
+
+	sort.Slice(cg.Nodes, func(i, j int) bool {
+		if cg.Nodes[i].Kind != cg.Nodes[j].Kind {
+			return cg.Nodes[i].Kind < cg.Nodes[j].Kind
+		}
+		if cg.Nodes[i].File != cg.Nodes[j].File {
+			return cg.Nodes[i].File < cg.Nodes[j].File
+		}
+		return cg.Nodes[i].Line < cg.Nodes[j].Line
+	})
+
+	// Stable edge sort (kind, from, to).
 	sort.Slice(cg.Edges, func(i, j int) bool {
+		if cg.Edges[i].Kind != cg.Edges[j].Kind {
+			return cg.Edges[i].Kind < cg.Edges[j].Kind
+		}
 		if cg.Edges[i].From != cg.Edges[j].From {
 			return cg.Edges[i].From < cg.Edges[j].From
 		}
@@ -161,6 +177,209 @@ func BuildCallGraph(repoID string, files []RawFile) *CallGraph {
 	})
 
 	return cg
+}
+
+// appendImportEdges adds module nodes and import edges from the first
+// function in each file to resolved import paths (best-effort, regex-based).
+func appendImportEdges(cg *CallGraph, files []RawFile, edgeSet map[string]struct{}) {
+	nodeSeen := make(map[string]struct{}, len(cg.Nodes))
+	for _, n := range cg.Nodes {
+		nodeSeen[n.ID] = struct{}{}
+	}
+	for _, f := range files {
+		lang := langFromPath(f.Path)
+		if lang == "" {
+			continue
+		}
+		mods := extractImportPaths(lang, f.Content)
+		if len(mods) == 0 {
+			continue
+		}
+		fromID := firstFuncNodeIDInFile(cg.Nodes, f.Path)
+		if fromID == "" {
+			// Import-only files (no extracted functions): anchor imports on a file node.
+			fromID = makeFileNodeID(cg.RepoID, f.Path)
+			if _, ok := nodeSeen[fromID]; !ok {
+				nodeSeen[fromID] = struct{}{}
+				cg.Nodes = append(cg.Nodes, CallNode{
+					ID:   fromID,
+					Name: filepath.Base(f.Path),
+					File: f.Path,
+					Line: 0,
+					Kind: "file",
+				})
+			}
+		}
+		for _, mod := range mods {
+			mod = strings.TrimSpace(mod)
+			if mod == "" || strings.HasPrefix(mod, ".") {
+				continue
+			}
+			modID := makeModuleNodeID(cg.RepoID, mod)
+			if _, ok := nodeSeen[modID]; !ok {
+				nodeSeen[modID] = struct{}{}
+				cg.Nodes = append(cg.Nodes, CallNode{
+					ID:   modID,
+					Name: shortModuleLabel(mod),
+					File: mod,
+					Line: 0,
+					Kind: "module",
+				})
+			}
+			key := fromID + "→" + modID + ":import"
+			if _, dup := edgeSet[key]; dup {
+				continue
+			}
+			edgeSet[key] = struct{}{}
+			cg.Edges = append(cg.Edges, CallEdge{From: fromID, To: modID, Kind: "import"})
+		}
+	}
+}
+
+func firstFuncNodeIDInFile(nodes []CallNode, filePath string) string {
+	for _, n := range nodes {
+		if n.File == filePath && n.Kind != "module" && n.Kind != "file" && n.Line > 0 {
+			return n.ID
+		}
+	}
+	return ""
+}
+
+func makeFileNodeID(repoID, filePath string) string {
+	safe := strings.NewReplacer("/", "-", ".", "-", " ", "_").Replace(filePath)
+	return fmt.Sprintf("%s::file::%s", repoID, safe)
+}
+
+func makeModuleNodeID(repoID, mod string) string {
+	safe := strings.NewReplacer("/", "--", ".", "-", " ", "_", "(", "", ")", "", "@", "-at-").Replace(mod)
+	return fmt.Sprintf("%s::mod::%s", repoID, safe)
+}
+
+func shortModuleLabel(mod string) string {
+	if i := strings.LastIndex(mod, "/"); i >= 0 && i+1 < len(mod) {
+		return mod[i+1:]
+	}
+	return mod
+}
+
+var (
+	goImportSingleRe    = regexp.MustCompile(`^\s*import\s+(?:\w+\s+)?"([^"]+)"`)
+	goImportQuotedPaths = regexp.MustCompile(`"([^"]+)"`)
+	jsFromRe            = regexp.MustCompile(`(?m)(?:^|\s)from\s+['"]([^'"]+)['"]`)
+	jsRequireRe         = regexp.MustCompile(`(?m)require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	pyFromImportRe      = regexp.MustCompile(`(?m)^\s*from\s+([\w.]+)\s+import`)
+	pyImportRe          = regexp.MustCompile(`(?m)^\s*import\s+([\w.]+)`)
+)
+
+func extractImportPaths(lang, content string) []string {
+	switch lang {
+	case "go":
+		return extractGoImports(content)
+	case "javascript", "typescript":
+		return extractJSImport(content)
+	case "python":
+		return extractPythonImports(content)
+	default:
+		return nil
+	}
+}
+
+func extractGoImports(content string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	lines := strings.Split(content, "\n")
+	inBlock := false
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "import (") {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if trim == ")" {
+				inBlock = false
+				continue
+			}
+			// "_ "pkg" or `pkg` or alias "path"
+			if strings.Contains(line, `"`) {
+				for _, m := range goImportQuotedPaths.FindAllStringSubmatch(line, -1) {
+					if len(m) > 1 {
+						add(m[1])
+					}
+				}
+			}
+			continue
+		}
+		if m := goImportSingleRe.FindStringSubmatch(line); len(m) > 1 {
+			add(m[1])
+		}
+	}
+	return out
+}
+
+func extractJSImport(content string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	for _, m := range jsFromRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			add(m[1])
+		}
+	}
+	for _, m := range jsRequireRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			add(m[1])
+		}
+	}
+	return out
+}
+
+func extractPythonImports(content string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	for _, m := range pyFromImportRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			add(m[1])
+		}
+	}
+	for _, m := range pyImportRe.FindAllStringSubmatch(content, -1) {
+		if len(m) > 1 {
+			add(m[1])
+		}
+	}
+	return out
 }
 
 // ── Language detection ────────────────────────────────────────────────────────
@@ -533,26 +752,38 @@ func ExportGraphHTML(path string, g *CallGraph) error {
 		Title string `json:"title"`
 		Group string `json:"group"`
 	}
-	type visEdge struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Arrow string `json:"arrows"`
+	type visEdgeExt struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Arrow  string `json:"arrows"`
+		Dashes bool   `json:"dashes,omitempty"`
 	}
 
 	visNodes := make([]visNode, 0, len(g.Nodes))
 	for _, n := range g.Nodes {
-		// Group by file for color differentiation.
-		group := filepath.Dir(n.File)
-		if group == "." {
-			group = n.File
+		var group, title string
+		switch n.Kind {
+		case "module":
+			group = "module"
+			title = fmt.Sprintf("%s\n%s", n.Name, n.File)
+		case "file":
+			group = "file"
+			title = fmt.Sprintf("%s\n%s", n.Name, n.File)
+		default:
+			group = filepath.Dir(n.File)
+			if group == "." {
+				group = n.File
+			}
+			title = fmt.Sprintf("%s\n%s:%d", n.Name, n.File, n.Line)
 		}
-		title := fmt.Sprintf("%s\n%s:%d", n.Name, n.File, n.Line)
 		visNodes = append(visNodes, visNode{ID: n.ID, Label: n.Name, Title: title, Group: group})
 	}
 
-	visEdges := make([]visEdge, 0, len(g.Edges))
+	visEdges := make([]visEdgeExt, 0, len(g.Edges))
 	for _, e := range g.Edges {
-		visEdges = append(visEdges, visEdge{From: e.From, To: e.To, Arrow: "to"})
+		visEdges = append(visEdges, visEdgeExt{
+			From: e.From, To: e.To, Arrow: "to", Dashes: e.Kind == "import",
+		})
 	}
 
 	nodesJSON, _ := json.Marshal(visNodes)
@@ -622,7 +853,8 @@ const nodes = new vis.DataSet(rawNodes.map(n => ({
 const edges = new vis.DataSet(rawEdges.map(e => ({
   from: e.from, to: e.to,
   arrows: e.arrows,
-  color: { color: '#484f58', highlight: '#58a6ff' },
+  dashes: !!e.dashes,
+  color: { color: e.dashes ? '#6e7681' : '#484f58', highlight: '#58a6ff' },
   smooth: { type: 'curvedCW', roundness: 0.15 },
 })));
 

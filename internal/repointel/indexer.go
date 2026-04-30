@@ -39,7 +39,8 @@ func (c *IndexerConfig) applyDefaults() {
 	}
 	c.GitHubBaseURL = strings.TrimRight(c.GitHubBaseURL, "/")
 	if c.MaxFilesPerRepo <= 0 {
-		c.MaxFilesPerRepo = 20
+		// Slightly higher default improves graph + memory coverage on mid-size repos.
+		c.MaxFilesPerRepo = 32
 	}
 }
 
@@ -103,6 +104,21 @@ func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, er
 		)
 	}
 	return mem, nil
+}
+
+// FetchRawFiles returns the same per-file snapshot used during indexing (GitHub
+// tree + blob fetch, truncated per file) without calling the LLM. Used to build
+// or repair call graphs when RepoMemory.RawFiles is empty (e.g. memory was
+// loaded from disk only).
+func (idx *Indexer) FetchRawFiles(ctx context.Context, entry RepoEntry) ([]RawFile, error) {
+	if idx == nil {
+		return nil, fmt.Errorf("indexer: nil")
+	}
+	_, raw, _, err := idx.fetchRepoContent(ctx, entry)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // ── GitHub API fetch ──────────────────────────────────────────────────────────
@@ -423,8 +439,8 @@ func parseMemoryJSON(raw string) (*RepoMemory, error) {
 	// json tags. Use an intermediate map to handle the conventions/dependencies
 	// arrays which have named sub-keys.
 	var raw2 struct {
-		Architecture string `json:"architecture"`
-		PrimaryLang  string `json:"primary_lang"`
+		Architecture string   `json:"architecture"`
+		PrimaryLang  string   `json:"primary_lang"`
 		Languages    []string `json:"languages"`
 		KeyFiles     []string `json:"key_files"`
 		Conventions  []struct {

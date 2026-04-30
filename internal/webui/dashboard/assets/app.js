@@ -2098,34 +2098,76 @@
     const enc = encodeURIComponent(repo.id);
     container.innerHTML = `<div class="loading">Loading repo details…</div>`;
 
-    let scan = null, memory = null, users = [];
+    let scan = null;
+    let memory = null;
+    let userList = [];
+    let fullRepo = repo;
     try {
-      [scan, memory, users] = await Promise.allSettled([
+      const [scanR, memR, usersR, repoR] = await Promise.allSettled([
         fetchJSON(`${API}/repos/${enc}/scan`),
         fetchJSON(`${API}/repos/${enc}/memory`),
         fetchJSON(`${API}/repos/${enc}/users`),
-      ]).then((results) => results.map((r) => (r.status === "fulfilled" ? r.value : null)));
+        fetchJSON(`${API}/repos/${enc}`),
+      ]);
+      scan = scanR.status === "fulfilled" ? scanR.value : null;
+      memory = memR.status === "fulfilled" ? memR.value : null;
+      if (usersR.status === "fulfilled" && usersR.value && Array.isArray(usersR.value.users)) {
+        userList = usersR.value.users;
+      }
+      if (repoR.status === "fulfilled" && repoR.value) {
+        fullRepo = repoR.value;
+      }
     } catch (_) {}
 
-    const riskClass = (repo.risk_level || "").toLowerCase();
+    const riskClass = (fullRepo.risk_level || repo.risk_level || "").toLowerCase();
+    const idxSt = fullRepo.index_status || repo.index_status || "pending";
+    const scSt = fullRepo.scan_status || repo.scan_status || "pending";
+    const fmtTime = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+    };
+    const shortSha = (sha) => (sha && sha.length > 10 ? `${sha.slice(0, 7)}…` : sha || "—");
+    const artifactLine = () => {
+      const bits = [];
+      if (fullRepo.memory_file) bits.push(`memory: <span class="mono-cell">${escapeHTML(fullRepo.memory_file)}</span>`);
+      if (fullRepo.scan_file) bits.push(`scan: <span class="mono-cell">${escapeHTML(fullRepo.scan_file)}</span>`);
+      if (fullRepo.ref_md_file) bits.push(`ref: <span class="mono-cell">${escapeHTML(fullRepo.ref_md_file)}</span>`);
+      if (fullRepo.summary_md_file) bits.push(`summary: <span class="mono-cell">${escapeHTML(fullRepo.summary_md_file)}</span>`);
+      if (fullRepo.call_graph_file) bits.push(`graph: <span class="mono-cell">${escapeHTML(fullRepo.call_graph_file)}</span>`);
+      return bits.length ? `<div class="repo-detail-artifacts muted">${bits.join(" · ")}</div>` : "";
+    };
     container.innerHTML = `
       <div class="repo-detail">
         <div class="repo-detail-header">
           <button id="repo-back-btn" class="ghost small">← Back</button>
-          <h2>${escapeHTML(repo.full_name || repo.id)}</h2>
-          <span class="secondary-cell mono-cell">${escapeHTML(repo.id)}</span>
+          <h2>${escapeHTML(fullRepo.full_name || repo.full_name || repo.id)}</h2>
+          <span class="secondary-cell mono-cell">${escapeHTML(fullRepo.id || repo.id)}</span>
         </div>
         <div class="repo-detail-meta">
-          <span class="pill pill-${escapeHTML((repo.index_status || "pending").toLowerCase())}">Index: ${escapeHTML(repo.index_status || "pending")}</span>
-          <span class="pill pill-${escapeHTML((repo.scan_status || "pending").toLowerCase())}">Scan: ${escapeHTML(repo.scan_status || "pending")}</span>
-          ${repo.risk_level ? `<span class="pill pill-${riskClass}">Risk: ${escapeHTML(repo.risk_level)}</span>` : ""}
-          <span class="pill">${escapeHTML(repo.platform || "github")}</span>
+          <span class="pill pill-${escapeHTML(String(idxSt).toLowerCase())}">Index: ${escapeHTML(String(idxSt))}</span>
+          <span class="pill pill-${escapeHTML(String(scSt).toLowerCase())}">Scan: ${escapeHTML(String(scSt))}</span>
+          ${fullRepo.risk_level || repo.risk_level ? `<span class="pill pill-${riskClass}">Risk: ${escapeHTML(fullRepo.risk_level || repo.risk_level)}</span>` : ""}
+          <span class="pill">${escapeHTML(fullRepo.platform || repo.platform || "github")}</span>
+        </div>
+        <div class="repo-detail-facts muted">
+          ${fullRepo.description ? `<p class="repo-detail-desc">${escapeHTML(fullRepo.description)}</p>` : ""}
+          <p class="repo-detail-facts-row">
+            ${fullRepo.language ? `<span>Detected language: <strong>${escapeHTML(fullRepo.language)}</strong></span> · ` : ""}
+            ${fmtTime(fullRepo.indexed_at) ? `<span>Indexed: ${escapeHTML(fmtTime(fullRepo.indexed_at))}</span> · ` : ""}
+            <span>HEAD <span class="mono-cell">${escapeHTML(shortSha(fullRepo.head_sha))}</span></span>
+            ${fmtTime(fullRepo.scanned_at) ? ` · <span>Scanned: ${escapeHTML(fmtTime(fullRepo.scanned_at))}</span>` : ""}
+          </p>
+          ${fullRepo.index_error ? `<p class="repo-detail-err">Index error: ${escapeHTML(fullRepo.index_error)}</p>` : ""}
+          ${fullRepo.scan_error ? `<p class="repo-detail-err">Scan error: ${escapeHTML(fullRepo.scan_error)}</p>` : ""}
+          ${artifactLine()}
         </div>
         <div class="repo-detail-actions" id="repo-detail-actions"></div>
         <div class="repo-tabs">
           <button class="tab-btn active" data-tab="scan">Scan Results</button>
           <button class="tab-btn" data-tab="memory">Index Memory</button>
-          <button class="tab-btn" data-tab="users">Users (${Array.isArray(users) ? users.length : 0})</button>
+          <button class="tab-btn" data-tab="graph">Call graph</button>
+          <button class="tab-btn" data-tab="users">Users (${userList.length})</button>
         </div>
         <div id="repo-tab-content" class="repo-tab-content"></div>
       </div>
@@ -2147,57 +2189,258 @@
     }));
 
     const tabContent = document.getElementById("repo-tab-content");
+    let graphNetwork = null;
     function showTab(name) {
+      if (graphNetwork) {
+        try {
+          graphNetwork.destroy();
+        } catch (_) {
+          /* ignore */
+        }
+        graphNetwork = null;
+      }
       container.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
       if (name === "scan") {
         if (!scan) {
           tabContent.innerHTML = `<div class="placeholder"><p>No scan results yet. Trigger a sync to run a security scan.</p></div>`;
           return;
         }
-        const findings = Array.isArray(scan.findings) ? scan.findings : [];
+        const cves = Array.isArray(scan.cves) ? scan.cves : [];
+        const bneck = Array.isArray(scan.bottlenecks) ? scan.bottlenecks : [];
+        const sugs = Array.isArray(scan.suggestions) ? scan.suggestions : [];
+        const trunc = (s, n) => {
+          const t = String(s || "");
+          return t.length > n ? `${t.slice(0, n)}…` : t;
+        };
+        const cveRows = cves.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Severity</th><th>Package</th><th>Version</th><th>CVEs</th><th>Description</th><th>Fix</th></tr></thead>
+            <tbody>${cves
+              .map(
+                (c) => `<tr>
+              <td><span class="pill pill-${escapeHTML((c.severity || "info").toLowerCase())}">${escapeHTML(c.severity || "—")}</span></td>
+              <td class="mono-cell">${escapeHTML(c.package || "—")}</td>
+              <td class="mono-cell">${escapeHTML(c.version || "—")}</td>
+              <td class="mono-cell">${escapeHTML((c.cve_ids || []).join(", ") || "—")}</td>
+              <td>${escapeHTML(trunc(c.description, 240))}</td>
+              <td>${escapeHTML(trunc(c.fix, 120))}</td>
+            </tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : `<p class="muted">No CVE findings in this scan.</p>`;
+        const bnRows = bneck.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Severity</th><th>Location</th><th>Description</th><th>Fix</th></tr></thead>
+            <tbody>${bneck
+              .map(
+                (b) => `<tr>
+              <td><span class="pill pill-${escapeHTML((b.severity || "info").toLowerCase())}">${escapeHTML(b.severity || "—")}</span></td>
+              <td class="mono-cell">${escapeHTML(b.location || "—")}</td>
+              <td>${escapeHTML(trunc(b.description, 280))}</td>
+              <td>${escapeHTML(trunc(b.fix, 120))}</td>
+            </tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : `<p class="muted">No bottleneck findings.</p>`;
+        const sugRows = sugs.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Priority</th><th>Area</th><th>Suggestion</th></tr></thead>
+            <tbody>${sugs
+              .map(
+                (s) => `<tr>
+              <td><span class="pill">${escapeHTML(s.priority || "—")}</span></td>
+              <td>${escapeHTML(s.area || "—")}</td>
+              <td>${escapeHTML(trunc(s.suggestion, 400))}</td>
+            </tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : `<p class="muted">No architecture suggestions.</p>`;
         tabContent.innerHTML = `
           <div class="scan-summary">
             <div class="scan-meta">
               <span>Risk: <strong>${escapeHTML(scan.risk_level || "—")}</strong></span>
               ${scan.scanned_at ? `<span>Scanned: ${escapeHTML(new Date(scan.scanned_at).toLocaleString())}</span>` : ""}
-              <span>${findings.length} finding${findings.length !== 1 ? "s" : ""}</span>
+              <span>${cves.length} CVE row${cves.length !== 1 ? "s" : ""} · ${bneck.length} bottleneck${bneck.length !== 1 ? "s" : ""} · ${sugs.length} suggestion${sugs.length !== 1 ? "s" : ""}</span>
             </div>
           </div>
-          ${findings.length ? `<div class="admin-table-wrap"><table class="admin-table">
-            <thead><tr><th>Severity</th><th>Rule</th><th>File</th><th>Message</th></tr></thead>
-            <tbody>${findings.map((f) => `<tr>
-              <td><span class="pill pill-${escapeHTML((f.severity || "info").toLowerCase())}">${escapeHTML(f.severity || "info")}</span></td>
-              <td class="mono-cell">${escapeHTML(f.rule_id || "—")}</td>
-              <td class="mono-cell">${escapeHTML(f.path || "—")}${f.line ? `:${f.line}` : ""}</td>
-              <td>${escapeHTML(f.message || "—")}</td>
-            </tr>`).join("")}</tbody>
-          </table></div>` : `<div class="placeholder"><p>No findings — repo looks clean.</p></div>`}
+          ${scan.summary ? `<section class="memory-view"><h3>Scan summary</h3><p>${escapeHTML(scan.summary)}</p></section>` : ""}
+          <section class="memory-view"><h3>CVEs</h3>${cveRows}</section>
+          <section class="memory-view"><h3>Bottlenecks</h3>${bnRows}</section>
+          <section class="memory-view"><h3>Architecture suggestions</h3>${sugRows}</section>
         `;
       } else if (name === "memory") {
         if (!memory) {
           tabContent.innerHTML = `<div class="placeholder"><p>No index memory yet. Trigger a sync to index this repository.</p></div>`;
           return;
         }
-        const summary = memory.summary || memory.description || "";
         const files = Array.isArray(memory.key_files) ? memory.key_files : [];
-        const techs = Array.isArray(memory.technologies) ? memory.technologies : [];
+        const langs = Array.isArray(memory.languages) ? memory.languages : [];
+        const convs = Array.isArray(memory.conventions) ? memory.conventions : [];
+        const deps = Array.isArray(memory.dependencies) ? memory.dependencies : [];
+        const issues = Array.isArray(memory.common_issues) ? memory.common_issues : [];
+        const convRows = convs.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Convention</th><th>Pattern</th></tr></thead>
+            <tbody>${convs
+              .map(
+                (c) => `<tr><td>${escapeHTML(c.name || "—")}</td><td>${escapeHTML(c.pattern || "—")}</td></tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : `<p class="muted">No conventions recorded.</p>`;
+        const depRows = deps.length
+          ? `<div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>Dependency</th><th>Version</th><th>Purpose</th></tr></thead>
+            <tbody>${deps
+              .map(
+                (d) => `<tr>
+              <td class="mono-cell">${escapeHTML(d.name || "—")}</td>
+              <td class="mono-cell">${escapeHTML(d.version || "—")}</td>
+              <td>${escapeHTML(d.purpose || "—")}</td>
+            </tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : `<p class="muted">No dependencies extracted.</p>`;
+        const issueList = issues.length
+          ? `<ul class="file-list">${issues.map((x) => `<li>${escapeHTML(x)}</li>`).join("")}</ul>`
+          : `<p class="muted">No common issue patterns listed.</p>`;
         tabContent.innerHTML = `
           <div class="memory-view">
-            ${summary ? `<section><h3>Summary</h3><p>${escapeHTML(summary)}</p></section>` : ""}
-            ${techs.length ? `<section><h3>Technologies</h3><p>${techs.map((t) => `<span class="pill">${escapeHTML(t)}</span>`).join(" ")}</p></section>` : ""}
-            ${files.length ? `<section><h3>Key Files</h3><ul class="file-list">${files.map((f) => `<li class="mono-cell">${escapeHTML(typeof f === "string" ? f : f.path || JSON.stringify(f))}</li>`).join("")}</ul></section>` : ""}
-            ${!summary && !files.length ? `<pre class="code-block">${escapeHTML(JSON.stringify(memory, null, 2))}</pre>` : ""}
+            ${memory.architecture ? `<section><h3>Architecture</h3><p class="memory-prose">${escapeHTML(memory.architecture)}</p></section>` : ""}
+            <section><h3>Languages</h3>
+              <p>${memory.primary_lang ? `<span class="pill">Primary: ${escapeHTML(memory.primary_lang)}</span> ` : ""}
+              ${langs.map((l) => `<span class="pill">${escapeHTML(l)}</span>`).join(" ") || `<span class="muted">—</span>`}</p>
+            </section>
+            ${files.length ? `<section><h3>Key files</h3><ul class="file-list">${files.map((f) => `<li class="mono-cell">${escapeHTML(typeof f === "string" ? f : f.path || JSON.stringify(f))}</li>`).join("")}</ul></section>` : ""}
+            <section><h3>Coding conventions</h3>${convRows}</section>
+            <section><h3>Dependencies</h3>${depRows}</section>
+            ${memory.test_patterns ? `<section><h3>Test patterns</h3><p class="memory-prose">${escapeHTML(memory.test_patterns)}</p></section>` : ""}
+            ${memory.ci_summary ? `<section><h3>CI / CD</h3><p class="memory-prose">${escapeHTML(memory.ci_summary)}</p></section>` : ""}
+            ${memory.review_hints ? `<section><h3>Review focus</h3><p class="memory-prose">${escapeHTML(memory.review_hints)}</p></section>` : ""}
+            <section><h3>Common issues</h3>${issueList}</section>
+            ${memory.user_context ? `<section><h3>Operator notes</h3><p class="memory-prose">${escapeHTML(memory.user_context)}</p></section>` : ""}
           </div>
         `;
+      } else if (name === "graph") {
+        if (typeof vis === "undefined" || !vis.DataSet || !vis.Network) {
+          tabContent.innerHTML = `<div class="placeholder"><p>Graph library not loaded. Hard-refresh the page (cache).</p></div>`;
+          return;
+        }
+        tabContent.innerHTML = `<div class="repo-graph-loading">Loading call graph…</div>`;
+        (async () => {
+          let cg = null;
+          try {
+            cg = await fetchJSON(`${API}/repos/${enc}/callgraph`);
+          } catch (err) {
+            tabContent.innerHTML = `<div class="placeholder"><p>${escapeHTML(
+              err.message || "No call graph yet. Run sync after indexing completes.",
+            )}</p></div>`;
+            return;
+          }
+          const activeBtn = container.querySelector(".tab-btn.active");
+          if (!activeBtn || activeBtn.dataset.tab !== "graph") {
+            return;
+          }
+          if (!cg || !Array.isArray(cg.nodes) || !cg.nodes.length) {
+            tabContent.innerHTML = `<div class="placeholder"><p>No graph nodes yet. Re-sync after indexing finishes.</p></div>`;
+            return;
+          }
+          const arch =
+            memory && memory.architecture
+              ? escapeHTML(String(memory.architecture).slice(0, 1400))
+              : "";
+          const hints =
+            memory && memory.review_hints
+              ? escapeHTML(String(memory.review_hints).slice(0, 900))
+              : "";
+          const kf = memory && Array.isArray(memory.key_files) ? memory.key_files : [];
+          const kfList = kf
+            .map((f) => {
+              const p = typeof f === "string" ? f : f.path || JSON.stringify(f);
+              return `<li class="mono-cell">${escapeHTML(p)}</li>`;
+            })
+            .join("");
+          tabContent.innerHTML = `
+            <div class="repo-graph-layout">
+              <aside class="repo-graph-sidebar">
+                <h3 class="repo-graph-sidebar-title">Orient</h3>
+                <p class="repo-graph-sidebar-hint muted">Solid edges: function calls. Dashed: imports / external modules. Click a node for file and line.</p>
+                ${arch ? `<section class="repo-graph-section"><h4>Architecture</h4><div class="repo-graph-prose">${arch}</div></section>` : ""}
+                ${kfList ? `<section class="repo-graph-section"><h4>Key files</h4><ul class="repo-graph-file-list">${kfList}</ul></section>` : ""}
+                ${hints ? `<section class="repo-graph-section"><h4>Review focus</h4><div class="repo-graph-prose">${hints}</div></section>` : ""}
+                <div id="repo-graph-node-detail" class="repo-graph-node-detail muted">Click a node…</div>
+              </aside>
+              <div class="repo-graph-canvas-wrap">
+                <div id="repo-vis-network" class="repo-vis-network" role="img" aria-label="Call graph"></div>
+              </div>
+            </div>`;
+          const detailEl = tabContent.querySelector("#repo-graph-node-detail");
+          const rawNodes = cg.nodes;
+          const edgesArr = Array.isArray(cg.edges) ? cg.edges : [];
+          const nodesVis = rawNodes.map((n) => ({
+            id: n.id,
+            label: n.name || n.id,
+            title:
+              n.kind === "module" || n.kind === "file"
+                ? `${n.name}\n${n.file}`
+                : `${n.name}\n${n.file}:${n.line}`,
+            group:
+              n.kind === "module" ? "module" : n.kind === "file" ? "file" : n.file || "unknown",
+          }));
+          const edgesVis = edgesArr.map((e, i) => ({
+            id: `e${i}`,
+            from: e.from,
+            to: e.to,
+            arrows: "to",
+            dashes: e.kind === "import",
+          }));
+          const el = tabContent.querySelector("#repo-vis-network");
+          if (!el) {
+            return;
+          }
+          const data = {
+            nodes: new vis.DataSet(nodesVis),
+            edges: new vis.DataSet(edgesVis),
+          };
+          const opts = {
+            physics: { stabilization: { iterations: 100 } },
+            edges: { smooth: { type: "dynamic" } },
+            groups: {
+              module: {
+                color: { background: "#6e7681", border: "#484f58" },
+                font: { color: "#f0f0f0" },
+              },
+              file: {
+                color: { background: "#1f6feb55", border: "#388bfd" },
+                font: { color: "#f0f6fc" },
+              },
+            },
+            nodes: { font: { size: 13 } },
+          };
+          graphNetwork = new vis.Network(el, data, opts);
+          graphNetwork.on("click", (params) => {
+            if (!detailEl || !params.nodes.length) {
+              return;
+            }
+            const nid = params.nodes[0];
+            const node = rawNodes.find((x) => x.id === nid);
+            if (!node) {
+              return;
+            }
+            const kind = node.kind === "module" || node.kind === "file" ? node.kind : node.kind || "function";
+            const loc =
+              node.kind === "module" || node.kind === "file" ? node.file : `${node.file}:${node.line}`;
+            detailEl.innerHTML = `<strong>${escapeHTML(node.name || nid)}</strong> <span class="pill">${escapeHTML(kind)}</span><br/><span class="mono-cell">${escapeHTML(loc)}</span>`;
+          });
+        })();
       } else if (name === "users") {
-        const list = Array.isArray(users) ? users : [];
+        const list = userList;
         tabContent.innerHTML = list.length
           ? `<div class="admin-table-wrap"><table class="admin-table">
-              <thead><tr><th>Handle</th><th>Platform</th><th>Role</th></tr></thead>
+              <thead><tr><th>Handle</th><th>Role</th><th>Email</th></tr></thead>
               <tbody>${list.map((u) => `<tr>
-                <td>${escapeHTML(u.handle || u.username || "—")}</td>
-                <td>${escapeHTML(u.platform || "—")}</td>
-                <td>${escapeHTML(u.role || "member")}</td>
+                <td class="mono-cell">${escapeHTML(u.handle || "—")}</td>
+                <td>${escapeHTML(String(u.role || "member"))}</td>
+                <td>${escapeHTML(u.email || "—")}</td>
               </tr>`).join("")}</tbody>
             </table></div>`
           : `<div class="placeholder"><p>No users linked to this repo yet.</p></div>`;

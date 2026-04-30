@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.48] — 2026-04-30
+
+### Added
+
+- **Repo Intelligence HTTP API** (`internal/gateway/repos_api.go`): `GET /api/v1/repos/{id}/callgraph` returns persisted call graph JSON; `GET /api/v1/repos/{id}/symbols` returns the symbol index written with each graph build.
+- **Dashboard Repo Intel** (`internal/webui/dashboard/assets/app.js`, `app.html`, `style.css`): "Call graph" tab with embedded **vis-network** (vendored `vis-network.min.js`, no CDN). Repo detail loads full `GET /api/v1/repos/{id}` for description, timestamps, HEAD SHA, errors, and artifact filenames. Scan tab renders `cves`, `bottlenecks`, and `suggestions` plus scan summary (matches `ScanResult` JSON). Memory tab renders architecture, languages, key files, conventions, dependencies, test patterns, CI summary, review hints, common issues, and operator notes (matches `RepoMemory` JSON). Users tab reads `{ users: [...] }` and shows handle / role / email.
+
+### Changed
+
+- **Call graph build during every sync** (`internal/repointel/manager.go`, `callgraph.go`, `indexer.go`): If `RawFiles` is empty, refetches file snapshots via new `Indexer.FetchRawFiles` (no LLM). Always persists `*-callgraph.json`, `*-symbols.json`, and `*-callgraph.html` after a successful index path (including empty or import-only graphs). Import-only sources get `Kind: "file"` anchor nodes; import edges use dashed lines in HTML export. Default `MaxFilesPerRepo` when unset raised from 20 to 32 (`internal/repointel/indexer.go`, `internal/config/config.go`).
+
+### Fixed
+
+- **Dashboard Repo Intel showed almost no data** because the UI expected non-existent `scan.findings` and `memory.summary` / `memory.technologies` instead of the real API shapes.
+
 ## [0.3.47] — 2026-04-30
 
 ### Changed

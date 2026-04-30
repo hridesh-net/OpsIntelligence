@@ -362,6 +362,22 @@ func (m *Manager) LoadCallGraph(id string) (*CallGraph, error) {
 	return LoadCallGraph(path)
 }
 
+// LoadSymbols reads the persisted symbol index for a repo (written alongside
+// the call graph). Returns nil, nil when no call graph path is recorded or
+// the symbols file is not present yet.
+func (m *Manager) LoadSymbols(id string) (*RepoSymbols, error) {
+	entry, err := m.registry.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if entry.CallGraphFile == "" {
+		return nil, nil
+	}
+	symRel := strings.TrimSuffix(entry.CallGraphFile, "-callgraph.json") + "-symbols.json"
+	path := filepath.Join(m.cfg.MemoryDir, symRel)
+	return LoadRepoSymbols(path)
+}
+
 // CallGraphHTMLPath returns the absolute path to the exported call graph HTML
 // for the given repo, or "" if no call graph has been generated.
 func (m *Manager) CallGraphHTMLPath(id string) string {
@@ -509,9 +525,9 @@ func (m *Manager) process(ctx context.Context, id string) {
 	entry, _ = m.registry.Get(id)
 	m.generateMarkdown(id, entry, mem, scanResult)
 
-	// ── Step 4: Build function call graph ─────────────────────────────────────
+	// ── Step 4: Build function call graph (+ HTML export) ────────────────────
 	step(4, ProgressIndexing, "building function call graph")
-	m.buildCallGraph(id, mem)
+	m.buildCallGraph(ctx, id, mem)
 
 	// ── Step 5: Hybrid search index (FTS5 + vec0) ─────────────────────────────
 	step(5, ProgressIndexing, "indexing into hybrid search store")
@@ -561,15 +577,40 @@ func (m *Manager) generateMarkdown(id string, entry RepoEntry, mem *RepoMemory, 
 	}
 }
 
-// buildCallGraph extracts the function call graph from raw files and persists it.
-func (m *Manager) buildCallGraph(id string, mem *RepoMemory) {
-	if len(mem.RawFiles) == 0 {
+// buildCallGraph extracts the call graph from raw files, persists JSON + symbols
+// + interactive HTML, and registers CallGraphFile. Runs during every successful
+// sync so repos without a prior graph always get artifacts.
+//
+// When mem.RawFiles is empty (memory loaded from disk only), raw files are
+// re-fetched via the indexer so graph building still runs in the same pipeline.
+func (m *Manager) buildCallGraph(ctx context.Context, id string, mem *RepoMemory) {
+	files := mem.RawFiles
+	if len(files) == 0 && m.indexer != nil {
+		entry, err := m.registry.Get(id)
+		if err != nil {
+			if m.log != nil {
+				m.log.Warn("repointel: call graph skip — registry get failed", zap.String("repo", id), zap.Error(err))
+			}
+		} else {
+			refetched, err := m.indexer.FetchRawFiles(ctx, entry)
+			if err != nil {
+				if m.log != nil {
+					m.log.Warn("repointel: refetch raw files for call graph failed",
+						zap.String("repo", id), zap.Error(err))
+				}
+			} else {
+				files = refetched
+			}
+		}
+	}
+	if len(files) == 0 {
+		if m.log != nil {
+			m.log.Info("repointel: no raw files for call graph", zap.String("repo", id))
+		}
 		return
 	}
-	cg := BuildCallGraph(id, mem.RawFiles)
-	if len(cg.Nodes) == 0 {
-		return
-	}
+
+	cg := BuildCallGraph(id, files)
 
 	base := sanitiseID(id)
 	cgRel := base + "-callgraph.json"
@@ -582,9 +623,14 @@ func (m *Manager) buildCallGraph(id string, mem *RepoMemory) {
 	}
 	_ = m.registry.SetCallGraphFile(id, cgRel)
 
-	// Also export an interactive HTML visualization.
-	htmlRel := base + "-callgraph.html"
-	htmlAbs := filepath.Join(m.cfg.MemoryDir, htmlRel)
+	symAbs := filepath.Join(m.cfg.MemoryDir, base+"-symbols.json")
+	if err := SaveRepoSymbols(symAbs, NewRepoSymbols(cg)); err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: save symbols index failed", zap.String("repo", id), zap.Error(err))
+		}
+	}
+
+	htmlAbs := filepath.Join(m.cfg.MemoryDir, base+"-callgraph.html")
 	if err := ExportGraphHTML(htmlAbs, cg); err != nil {
 		if m.log != nil {
 			m.log.Warn("repointel: save call graph HTML failed", zap.String("repo", id), zap.Error(err))
@@ -654,13 +700,13 @@ func (m *Manager) indexHybrid(ctx context.Context, id string, mem *RepoMemory, s
 
 // RepoStats is a summary of a repo's current state for display purposes.
 type RepoStats struct {
-	Entry        RepoEntry
-	CVECount     int
-	BottleCount  int
-	Suggestions  int
-	RiskLevel    string
-	LastIndexed  time.Time
-	LastScanned  time.Time
+	Entry       RepoEntry
+	CVECount    int
+	BottleCount int
+	Suggestions int
+	RiskLevel   string
+	LastIndexed time.Time
+	LastScanned time.Time
 }
 
 // Stats returns a RepoStats snapshot for one repo.
