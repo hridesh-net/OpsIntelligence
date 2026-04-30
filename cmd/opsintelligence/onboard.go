@@ -498,16 +498,18 @@ func runOnboarding(configPath string) (bool, error) {
 		configureDevOps    bool
 		ghWebhookEnabled   bool
 		ghWebhookSecret    string
+		// Teams (Microsoft Teams via Bot Framework)
+		teamsAppID        string
+		teamsAppPassword  string
+		teamsListenAddr   string
+		teamsDMMode       string = "allowlist"
+		teamsAllowFromRaw string
 	)
 
-	theme := huh.ThemeBase()
-	theme.Focused.Title = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-	theme.Focused.SelectedOption = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	theme.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
-	theme.Focused.TextInput.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	theme := tui.OnboardTheme()
 
 	tui.PrintOnboardBanner(version)
-	fmt.Println(lipgloss.NewStyle().Faint(true).Render("  Let's configure your autonomous agent environment."))
+	tui.PrintOnboardWelcomeSubtitle("Let's configure your autonomous agent environment.")
 	fmt.Println()
 
 	// Load existing config if available to pre-populate defaults
@@ -912,6 +914,17 @@ func runOnboarding(configPath string) (bool, error) {
 			}
 			slAllowFromRaw = strings.Join(existing.Channels.Slack.AllowFrom, ", ")
 		}
+		if existing.Channels.Teams != nil {
+			selectedChannels = append(selectedChannels, "msteams")
+			teamsAppID = existing.Channels.Teams.AppID
+			teamsAppPassword = existing.Channels.Teams.AppPassword
+			teamsListenAddr = existing.Channels.Teams.ListenAddr
+			teamsDMMode = existing.Channels.Teams.DMMode
+			if teamsDMMode == "" {
+				teamsDMMode = "allowlist"
+			}
+			teamsAllowFromRaw = strings.Join(existing.Channels.Teams.AllowFrom, ", ")
+		}
 
 		// Pre-populate Skills
 		selectedSkills = existing.Agent.EnabledSkills
@@ -974,15 +987,14 @@ func runOnboarding(configPath string) (bool, error) {
 		}
 	}
 
-	// ────────────────────────────────────────────────────────────────────────
-	// Step 1: Primary LLM Provider
-	// ────────────────────────────────────────────────────────────────────────
+	tui.PrintOnboardStep(1, 10, "🧠", "AI Provider", "Select the primary LLM that powers your agent")
 	var err error
 	primary, err = collectProvider(theme, "primary", true, primary)
 	if err != nil {
 		return false, err
 	}
 
+	tui.PrintOnboardStep(2, 10, "🔀", "Secondary Provider", "Optional fallback or high-availability provider")
 	secChoice := "none"
 	if secondary.provider != "" && secondary.provider != "none" {
 		secChoice = "configure"
@@ -1075,17 +1087,23 @@ func runOnboarding(configPath string) (bool, error) {
 
 		// ── Docker prerequisites ──────────────────────────────────────────────
 		fmt.Println()
-		dockerOK := setupPlanoDocker(planoEndpoint)
+		dockerOK, _ := tui.RunWithSpinner(context.Background(), "Starting Plano via Docker", func() error {
+			if !setupPlanoDocker(planoEndpoint) {
+				return fmt.Errorf("docker setup skipped")
+			}
+			return nil
+		})
 		if !dockerOK {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(
-				"  ⚠  Plano Docker setup skipped. Start it manually:\n" +
-					"     docker run -d -p 12000:12000 --name plano katanemo/plano:latest",
-			))
+			tui.PrintOnboardWarn("Plano Docker setup skipped. Start manually:")
+			tui.PrintOnboardInfo("docker run -d -p 12000:12000 --name plano katanemo/plano:latest")
+		} else {
+			tui.PrintOnboardSuccess("Plano is running")
 		}
 		fmt.Println()
 	}
 	// ─────────────────────────────────────────────────────────────────────────
 
+	tui.PrintOnboardStep(3, 10, "⚡", "Model Routing", "Assign specialized models for coding and vision tasks")
 	codingOpts := []huh.Option[string]{
 		huh.NewOption("Use Default", "default"),
 		huh.NewOption("Claude 3.5 Sonnet", "anthropic/claude-3-5-sonnet-20241022"),
@@ -1121,6 +1139,7 @@ func runOnboarding(configPath string) (bool, error) {
 		return false, fmt.Errorf("onboarding interrupted")
 	}
 
+	tui.PrintOnboardStep(4, 10, "🔍", "Embeddings", "Semantic memory and search require an embedding model")
 	// Embedding selection
 	formEmbed := huh.NewForm(
 		huh.NewGroup(
@@ -1212,11 +1231,7 @@ func runOnboarding(configPath string) (bool, error) {
 		}
 	}
 
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).
-		Render("  On-device Gemma (automatic)"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("  No prompts or logins: if you have no GGUF path yet, onboard tries a packaged models/*.gguf, then a public download. Failures are skipped so setup always continues.\n"))
+	tui.PrintOnboardStep(5, 10, "⚡", "Local Intelligence", "On-device Gemma for fast pre-routing (no logins needed)")
 
 	// Best-effort local Gemma: never block onboarding on copy/download errors.
 	if strings.TrimSpace(localIntelGGUF) == "" {
@@ -1230,22 +1245,18 @@ func runOnboarding(configPath string) (bool, error) {
 	if strings.TrimSpace(localIntelGGUF) == "" {
 		stateDir := filepath.Dir(configPath)
 		dst := localintel.DefaultGGUFPath(stateDir)
-		warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-		okStyle := lipgloss.NewStyle().Foreground(tui.ColorCyan)
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-
 		if src, ok := discoverBundledGGUF(dst); ok {
 			ok2, err := tui.RunWithSpinner(context.Background(), "Copying bundled Gemma model", func() error {
 				return copyFileAtomic(src, dst)
 			})
 			if !ok2 || err != nil {
-				fmt.Println(warnStyle.Render("  ⚠ Bundled Gemma copy failed: " + err.Error()))
-				fmt.Println(dim.Render("  You can run: opsintelligence local-intel setup"))
+				tui.PrintOnboardWarn("Bundled Gemma copy failed: " + err.Error())
+				tui.PrintOnboardInfo("Run later: opsintelligence local-intel setup")
 				localIntelEnabled, localIntelGGUF = false, ""
 			} else {
 				localIntelGGUF = dst
 				localIntelEnabled = true
-				fmt.Println(okStyle.Render("  ✔ Local Gemma prepared from packaged model"))
+				tui.PrintOnboardSuccess("Local Gemma prepared from packaged model")
 			}
 		} else {
 			gemmaCtx, gemmaCancel := context.WithTimeout(context.Background(), 90*time.Minute)
@@ -1261,29 +1272,24 @@ func runOnboarding(configPath string) (bool, error) {
 				return berr
 			})
 			if !ok2 || err != nil {
-				fmt.Println(warnStyle.Render("  ⚠ Local Gemma download skipped: " + err.Error()))
-				fmt.Println(dim.Render("  Run later: opsintelligence local-intel setup"))
+				tui.PrintOnboardWarn("Local Gemma download skipped: " + err.Error())
+				tui.PrintOnboardInfo("Run later: opsintelligence local-intel setup")
 				localIntelEnabled, localIntelGGUF = false, ""
 			} else {
 				localIntelGGUF = gemmaRes.Path
 				localIntelEnabled = true
-				fmt.Println(okStyle.Render("  ✔ Local Gemma downloaded and prepared"))
+				tui.PrintOnboardSuccess("Local Gemma downloaded and prepared")
 			}
 		}
 	}
 
-	// MemPalace setup — optional hierarchical memory via Python PyPI package.
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).
-		Render("  MemPalace (structured memory)"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("  Requires Python 3.9+. Skip safely — you can run `opsintelligence quickstart` later.\n"))
+	tui.PrintOnboardStep(6, 10, "🧩", "Memory", "Structured hierarchical memory (requires Python 3.9+)")
 
 	var setupMP bool
 	mpForm := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
 			Title("Set up MemPalace now?").
-			Description("Creates a Python venv and installs the mempalace PyPI package.").
+			Description("Creates a Python venv and installs the mempalace PyPI package.\nSkip safely — run `opsintelligence quickstart` later.").
 			Value(&setupMP),
 	)).WithTheme(theme)
 	_ = mpForm.Run()
@@ -1294,20 +1300,17 @@ func runOnboarding(configPath string) (bool, error) {
 		ok2, err := tui.RunWithSpinner(context.Background(), "Installing MemPalace", func() error {
 			return tui.RunMemPalaceSetup(context.Background(), mpOpts)
 		})
-		warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-		okStyle := lipgloss.NewStyle().Foreground(tui.ColorCyan)
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 		if !ok2 || err != nil {
-			fmt.Println(warnStyle.Render("  ⚠ MemPalace setup failed: " + err.Error()))
-			fmt.Println(dim.Render("  Retry with: opsintelligence quickstart"))
+			tui.PrintOnboardWarn("MemPalace setup failed: " + err.Error())
+			tui.PrintOnboardInfo("Retry with: opsintelligence quickstart")
 			memPalaceEnabled = false
 		} else {
 			memPalaceEnabled = true
-			fmt.Println(okStyle.Render("  ✔ MemPalace installed and initialised"))
+			tui.PrintOnboardSuccess("MemPalace installed and initialised")
 		}
 	}
 
-	// Phases 3-5: Gateway, Channels, Skills (simplified for brevity)
+	tui.PrintOnboardStep(7, 10, "🌐", "Gateway & Access", "Configure how the agent API is exposed on your network")
 	var gatewayFields []huh.Field
 	gatewayFields = append(gatewayFields,
 		huh.NewSelect[string]().
@@ -1339,7 +1342,7 @@ func runOnboarding(configPath string) (bool, error) {
 
 	if gwToken == "" {
 		gwToken = randomToken(24)
-		fmt.Printf("\n🔑 No security token provided. Generated a secure one for you:\n   %s\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Render(gwToken))
+		tui.PrintOnboardGeneratedToken("Gateway token auto-generated:", gwToken)
 	}
 
 	if gwMode == "tailscale" {
@@ -1358,35 +1361,43 @@ func runOnboarding(configPath string) (bool, error) {
 		_ = formTS.Run()
 	}
 
+	tui.PrintOnboardStep(8, 10, "💬", "Messaging Channels", "Connect Telegram, Slack, Discord, WhatsApp, or Teams")
+
 	tgLabel := "Telegram"
 	dcLabel := "Discord"
 	slLabel := "Slack"
 	waLabel := "WhatsApp"
+	msLabel := "Microsoft Teams"
 
 	if existing != nil {
 		if existing.Channels.Telegram != nil && existing.Channels.Telegram.BotToken != "" {
-			tgLabel = "Telegram [Configured]"
+			tgLabel = "Telegram ✓"
 		}
 		if existing.Channels.Discord != nil && existing.Channels.Discord.BotToken != "" {
-			dcLabel = "Discord [Configured]"
+			dcLabel = "Discord ✓"
 		}
 		if existing.Channels.Slack != nil && existing.Channels.Slack.BotToken != "" {
-			slLabel = "Slack [Configured]"
+			slLabel = "Slack ✓"
 		}
 		if existing.Channels.WhatsApp != nil {
-			waLabel = "WhatsApp [Configured]"
+			waLabel = "WhatsApp ✓"
+		}
+		if existing.Channels.Teams != nil && existing.Channels.Teams.AppID != "" {
+			msLabel = "Microsoft Teams ✓"
 		}
 	}
 
 	formChannels := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Messaging Channels").
+				Title("Select messaging channels to enable").
+				Description("You can configure credentials for each selected channel next.").
 				Options(
 					huh.NewOption(tgLabel, "telegram"),
 					huh.NewOption(dcLabel, "discord"),
 					huh.NewOption(slLabel, "slack"),
 					huh.NewOption(waLabel, "whatsapp"),
+					huh.NewOption(msLabel, "msteams"),
 				).
 				Value(&selectedChannels),
 		),
@@ -1466,9 +1477,8 @@ func runOnboarding(configPath string) (bool, error) {
 			if strings.TrimSpace(waSessionID) == "" {
 				waSessionID = "personal"
 			}
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Render("\n--- WhatsApp Integration ---"))
-			fmt.Println("OpsIntelligence acts as a standalone WhatsApp account.")
-			fmt.Println("You will need to scan a QR code using 'Linked Devices' on your phone.")
+			tui.PrintOnboardInfo("OpsIntelligence acts as a standalone WhatsApp account.")
+			tui.PrintOnboardInfo("You will need to scan a QR code via Linked Devices on your phone.")
 
 			_ = huh.NewForm(huh.NewGroup(
 				huh.NewInput().
@@ -1515,18 +1525,53 @@ func runOnboarding(configPath string) (bool, error) {
 				wa, err := whatsapp.New(dbPath, waSessionID, waDMMode, allowFrom, "INFO", nil)
 				if err == nil {
 					if !wa.IsLinked() {
-						fmt.Println("\n--- WhatsApp Pairing ---")
+						tui.PrintOnboardInfo("Initiating WhatsApp pairing — scan the QR code with your phone")
 						_ = wa.Connect(context.Background())
-						_ = wa.Stop() // Terminate onboarding connection to avoid conflict with agent
+						_ = wa.Stop()
 					}
-					fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("✔ WhatsApp Linked! Continuing setup..."))
+					tui.PrintOnboardSuccess("WhatsApp linked — continuing setup")
 				} else {
-					fmt.Printf("Error initializing WhatsApp for pairing: %v\n", err)
+					tui.PrintOnboardError("WhatsApp pairing failed: " + err.Error())
 				}
 			}
+		case "msteams":
+			if strings.TrimSpace(teamsListenAddr) == "" {
+				teamsListenAddr = ":3978"
+			}
+			tui.PrintOnboardInfo("Bot Framework webhook will listen on " + teamsListenAddr)
+			tui.PrintOnboardInfo("Register this address as your bot's messaging endpoint in Azure Portal.")
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Azure Bot App ID").
+					Description("Microsoft App ID from your Azure Bot registration.").
+					Value(&teamsAppID),
+				huh.NewInput().
+					Title("Azure Bot App Password").
+					Description("Client secret from your Azure Bot app registration.").
+					Password(true).
+					Value(&teamsAppPassword),
+				huh.NewInput().
+					Title("Webhook Listen Address").
+					Description("Port for the Bot Framework webhook (default :3978).").
+					Value(&teamsListenAddr),
+				huh.NewSelect[string]().
+					Title("Teams Security Mode").
+					Description("allowlist: Only whitelisted AAD user IDs. open: Any Teams user.").
+					Options(
+						huh.NewOption("Allowlist (Recommended)", "allowlist"),
+						huh.NewOption("Open (any authenticated Teams user)", "open"),
+						huh.NewOption("Disabled", "disabled"),
+					).
+					Value(&teamsDMMode),
+				huh.NewInput().
+					Title("Allowed Teams User IDs").
+					Description("Comma-separated AAD object IDs (from.id). Leave empty for open mode.").
+					Value(&teamsAllowFromRaw),
+			)).WithTheme(theme).Run()
 		}
 	}
 
+	tui.PrintOnboardStep(9, 10, "🛠", "Skills", "Install built-in and custom agent skills")
 	// Skill configuration — identical TUI used by "opsintelligence skills configure"
 	{
 		home, _ := os.UserHomeDir()
@@ -1624,6 +1669,7 @@ func runOnboarding(configPath string) (bool, error) {
 		}
 	}
 
+	tui.PrintOnboardStep(10, 10, "⚙", "DevOps Integrations", "GitHub, GitLab, Jenkins, SonarQube (all optional)")
 	// DevOps REST/API tokens (optional). When skipped, generated YAML omits `devops`
 	// so a merge with the previous file keeps your existing block.
 	configureDevOps = false
@@ -1715,10 +1761,8 @@ func runOnboarding(configPath string) (bool, error) {
 		).WithTheme(theme).Run()
 	}
 
-	dimPre := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	fmt.Println()
-	fmt.Println(dimPre.Render("  GitHub can POST signed webhooks to your gateway when PRs change — separate from a PAT (REST)."))
-	fmt.Println(dimPre.Render("  GitHub.com requires a public HTTPS URL (Tailscale Funnel, reverse proxy, smee.io, etc.)."))
+	tui.PrintOnboardInfo("GitHub can POST signed webhooks when PRs change — separate from a PAT (REST).")
+	tui.PrintOnboardInfo("GitHub.com requires a public HTTPS URL (Tailscale Funnel, reverse proxy, smee.io).")
 	_ = huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
 			Title("Enable GitHub → gateway webhook adapter?").
@@ -1908,6 +1952,27 @@ func runOnboarding(configPath string) (bool, error) {
 					}
 				}
 			}
+			if ch == "msteams" {
+				if teamsAppID != "" {
+					sb.WriteString(fmt.Sprintf("    app_id: %q\n", teamsAppID))
+				}
+				if teamsAppPassword != "" {
+					sb.WriteString(fmt.Sprintf("    app_password: %q\n", teamsAppPassword))
+				}
+				if l := strings.TrimSpace(teamsListenAddr); l != "" && l != ":3978" {
+					sb.WriteString(fmt.Sprintf("    listen_addr: %q\n", l))
+				}
+				sb.WriteString(fmt.Sprintf("    dm_mode: %q\n", teamsDMMode))
+				if teamsAllowFromRaw != "" {
+					sb.WriteString("    allow_from:\n")
+					for _, p := range strings.Split(teamsAllowFromRaw, ",") {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							sb.WriteString(fmt.Sprintf("      - %q\n", p))
+						}
+					}
+				}
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -2040,42 +2105,43 @@ func runOnboarding(configPath string) (bool, error) {
 	}
 
 	tpl = sb.String()
-	merged, err := mergeOnboardYAML(configPath, []byte(tpl))
-	if err != nil {
-		return false, fmt.Errorf("merge config into %s: %w", configPath, err)
+	var saveErr error
+	_, saveErr = tui.RunWithSpinner(context.Background(), "Merging and saving configuration", func() error {
+		merged, merr := mergeOnboardYAML(configPath, []byte(tpl))
+		if merr != nil {
+			return fmt.Errorf("merge: %w", merr)
+		}
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(configPath, merged, 0o600)
+	})
+	if saveErr != nil {
+		return false, fmt.Errorf("merge config into %s: %w", configPath, saveErr)
 	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(configPath, merged, 0o600); err != nil {
-		return false, err
-	}
-
-	fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("✔ Configuration saved!"))
+	tui.PrintOnboardSaved(configPath)
 
 	// ── Auto-start on login (no prompt; idempotent on macOS/Linux) ────────────
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	switch runtime.GOOS {
 	case "windows":
-		fmt.Println()
-		fmt.Println(dim.Render("  Windows: add OpsIntelligence to Task Scheduler for login start — run: opsintelligence service install"))
+		tui.PrintOnboardInfo("Windows: add OpsIntelligence to Task Scheduler — run: opsintelligence service install")
 	case "darwin", "linux":
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("  Registering OpsIntelligence login service (auto-start after you sign in)…"))
 		if root := filepath.Dir(configPath); root != "" && root != "." {
 			_ = os.Setenv("OPSINTELLIGENCE_STATE_DIR", root)
 			defer func() { _ = os.Unsetenv("OPSINTELLIGENCE_STATE_DIR") }()
 		}
-		if err := installService(); err != nil {
-			fmt.Printf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("⚠ Login service install failed: "+err.Error()))
-			fmt.Println(dim.Render("  Retry with: opsintelligence service install"))
-			fmt.Println(dim.Render("  On headless Linux, you may need: sudo loginctl enable-linger $USER"))
+		svcOK, svcErr := tui.RunWithSpinner(context.Background(), "Registering login service (auto-start)", func() error {
+			return installService()
+		})
+		if !svcOK || svcErr != nil {
+			tui.PrintOnboardWarn("Login service install failed: " + svcErr.Error())
+			tui.PrintOnboardInfo("Retry with: opsintelligence service install")
+			tui.PrintOnboardInfo("On headless Linux: sudo loginctl enable-linger $USER")
 		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(tui.ColorCyan).Render("  ✔ Login service installed (launchd / systemd user)."))
+			tui.PrintOnboardSuccess("Login service installed (launchd / systemd user)")
 		}
 	default:
-		fmt.Println()
-		fmt.Println(dim.Render("  Run opsintelligence service install if your OS supports it."))
+		tui.PrintOnboardInfo("Run opsintelligence service install if your OS supports it.")
 	}
 
 	// ── Tabbed summary TUI ────────────────────────────────────────────────────
