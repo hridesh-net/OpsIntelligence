@@ -12,13 +12,13 @@ import "github.com/charmbracelet/lipgloss"
 // ── Semantic palette (adaptive) ───────────────────────────────────────────
 
 var (
-	// App canvas
-	ColorBackground = lipgloss.AdaptiveColor{Light: "#faf9f7", Dark: "#141411"}
+	// App canvas — warm dark charcoal; clearly distinct from terminal #000
+	ColorBackground = lipgloss.AdaptiveColor{Light: "#faf9f7", Dark: "#1e1c1a"}
 
-	// Panels and elevated surfaces
-	ColorSurface      = lipgloss.AdaptiveColor{Light: "#eeeeec", Dark: "#1e1f1c"}
-	ColorChromeBg     = lipgloss.AdaptiveColor{Light: "#e8e8e6", Dark: "#2a2b28"}
-	ColorDashboardBg  = lipgloss.AdaptiveColor{Light: "#f4f4f1", Dark: "#252620"}
+	// Panels and elevated surfaces (each step ~6 L* brighter for hierarchy)
+	ColorSurface      = lipgloss.AdaptiveColor{Light: "#eeeeec", Dark: "#252321"}
+	ColorChromeBg     = lipgloss.AdaptiveColor{Light: "#e8e8e6", Dark: "#302e2b"}
+	ColorDashboardBg  = lipgloss.AdaptiveColor{Light: "#f4f4f1", Dark: "#2a2926"}
 	ColorBracketMuted = lipgloss.AdaptiveColor{Light: "#474646", Dark: "#8a8680"} // brackets, subtle chrome
 
 	// Text

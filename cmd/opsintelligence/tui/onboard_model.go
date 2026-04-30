@@ -238,9 +238,13 @@ func (m *onboardWizardModel) View() string {
 	} else {
 		inner = m.viewChrome()
 	}
-	// Full-bleed canvas so the host terminal color does not show through in alt-screen.
+	// Full-bleed canvas: set the background on the padded wrapper so its
+	// spacing areas show ColorBackground (warm charcoal) instead of the
+	// terminal's own pure black, then fill any remaining whitespace the
+	// same way so not a single pixel of terminal-native black leaks through.
 	padded := lipgloss.NewStyle().
 		Foreground(ColorOnSurface).
+		Background(ColorBackground).
 		Padding(1, 2).
 		Render(inner)
 	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, padded,

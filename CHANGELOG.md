@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.46] — 2026-04-30
+
+### Fixed / Changed
+
+- **Dark palette lifted off pure black** (`theme.go`): `ColorBackground` dark raised from `#141411` to `#1e1c1a`; `ColorSurface` to `#252321`; `ColorChromeBg` to `#302e2b`; `ColorDashboardBg` to `#2a2926`. Each level is now clearly distinguishable from the terminal's own `#000` and from each other, creating visible elevation hierarchy.
+- **Onboarding wizard padding no longer bleeds black** (`onboard_model.go`): `padded` wrapper gains `Background(ColorBackground)` so its top/bottom/side spacing shows warm charcoal, not terminal-native pure black.
+- **Form card elevated above page canvas** (`onboard_step.go`): `t.Form.Base` and `t.Focused.Base` now use `ColorSurface` (`#252321`) instead of `ColorBackground` (`#1e1c1a`), giving the form a visually-lifted card appearance that mirrors the website's card-on-surface pattern.
+
 ## [0.3.45] — 2026-04-30
 
 ### Changed
