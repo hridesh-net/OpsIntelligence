@@ -11,19 +11,58 @@ import (
 
 const stepWidth = 70
 
+// applyOpsHuhTheme applies brand adaptive colors to a huh theme built from ThemeBase().
+// Shared by onboarding and setup wizard.
+func applyOpsHuhTheme(t *huh.Theme) {
+	button := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
+
+	t.Form.Base = lipgloss.NewStyle().Foreground(ColorOnSurface).Background(ColorBackground)
+	t.Group.Base = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Group.Title = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
+	t.Group.Description = lipgloss.NewStyle().Foreground(ColorMuted)
+
+	t.Focused.Base = t.Focused.Base.BorderForeground(ColorOutline).Foreground(ColorOnSurface)
+	t.Focused.Card = t.Focused.Card.BorderForeground(ColorOutline)
+	t.Focused.Title = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
+	t.Focused.NoteTitle = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).MarginBottom(1)
+	t.Focused.Description = lipgloss.NewStyle().Foreground(ColorMuted)
+	t.Focused.ErrorIndicator = lipgloss.NewStyle().Foreground(ColorError).SetString(" *")
+	t.Focused.ErrorMessage = lipgloss.NewStyle().Foreground(ColorError).SetString(" *")
+	t.Focused.SelectSelector = lipgloss.NewStyle().Foreground(ColorPrimary).SetString("> ")
+	t.Focused.NextIndicator = t.Focused.NextIndicator.Foreground(ColorPrimary)
+	t.Focused.PrevIndicator = t.Focused.PrevIndicator.Foreground(ColorPrimary)
+	t.Focused.Option = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Focused.SelectedOption = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	t.Focused.UnselectedOption = lipgloss.NewStyle().Foreground(ColorMuted)
+	t.Focused.Directory = lipgloss.NewStyle().Foreground(ColorSecondary)
+	t.Focused.File = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(ColorPrimary).SetString("> ")
+	t.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(ColorSuccess).SetString("✓ ")
+	t.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(ColorMuted).SetString("• ")
+	t.Focused.FocusedButton = button.Foreground(ColorOnAccent).Background(ColorPrimary)
+	t.Focused.Next = t.Focused.FocusedButton
+	t.Focused.BlurredButton = button.Foreground(ColorOnSurface).Background(ColorOutlineVariant)
+	t.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	t.Focused.TextInput.Text = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Focused.TextInput.Cursor = lipgloss.NewStyle().Foreground(ColorPrimary)
+	t.Focused.TextInput.CursorText = lipgloss.NewStyle().Foreground(ColorOnSurface)
+	t.Focused.TextInput.Placeholder = lipgloss.NewStyle().Foreground(ColorMuted)
+
+	t.Blurred = t.Focused
+	t.Blurred.Base = t.Blurred.Base.BorderStyle(lipgloss.HiddenBorder())
+	t.Blurred.Card = t.Blurred.Base
+	t.Blurred.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
+	t.Blurred.NextIndicator = lipgloss.NewStyle()
+	t.Blurred.PrevIndicator = lipgloss.NewStyle()
+	t.Blurred.Title = lipgloss.NewStyle().Foreground(ColorMuted)
+	t.Blurred.TextInput.Text = lipgloss.NewStyle().Foreground(ColorMuted)
+}
+
 // OnboardTheme returns a huh theme consistent with the OpsIntelligence palette.
 // Use this for all huh forms in the onboarding wizard.
 func OnboardTheme() *huh.Theme {
 	t := huh.ThemeBase()
-	t.Focused.Title = lipgloss.NewStyle().Foreground(ColorNeon).Bold(true)
-	t.Focused.SelectedOption = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	t.Focused.UnselectedOption = lipgloss.NewStyle().Foreground(ColorMuted)
-	t.Focused.Description = lipgloss.NewStyle().Foreground(ColorMuted)
-	t.Focused.TextInput.Prompt = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	t.Focused.TextInput.Text = lipgloss.NewStyle().Foreground(ColorWhite)
-	t.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	t.Blurred.Title = lipgloss.NewStyle().Foreground(ColorMuted)
-	t.Blurred.TextInput.Text = lipgloss.NewStyle().Foreground(ColorMuted)
+	applyOpsHuhTheme(t)
 	return t
 }
 
@@ -63,7 +102,7 @@ func PrintOnboardStep(step, total int, icon, title, subtitle string) {
 	// Step pill: e.g. "  1 / 10  "
 	pill := lipgloss.NewStyle().
 		Background(ColorPrimary).
-		Foreground(lipgloss.Color("#FFFFFF")).
+		Foreground(ColorOnAccent).
 		Bold(true).
 		Padding(0, 1).
 		Render(fmt.Sprintf(" %d / %d ", step, total))
@@ -110,7 +149,7 @@ func PrintOnboardSuccess(msg string) {
 
 // PrintOnboardWarn prints a styled ⚠ warning line.
 func PrintOnboardWarn(msg string) {
-	icon := lipgloss.NewStyle().Foreground(lipgloss.Color("#F9A825")).Bold(true).Render("  ⚠")
+	icon := lipgloss.NewStyle().Foreground(ColorWarn).Bold(true).Render("  ⚠")
 	text := lipgloss.NewStyle().Foreground(ColorMuted).Render("  " + msg)
 	fmt.Println(icon + text)
 }

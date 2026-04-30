@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.43] — 2026-04-30
+
+### Added
+
+- **Adaptive TUI theme**: Migrated all TUI color constants to `lipgloss.AdaptiveColor` pairs aligned with the AssistClaw High-End Tech design system (cream/neutral surfaces for light terminals, warm dark shell palette for dark terminals). Semantic color tokens (`ColorBackground`, `ColorSurface`, `ColorOnSurface`, `ColorBrandAccent`, `ColorRiskCritical`, `ColorPatchOK`, `ColorWarn`, etc.) replace every hardcoded hex and ANSI escape in `theme.go`, `effects.go`, `doctor.go`, `repos_tui.go`, and `repl.go`.
+- **Unified `huh` form theme**: `applyOpsHuhTheme` consolidates all `huh.Theme` field styling (form base, group title/description, focused/blurred inputs, buttons, selectors, error indicators) so both `OnboardTheme` and `setupTheme` share the same adaptive palette.
+- **Onboarding wizard shell** (`onboard_model.go`): New bubbletea alt-screen model (`RunOnboardWizard`) with a persistent progress header (brand gradient, orange pill `N/M`, step title/subtitle, divider) that stays anchored across every form. Supports form steps (`MakeForm` factory, lazy-called at step activation) and side-effect steps (background goroutine + spinner).
+- **`BuildOnboardSteps`** (`onboard_steps.go`): Converts the entire `runOnboarding` sequential flow into `~40` typed `OnboardWizardStep` values — primary/secondary provider sub-steps (select → Bedrock auth → credentials → model → custom model), Plano smart-routing, embeddings, local Gemma download, MemPalace install, gateway, per-channel credential forms (Telegram, Discord, Slack, WhatsApp, Teams), skills marketplace with custom-path install, DevOps/webhook config, config merge/save, and login service registration.
+- **Full-bleed alt-screen canvas**: `lipgloss.Place` + `WithWhitespaceBackground(ColorBackground)` fills the entire terminal viewport so the host terminal default background never shows through during onboarding.
+
+### Fixed
+
+- **Config API secret redaction** (`internal/gateway/config_api.go`): Added `omitSecretFields` post-processor that strips known secret YAML field names (`api_key`, `token`, `bot_token`, `dsn`, `credentials`, etc.) from the JSON response for principals without `secrets:read`, preventing field-name disclosure even when values are empty.
+- **`TestConfigGet_RedactsSecretsWithoutSecretsRead`**: Tightened assertion from `"api_key"` (substring that falsely matched the non-secret `"api_keys"` config struct) to `"api_key":` (exact JSON key with colon); corrected `"legacy-shared-token"` (wrong hyphen) to `"legacy_shared_token"` (correct yaml underscore tag).
+
 ## [0.3.42] — 2026-04-30
 
 ### Added

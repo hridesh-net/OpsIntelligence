@@ -230,7 +230,7 @@ func (m *wizardModel) initOptions() tea.Cmd {
 			huh.NewNote().
 				Title("Choose Components").
 				Description(
-					"  MemPalace  — hierarchical memory for your agent\n" +
+					"  MemPalace  — hierarchical memory for your agent\n"+
 						"  Gemma      — on-device LLM for fast routing (~3 GiB)\n",
 				),
 			huh.NewConfirm().
@@ -667,11 +667,7 @@ func printYAMLSnippet(snippet string) {
 // setupTheme returns a huh theme consistent with the OpsIntelligence palette.
 func setupTheme() *huh.Theme {
 	t := huh.ThemeBase()
-	t.Focused.Title = t.Focused.Title.Foreground(ColorNeon).Bold(true)
-	t.Focused.SelectedOption = t.Focused.SelectedOption.Foreground(ColorPrimary).Bold(true)
-	t.Focused.UnselectedOption = t.Focused.UnselectedOption.Foreground(ColorMuted)
-	t.Focused.Description = t.Focused.Description.Foreground(ColorMuted)
-	t.Blurred.Title = t.Blurred.Title.Foreground(ColorMuted)
+	applyOpsHuhTheme(t)
 	return t
 }
 

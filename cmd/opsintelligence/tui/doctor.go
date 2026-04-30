@@ -128,9 +128,9 @@ func (m DoctorModel) View() string {
 }
 
 var (
-	okStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	errStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	okStyle   = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
+	warnStyle = lipgloss.NewStyle().Foreground(ColorWarn).Bold(true)
+	errStyle  = lipgloss.NewStyle().Foreground(ColorError).Bold(true)
 )
 
 // RunDoctor launches the doctor dashboard.

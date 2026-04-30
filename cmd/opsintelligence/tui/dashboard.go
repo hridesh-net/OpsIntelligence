@@ -14,9 +14,9 @@ import (
 type TokenUsageSnapshot struct {
 	PromptTokens     int
 	CompletionTokens int
-	CacheReadTokens    int
-	CacheWriteTokens   int
-	TotalTokens        int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	TotalTokens      int
 }
 
 // LimitsSnapshot holds numeric limits for the Limits tab.
@@ -53,12 +53,12 @@ type DashboardInfo struct {
 
 // SessionUsage accumulates REPL session token usage for the Usage tab.
 type SessionUsage struct {
-	Turns              int
-	PromptTokens       int
-	CompletionTokens   int
-	CacheReadTokens    int
-	CacheWriteTokens   int
-	TotalTokens        int
+	Turns            int
+	PromptTokens     int
+	CompletionTokens int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	TotalTokens      int
 }
 
 // Add merges one completion into the session totals.

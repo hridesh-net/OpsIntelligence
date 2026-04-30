@@ -54,12 +54,14 @@ func (s *AuthService) handleConfigRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := snap.Config
+	jsonVal := yamlToJSONVal(cfg)
 	if !rbac.Can(p, rbac.PermSecretsRead) {
 		cfg = redactedConfig(cfg)
+		jsonVal = omitSecretFields(yamlToJSONVal(cfg))
 	}
 	writeJSON(w, http.StatusOK, configResponse{
 		Revision: snap.Revision,
-		Config:   yamlToJSONVal(cfg),
+		Config:   jsonVal,
 	})
 }
 
@@ -97,12 +99,14 @@ func (s *AuthService) handleConfigSectionGet(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusNotFound, "unknown config section")
 		return
 	}
+	jsonVal := yamlToJSONVal(val)
 	if !rbac.Can(p, rbac.PermSecretsRead) {
 		val = redactedSection(section, val)
+		jsonVal = omitSecretFields(yamlToJSONVal(val))
 	}
 	writeJSON(w, http.StatusOK, configResponse{
 		Revision: snap.Revision,
-		Config:   yamlToJSONVal(val),
+		Config:   jsonVal,
 	})
 }
 
@@ -330,6 +334,48 @@ func actorIDFromPrincipal(p *auth.Principal) string {
 		return p.APIKeyID
 	default:
 		return p.Username
+	}
+}
+
+// secretYAMLKeys are the YAML field names that carry credentials.
+// They are stripped entirely from config API responses when the caller
+// does not hold the secrets:read permission, so neither the key name
+// nor an empty-string placeholder leaks to the client.
+var secretYAMLKeys = map[string]bool{
+	"api_key":             true,
+	"secret_access_key":   true,
+	"legacy_shared_token": true,
+	"token":               true,
+	"bot_token":           true,
+	"app_token":           true,
+	"app_password":        true,
+	"auth_token":          true,
+	"dsn":                 true,
+	"secret":              true,
+	"credentials":         true,
+}
+
+// omitSecretFields walks the map produced by yamlToJSONVal and removes
+// every entry whose key is a known secret YAML field name.
+func omitSecretFields(v any) any {
+	switch m := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			if secretYAMLKeys[k] {
+				continue
+			}
+			out[k] = omitSecretFields(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(m))
+		for i, item := range m {
+			out[i] = omitSecretFields(item)
+		}
+		return out
+	default:
+		return v
 	}
 }
 

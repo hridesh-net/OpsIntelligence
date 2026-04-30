@@ -20,11 +20,11 @@ type OnboardSummary struct {
 	EmbedModel      string
 
 	// System
-	GatewayHost      string
-	GatewayPort      int
-	GatewayMode      string
+	GatewayHost       string
+	GatewayPort       int
+	GatewayMode       string
 	LocalIntelEnabled bool
-	LocalIntelGGUF   string
+	LocalIntelGGUF    string
 	MemPalaceEnabled  bool
 	PlanoEnabled      bool
 	PlanoEndpoint     string
@@ -57,11 +57,11 @@ const (
 
 // OnboardSummaryModel is a Claude-style tabbed review panel shown at the end of onboarding.
 type OnboardSummaryModel struct {
-	summary      OnboardSummary
-	activeTab    int
+	summary       OnboardSummary
+	activeTab     int
 	width, height int
-	search       textinput.Model
-	searchActive bool
+	search        textinput.Model
+	searchActive  bool
 }
 
 // NewOnboardSummaryModel builds the onboard summary TUI.
@@ -151,7 +151,7 @@ func (m *OnboardSummaryModel) View() string {
 		searchBorderColor = ColorAccentLavender
 	}
 	searchBar := lipgloss.NewStyle().
-		Width(w - 4).
+		Width(w-4).
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(searchBorderColor).
 		Background(ColorDashboardBg).

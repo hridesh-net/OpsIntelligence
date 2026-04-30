@@ -9,7 +9,7 @@ import (
 
 // renderBrandMarkArt returns a neutral dotted frame (no mascot / claw glyph).
 func renderBrandMarkArt() string {
-	const inner = 16 // spaces between vertical rules
+	const inner = 16                           // spaces between vertical rules
 	top := "  " + strings.Repeat("·", inner+2) // top rule
 	side := "  ·" + strings.Repeat(" ", inner) + "·"
 	sty := lipgloss.NewStyle().Foreground(ColorMuted)

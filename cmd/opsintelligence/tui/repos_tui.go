@@ -48,7 +48,10 @@ var reposTabLabels = [reposTabCount]string{"Repos", "Memory", "Scans", "Users", 
 
 type repoAutoRefreshMsg struct{}
 type repoSaveDoneMsg struct{ err error }
-type repoGraphExportDoneMsg struct{ path string; err error }
+type repoGraphExportDoneMsg struct {
+	path string
+	err  error
+}
 type repoProgressMsg struct{ ev repointel.ProgressEvent }
 
 func repoRefreshCmd() tea.Cmd {
@@ -432,7 +435,7 @@ func (m reposTUIModel) View() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(searchBorder).
 		Background(ColorDashboardBg).
-		Width(m.width - 6).
+		Width(m.width-6).
 		Padding(0, 1).
 		Render(m.search.View())
 
@@ -444,14 +447,14 @@ func (m reposTUIModel) View() string {
 		// Repos list doesn't use the viewport — it's always short.
 		content = lipgloss.NewStyle().
 			Background(ColorDashboardBg).
-			Width(m.width - 2).
+			Width(m.width-2).
 			Padding(1, 2).
 			Render(m.renderReposTab(strings.ToLower(m.search.Value())))
 	} else {
 		// Memory, Scans, Users, Graph go through the viewport for scrollability.
 		content = lipgloss.NewStyle().
 			Background(ColorDashboardBg).
-			Width(m.width - 2).
+			Width(m.width-2).
 			Padding(1, 2).
 			Render(m.viewport.View())
 	}
@@ -501,7 +504,7 @@ func (m reposTUIModel) viewEditForm() string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorAccentLavender).
-		Width(m.width - 4).
+		Width(m.width-4).
 		Padding(1, 2).
 		Render(title + "\n" + sub + "\n\n" + m.form.View() + "\n" + hint)
 
@@ -1040,7 +1043,7 @@ func (m reposTUIModel) renderUsersTab() string {
 	sb.WriteString(title + "\n\n")
 	sb.WriteString(lipgloss.NewStyle().Foreground(ColorAccentLavender).
 		Render(fmt.Sprintf("  %-22s  %-14s  %s", "HANDLE", "ROLE", "EMAIL")) + "\n")
-	sb.WriteString(Muted.Render("  " + strings.Repeat("─", 54)) + "\n")
+	sb.WriteString(Muted.Render("  "+strings.Repeat("─", 54)) + "\n")
 
 	for _, u := range entry.Users {
 		email := nzStr(u.Email, "—")
@@ -1164,7 +1167,6 @@ func (m *reposTUIModel) loadProgressFile() {
 
 // ── Edit form ─────────────────────────────────────────────────────────────────
 
-
 func (m reposTUIModel) saveMemoryCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.memory == nil {
@@ -1222,9 +1224,9 @@ func renderProgressBar(pct, width int) string {
 		filled = width
 	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-	color := ColorCyan
+	var color lipgloss.TerminalColor = ColorCyan
 	if pct >= 100 {
-		color = lipgloss.Color("#3fb950")
+		color = ColorPatchOK
 	}
 	return lipgloss.NewStyle().Foreground(color).Render("["+bar+"]") +
 		lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf(" %3d%%", pct))
@@ -1233,11 +1235,11 @@ func renderProgressBar(pct, width int) string {
 func riskColor(risk string) lipgloss.Style {
 	switch risk {
 	case "critical":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#E07066")).Bold(true)
+		return lipgloss.NewStyle().Foreground(ColorRiskCritical).Bold(true)
 	case "high":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F4A261"))
+		return lipgloss.NewStyle().Foreground(ColorRiskHigh)
 	case "medium":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#E9C46A"))
+		return lipgloss.NewStyle().Foreground(ColorRiskMedium)
 	case "low":
 		return lipgloss.NewStyle().Foreground(ColorCyan)
 	default:

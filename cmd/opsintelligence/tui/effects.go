@@ -6,23 +6,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ColorAccent is a secondary pop (magenta) for cyber / dev-tool contrast.
-const ColorAccent = lipgloss.Color("#B388FF")
-
 // PulseBorder returns alternating border colors for a subtle "live" frame.
-func PulseBorder(frame int) lipgloss.Color {
+func PulseBorder(frame int) lipgloss.TerminalColor {
 	if frame%2 == 0 {
 		return ColorPrimary
 	}
 	return ColorNeon
 }
 
-// GradientWord renders a short string with a blue→cyan sweep across characters.
+// GradientWord renders a short string with a warm orange sweep across characters.
+// The sweep goes muted → orange → soft orange for an editorial brand feel;
+// stops adapt to light and dark terminal backgrounds.
 func GradientWord(s string) string {
 	if s == "" {
 		return ""
 	}
-	palette := []lipgloss.Color{ColorPrimary, ColorNeon, ColorCyan, ColorNeon, ColorPrimary}
+	palette := []lipgloss.TerminalColor{
+		ColorMuted,
+		lipgloss.AdaptiveColor{Light: "#D05A2E", Dark: "#D05A2E"},
+		ColorPrimary,
+		ColorNeon,
+		ColorPrimary,
+		lipgloss.AdaptiveColor{Light: "#D05A2E", Dark: "#D05A2E"},
+		ColorMuted,
+	}
 	var b strings.Builder
 	i := 0
 	for _, r := range s {
@@ -33,15 +40,15 @@ func GradientWord(s string) string {
 	return b.String()
 }
 
-// CyberBracket wraps text in a terminal-hacker style frame segment.
+// CyberBracket wraps text in a clean angular bracket frame.
 func CyberBracket(inner string) string {
-	left := lipgloss.NewStyle().Foreground(ColorAccent).Render("⟨")
-	right := lipgloss.NewStyle().Foreground(ColorAccent).Render("⟩")
-	mid := lipgloss.NewStyle().Foreground(ColorWhite).Bold(true).Render(inner)
+	left := lipgloss.NewStyle().Foreground(ColorBracketMuted).Render("⟨")
+	right := lipgloss.NewStyle().Foreground(ColorBracketMuted).Render("⟩")
+	mid := lipgloss.NewStyle().Foreground(ColorOnSurface).Bold(true).Render(inner)
 	return left + mid + right
 }
 
-// ScanlineSuffix adds a dim CRT-style noise strip of rune width `width`.
+// ScanlineSuffix adds a dim warm noise strip of rune width `width`.
 func ScanlineSuffix(width int) string {
 	if width < 8 {
 		width = 32

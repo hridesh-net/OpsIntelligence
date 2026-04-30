@@ -130,6 +130,7 @@ var openAICompatProviders = map[string]bool{
 	"xai":        true,
 }
 
+
 func collectProvider(theme *huh.Theme, providerType string, isPrimary bool, initial provEntry) (provEntry, error) {
 	return collectProviderFiltered(theme, providerType, isPrimary, initial, false)
 }
@@ -442,6 +443,67 @@ func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bo
 // runOnboarding leads the user through the setup process.
 // Returns (true, nil) if the agent should be started immediately.
 func runOnboarding(configPath string) (bool, error) {
+	tui.PrintOnboardBanner(version)
+	tui.PrintOnboardWelcomeSubtitle("Let's configure your autonomous agent environment.")
+	fmt.Println()
+
+	// Load existing config if available to pre-populate defaults
+	var existing *config.Config
+	if _, err := os.Stat(configPath); err == nil {
+		if c, err := config.Load(configPath); err == nil {
+			existing = c
+		}
+	}
+
+	steps, state := BuildOnboardSteps(configPath, existing)
+	if err := tui.RunOnboardWizard(context.Background(), steps); err != nil {
+		return false, err
+	}
+	if !state.done {
+		// Wizard was aborted by the user.
+		return false, nil
+	}
+
+	tui.PrintOnboardSaved(configPath)
+
+	// Show summary in a separate TUI program (after alt-screen exits).
+	summary := tui.OnboardSummary{
+		PrimaryProvider:   state.primary.provider,
+		PrimaryModel:      state.primary.model,
+		SecondaryProv:     state.secondary.provider,
+		EmbedProvider:     state.embed.provider,
+		EmbedModel:        state.embed.model,
+		GatewayHost:       state.gwHost,
+		GatewayPort:       state.gwPort,
+		GatewayMode:       normalizeGatewayBind(state.gwMode),
+		LocalIntelEnabled: state.localIntelEnabled,
+		LocalIntelGGUF:    state.localIntelGGUF,
+		MemPalaceEnabled:  state.memPalaceEnabled,
+		PlanoEnabled:      state.usePlano,
+		PlanoEndpoint:     state.planoEndpoint,
+		Channels:          state.selectedChannels,
+		Skills:            state.selectedSkills,
+		GitHubEnabled:     state.githubToken != "" || strings.TrimSpace(state.githubTokenEnv) != "",
+		GitHubOrg:         state.githubDefaultOrg,
+		GitLabEnabled:     strings.TrimSpace(state.gitlabURL) != "" && (state.gitlabToken != "" || strings.TrimSpace(state.gitlabTokenEnv) != ""),
+		GitLabURL:         state.gitlabURL,
+		JenkinsEnabled:    strings.TrimSpace(state.jenkinsURL) != "" && (state.jenkinsToken != "" || strings.TrimSpace(state.jenkinsTokenEnv) != ""),
+		JenkinsURL:        state.jenkinsURL,
+		SonarEnabled:      strings.TrimSpace(state.sonarURL) != "" && (state.sonarToken != "" || strings.TrimSpace(state.sonarTokenEnv) != ""),
+		SonarURL:          state.sonarURL,
+	}
+	fmt.Println()
+	_ = tui.RunOnboardSummary(summary)
+	fmt.Println()
+
+	return true, nil
+}
+
+// runOnboardingLegacy is preserved for reference and is no longer called.
+// It contains the old sequential flow used before RunOnboardWizard.
+//
+//nolint:unused
+func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 	var (
 		primary            provEntry
 		secondary          provEntry
@@ -477,7 +539,6 @@ func runOnboarding(configPath string) (bool, error) {
 		localIntelEnabled  bool
 		localIntelGGUF     string
 		memPalaceEnabled   bool
-		// DevOps YAML (optional; omitted when skipped so merge preserves existing)
 		githubToken        string
 		githubTokenEnv     string
 		githubBaseURL      string
@@ -497,12 +558,11 @@ func runOnboarding(configPath string) (bool, error) {
 		configureDevOps    bool
 		ghWebhookEnabled   bool
 		ghWebhookSecret    string
-		// Teams (Microsoft Teams via Bot Framework)
-		teamsAppID        string
-		teamsAppPassword  string
-		teamsListenAddr   string
-		teamsDMMode       string = "allowlist"
-		teamsAllowFromRaw string
+		teamsAppID         string
+		teamsAppPassword   string
+		teamsListenAddr    string
+		teamsDMMode        string = "allowlist"
+		teamsAllowFromRaw  string
 	)
 
 	theme := tui.OnboardTheme()
@@ -511,7 +571,6 @@ func runOnboarding(configPath string) (bool, error) {
 	tui.PrintOnboardWelcomeSubtitle("Let's configure your autonomous agent environment.")
 	fmt.Println()
 
-	// Load existing config if available to pre-populate defaults
 	var existing *config.Config
 	if _, err := os.Stat(configPath); err == nil {
 		if c, err := config.Load(configPath); err == nil {

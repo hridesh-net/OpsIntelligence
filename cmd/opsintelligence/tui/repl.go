@@ -105,10 +105,10 @@ type REPLModel struct {
 	sendMsg func(line string)
 	banner  string
 
-	dashboardInfo  DashboardInfo
-	dashboard      *DashboardModel
-	sessionUsage   SessionUsage
-	configOpen     bool
+	dashboardInfo DashboardInfo
+	dashboard     *DashboardModel
+	sessionUsage  SessionUsage
+	configOpen    bool
 
 	// atBottom tracks whether the viewport is pinned to the latest content.
 	// Auto-scroll only fires when true; manual scroll-up clears it.
@@ -140,19 +140,19 @@ func NewREPLModel(
 	sp.Style = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 
 	m := &REPLModel{
-		ctx:            ctx,
-		cancel:         cancel,
-		runner:         runner,
-		textarea:       ta,
-		spinner:        sp,
-		sendMsg:        sendMsg,
-		sessionID:      sessionID,
-		version:        ver,
-		modelName:      modelName,
-		historyIdx:     -1,
-		atBottom:       true,
-		banner:         RenderBanner(ver, sessionID, providerCount, skillCount),
-		dashboardInfo:  dashboardInfo,
+		ctx:           ctx,
+		cancel:        cancel,
+		runner:        runner,
+		textarea:      ta,
+		spinner:       sp,
+		sendMsg:       sendMsg,
+		sessionID:     sessionID,
+		version:       ver,
+		modelName:     modelName,
+		historyIdx:    -1,
+		atBottom:      true,
+		banner:        RenderBanner(ver, sessionID, providerCount, skillCount),
+		dashboardInfo: dashboardInfo,
 	}
 	m.dashboard = NewDashboardModel(dashboardInfo, "/config", &m.sessionUsage, true)
 	return m

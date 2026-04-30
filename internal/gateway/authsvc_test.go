@@ -402,7 +402,10 @@ func TestConfigGet_RedactsSecretsWithoutSecretsRead(t *testing.T) {
 		t.Fatalf("config get status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if strings.Contains(body, "legacy-shared-token") || strings.Contains(body, "api_key") {
+	// "api_key": (with colon) matches the secret field but not the
+	// unrelated "api_keys":{...} auth sub-config. "legacy_shared_token"
+	// uses the actual yaml tag (underscore, not hyphen).
+	if strings.Contains(body, `"legacy_shared_token"`) || strings.Contains(body, `"api_key":`) {
 		t.Fatalf("expected redacted secrets in response, got: %s", body)
 	}
 }
