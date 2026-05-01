@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.58] — 2026-05-01
+
+### Added
+
+- **Host Tailscale Funnel** (`internal/gateway/server.go`): When `gateway.bind` is loopback/LAN and `gateway.tailscale.mode: funnel`, the gateway runs **`tailscale funnel <port>`** on the host (same CLI resolution as onboarding: env, PATH, macOS `.app` bundle). Optional **`gateway.tailscale.reset_on_exit`** tears down funnel on shutdown. Logs public HTTPS URL and Teams/GitHub webhook paths once status is available.
+- **Onboarding — Funnel without embedded tsnet** (`onboard_steps.go`): New step for loopback/LAN to enable host Funnel and capture the machine `*.ts.net` hostname; Teams setup omits standalone `listen_addr` when using embedded bind + Funnel and writes **`expose_via: gateway`**; YAML emits `tailscale.mode` when Funnel is chosen even without `bind: tailscale`.
+
+### Changed
+
+- **`PublicGatewayBaseURL`** (`internal/config/config.go`): Treat **`tailscale.mode: funnel`** with a real **`gateway.host`** as `https://…` for both embedded tsnet and host Funnel (not only when `bind` is tailscale); avoid treating loopback placeholders as Funnel origins.
+- **Embedded tsnet startup logs** (`internal/gateway/server.go`): Retry MagicDNS suffix resolution for up to **60s** before logging failure.
+
+### Fixed
+
+- **`srv.Tailscale.ResetOnExit`** was never wired from config (`cmd/opsintelligence/main.go`).
+
 ## [0.3.57] — 2026-05-01
 
 ### Fixed

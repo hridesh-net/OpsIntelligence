@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,9 +53,11 @@ type Server struct {
 	Runner     *agent.Runner
 	Version    string
 	Tailscale  struct {
-		Mode string
+		Mode        string
+		ResetOnExit bool
 	}
-	TS     *tsnet.Server
+	TS              *tsnet.Server
+	hostFunnelPort  int // non-zero when we started host `tailscale funnel`
 	Config *config.Config
 	Gmail  *automation.GmailWatcher
 	Voice  *voice.Daemon
@@ -362,27 +365,35 @@ func (s *Server) Start() error {
 			return fmt.Errorf("tailscale listen error: %w", err)
 		}
 
-		// Resolve and log the actual public URL after the tailnet connection is up.
+		// Resolve and log the actual public URL once the tailnet connection is up.
+		// Tailscale may take a few seconds to authenticate, so retry until the
+		// MagicDNS suffix is available (up to 60 s) before giving up.
 		go func() {
 			lc, err := s.TS.LocalClient()
 			if err != nil {
+				log.Printf("OpsIntelligence gateway: could not get Tailscale local client: %v", err)
 				return
 			}
-			st, err := lc.Status(context.Background())
-			if err != nil || st.CurrentTailnet == nil {
-				return
-			}
-			suffix := st.CurrentTailnet.MagicDNSSuffix // e.g. "tail1234.ts.net"
 			scheme := "http"
 			if s.Tailscale.Mode == "funnel" {
 				scheme = "https"
 			}
-			publicURL := fmt.Sprintf("%s://%s.%s", scheme, tsHostname, suffix)
-			log.Printf("OpsIntelligence gateway public URL (Tailscale %s): %s", s.Tailscale.Mode, publicURL)
-			if s.Tailscale.Mode == "funnel" {
-				log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
-				log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+			deadline := time.Now().Add(60 * time.Second)
+			for time.Now().Before(deadline) {
+				st, err := lc.Status(context.Background())
+				if err == nil && st.CurrentTailnet != nil && st.CurrentTailnet.MagicDNSSuffix != "" {
+					suffix := st.CurrentTailnet.MagicDNSSuffix
+					publicURL := fmt.Sprintf("%s://%s.%s", scheme, tsHostname, suffix)
+					log.Printf("OpsIntelligence gateway public URL (Tailscale %s): %s", s.Tailscale.Mode, publicURL)
+					if s.Tailscale.Mode == "funnel" {
+						log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
+						log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+					}
+					return
+				}
+				time.Sleep(2 * time.Second)
 			}
+			log.Printf("OpsIntelligence gateway: Tailscale %s mode active but MagicDNS suffix unavailable after 60s — check Tailscale auth", s.Tailscale.Mode)
 		}()
 
 		s.HTTPServer = &http.Server{Handler: mux}
@@ -402,6 +413,13 @@ func (s *Server) Start() error {
 		Handler: mux,
 	}
 
+	// Host Tailscale Funnel: gateway binds locally and we run `tailscale funnel <port>`
+	// so the host machine's Tailscale node exposes the port publicly over HTTPS.
+	// This avoids the embedded tsnet node and separate auth key requirement.
+	if s.Tailscale.Mode == "funnel" {
+		go s.startHostFunnel(s.Port)
+	}
+
 	log.Printf("OpsIntelligence gateway + web UI listening on http://%s", fullAddr)
 	return s.HTTPServer.ListenAndServe()
 }
@@ -412,6 +430,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	metrics.Default().SetGatewayUp(false)
 	if s.TS != nil {
 		s.TS.Close()
+	}
+	if s.hostFunnelPort > 0 && s.Tailscale.ResetOnExit {
+		s.stopHostFunnel(s.hostFunnelPort)
 	}
 	if s.HTTPServer != nil {
 		err := s.HTTPServer.Shutdown(ctx)
@@ -424,6 +445,93 @@ func (s *Server) Stop(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// startHostFunnel runs `tailscale funnel <port>` using the host machine's
+// Tailscale installation, then logs the resulting public HTTPS URL. This is
+// the non-embedded path: the gateway binds on loopback/LAN and the host
+// Tailscale node exposes it to the internet.
+func (s *Server) startHostFunnel(port int) {
+	bin := resolveHostTailscaleBin()
+	if bin == "" {
+		log.Printf("gateway: tailscale.mode=funnel but Tailscale CLI not found — run `tailscale funnel %d` manually", port)
+		return
+	}
+
+	portStr := fmt.Sprintf("%d", port)
+	out, err := exec.Command(bin, "funnel", portStr).CombinedOutput()
+	if err != nil {
+		log.Printf("gateway: `tailscale funnel %s` failed: %v — %s", portStr, err, strings.TrimSpace(string(out)))
+		return
+	}
+	s.hostFunnelPort = port
+	log.Printf("gateway: Tailscale Funnel active on port %d", port)
+
+	// Resolve and log the public URL from host Tailscale status.
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		stOut, stErr := exec.CommandContext(ctx, bin, "status", "--json").Output()
+		cancel()
+		if stErr != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		var st struct {
+			Self struct {
+				DNSName string `json:"DNSName"`
+			} `json:"Self"`
+		}
+		if json.Unmarshal(stOut, &st) == nil && strings.TrimSpace(st.Self.DNSName) != "" {
+			host := strings.TrimSuffix(strings.TrimSpace(st.Self.DNSName), ".")
+			publicURL := fmt.Sprintf("https://%s", host)
+			log.Printf("OpsIntelligence gateway public URL (host Tailscale Funnel): %s", publicURL)
+			log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
+			log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	log.Printf("gateway: Tailscale Funnel started but could not resolve public hostname")
+}
+
+// stopHostFunnel tears down the host `tailscale funnel` on the given port.
+func (s *Server) stopHostFunnel(port int) {
+	bin := resolveHostTailscaleBin()
+	if bin == "" {
+		return
+	}
+	// "tailscale funnel --https=<port> off" or "tailscale funnel off" depending on version.
+	// Try the port-specific form first; fall back to blanket off.
+	portStr := fmt.Sprintf("%d", port)
+	if out, err := exec.Command(bin, "funnel", "--https="+portStr, "off").CombinedOutput(); err != nil {
+		log.Printf("gateway: `tailscale funnel --https=%s off` failed (%v: %s), trying `tailscale funnel off`", portStr, err, strings.TrimSpace(string(out)))
+		if out2, err2 := exec.Command(bin, "funnel", "off").CombinedOutput(); err2 != nil {
+			log.Printf("gateway: `tailscale funnel off` failed: %v — %s", err2, strings.TrimSpace(string(out2)))
+		}
+	}
+}
+
+// resolveHostTailscaleBin finds the host Tailscale CLI binary.
+// Checks OPSINTELLIGENCE_TAILSCALE_BIN, TAILSCALE_CLI, PATH, then the
+// macOS .app bundle location.
+func resolveHostTailscaleBin() string {
+	for _, env := range []string{"OPSINTELLIGENCE_TAILSCALE_BIN", "TAILSCALE_CLI"} {
+		if p := strings.TrimSpace(os.Getenv(env)); p != "" {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	if p, err := exec.LookPath("tailscale"); err == nil && p != "" {
+		return p
+	}
+	// macOS Tailscale.app ships the CLI inside the bundle but doesn't add it to PATH.
+	const macAppCLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+	if st, err := os.Stat(macAppCLI); err == nil && !st.IsDir() {
+		return macAppCLI
+	}
+	return ""
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {

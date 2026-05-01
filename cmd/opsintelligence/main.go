@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.57" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.58" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1055,6 +1055,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 			srv := gateway.NewServer(cfg.Gateway.Port, cfg.Gateway.MaxWebSocketClients)
 			srv.Bind = cfg.Gateway.Bind
 			srv.Tailscale.Mode = cfg.Gateway.Tailscale.Mode
+			srv.Tailscale.ResetOnExit = cfg.Gateway.Tailscale.ResetOnExit
 			srv.Token = cfg.Gateway.Token
 			srv.Version = version
 			srv.Config = cfg
@@ -2077,6 +2078,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		srv := gateway.NewServer(cfg.Gateway.Port, cfg.Gateway.MaxWebSocketClients)
 		srv.Bind = cfg.Gateway.Bind
 		srv.Tailscale.Mode = cfg.Gateway.Tailscale.Mode
+		srv.Tailscale.ResetOnExit = cfg.Gateway.Tailscale.ResetOnExit
 		srv.Token = cfg.Gateway.Token
 		srv.Runner = runner
 		srv.Version = version

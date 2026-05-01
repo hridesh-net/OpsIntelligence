@@ -1572,19 +1572,18 @@ func (c *Config) PublicGatewayBaseURL() string {
 	if c == nil {
 		return ""
 	}
-	bind := strings.TrimSpace(c.Gateway.Bind)
-	isTailscale := bind == "tailscale" || bind == "tailnet"
 	isFunnel := strings.EqualFold(strings.TrimSpace(c.Gateway.Tailscale.Mode), "funnel")
 
-	if isTailscale && isFunnel && strings.TrimSpace(c.Gateway.Host) != "" {
-		// gateway.host holds the Tailscale machine name or full *.ts.net hostname.
-		// Funnel always uses port 443 with TLS.
+	// Both embedded tsnet (bind: tailscale) and host Tailscale Funnel
+	// (bind: loopback/lan + tailscale.mode: funnel) expose a public HTTPS endpoint.
+	// gateway.host must hold the *.ts.net FQDN in either case.
+	if isFunnel && strings.TrimSpace(c.Gateway.Host) != "" {
 		h := strings.TrimSpace(c.Gateway.Host)
-		if !strings.Contains(h, ".") {
-			// bare hostname — caller should set the full *.ts.net name, but be safe
+		// Only treat it as a Funnel URL when it looks like a real Tailscale hostname,
+		// not a loopback/LAN placeholder like 127.0.0.1 or 0.0.0.0.
+		if strings.Contains(h, ".ts.net") || (!strings.HasPrefix(h, "127.") && !strings.HasPrefix(h, "0.0.0.0") && h != "localhost") {
 			return "https://" + h
 		}
-		return "https://" + h
 	}
 
 	h := c.Gateway.Host

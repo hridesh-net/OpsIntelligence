@@ -595,8 +595,10 @@ func runOnboarding(configPath string) (bool, error) {
 	tui.PrintOnboardSaved(configPath)
 
 	// Build the Tailscale public URL for the summary when Funnel is configured.
+	// Works for both embedded tsnet (bind: tailscale) and host Tailscale Funnel
+	// (bind: loopback/lan + tailscale.mode: funnel).
 	var tailscalePublicURL string
-	if normalizeGatewayBind(state.gwMode) == "tailscale" && strings.EqualFold(state.tsMode, "funnel") && !placeholderGatewayHost(state.gwHost) {
+	if strings.EqualFold(state.tsMode, "funnel") && !placeholderGatewayHost(state.gwHost) {
 		tailscalePublicURL = "https://" + strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(state.gwHost), "https://"), "http://")
 	}
 
@@ -1761,12 +1763,18 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 				}
 			}
 		case "msteams":
-			if strings.TrimSpace(teamsListenAddr) == "" {
-				teamsListenAddr = ":3978"
+			funnelMode := gwMode == "tailscale" && strings.EqualFold(strings.TrimSpace(tsMode), "funnel")
+			if funnelMode {
+				tui.PrintOnboardInfo("Teams will be served through Tailscale Funnel at <your-funnel-url>/teams/api/messages")
+				tui.PrintOnboardInfo("Register that URL as your bot's messaging endpoint in Azure Portal.")
+			} else {
+				if strings.TrimSpace(teamsListenAddr) == "" {
+					teamsListenAddr = ":3978"
+				}
+				tui.PrintOnboardInfo("Bot Framework webhook will listen on " + teamsListenAddr)
+				tui.PrintOnboardInfo("Register this address as your bot's messaging endpoint in Azure Portal.")
 			}
-			tui.PrintOnboardInfo("Bot Framework webhook will listen on " + teamsListenAddr)
-			tui.PrintOnboardInfo("Register this address as your bot's messaging endpoint in Azure Portal.")
-			_ = huh.NewForm(huh.NewGroup(
+			teamsFields := []huh.Field{
 				huh.NewInput().
 					Title("Azure Bot App ID").
 					Description("Microsoft App ID from your Azure Bot registration.").
@@ -1776,10 +1784,16 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 					Description("Client secret from your Azure Bot app registration.").
 					Password(true).
 					Value(&teamsAppPassword),
-				huh.NewInput().
-					Title("Webhook Listen Address").
-					Description("Port for the Bot Framework webhook (default :3978).").
-					Value(&teamsListenAddr),
+			}
+			if !funnelMode {
+				teamsFields = append(teamsFields,
+					huh.NewInput().
+						Title("Webhook Listen Address").
+						Description("Port for the Bot Framework webhook (default :3978).").
+						Value(&teamsListenAddr),
+				)
+			}
+			teamsFields = append(teamsFields,
 				huh.NewSelect[string]().
 					Title("Teams Security Mode").
 					Description("allowlist: Only whitelisted AAD user IDs. open: Any Teams user.").
@@ -1793,7 +1807,8 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 					Title("Allowed Teams User IDs").
 					Description("Comma-separated AAD object IDs (from.id). Leave empty for open mode.").
 					Value(&teamsAllowFromRaw),
-			)).WithTheme(theme).Run()
+			)
+			_ = huh.NewForm(huh.NewGroup(teamsFields...)).WithTheme(theme).Run()
 		}
 	}
 
@@ -2185,8 +2200,12 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 				if teamsAppPassword != "" {
 					sb.WriteString(fmt.Sprintf("    app_password: %q\n", teamsAppPassword))
 				}
-				if l := strings.TrimSpace(teamsListenAddr); l != "" && l != ":3978" {
-					sb.WriteString(fmt.Sprintf("    listen_addr: %q\n", l))
+				if gwMode == "tailscale" && strings.EqualFold(strings.TrimSpace(tsMode), "funnel") {
+					sb.WriteString("    expose_via: \"gateway\"\n")
+				} else {
+					if l := strings.TrimSpace(teamsListenAddr); l != "" && l != ":3978" {
+						sb.WriteString(fmt.Sprintf("    listen_addr: %q\n", l))
+					}
 				}
 				sb.WriteString(fmt.Sprintf("    dm_mode: %q\n", teamsDMMode))
 				if teamsAllowFromRaw != "" {

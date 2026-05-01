@@ -474,6 +474,44 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 		},
 	))
 
+	// Host Tailscale Funnel step — shown for loopback/LAN bind so users can
+	// expose the gateway via the host machine's existing Tailscale installation
+	// without needing the embedded tsnet node and a separate auth key.
+	steps = append(steps, tui.OnboardConditionalFormStep(
+		"🌐", "Gateway — Expose via Tailscale Funnel", "",
+		func() bool { return s.gwMode == "loopback" || s.gwMode == "lan" },
+		func() *huh.Form {
+			// Ensure tsMode starts at "off" unless already set to funnel.
+			if !strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") {
+				s.tsMode = "off"
+			}
+			// Auto-detect machine hostname so the webhook URL is accurate.
+			if detectedHost := detectTailscaleHostname(); detectedHost != "" && placeholderGatewayHost(s.gwHost) {
+				s.gwHost = detectedHost
+			}
+			return huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Expose via Tailscale Funnel?").
+					Description("Runs `tailscale funnel <port>` on startup so Microsoft's Bot\nFramework servers can reach your gateway for Teams webhooks.").
+					Options(
+						huh.NewOption("No — keep local only", "off"),
+						huh.NewOption("Yes — use host Tailscale Funnel", "funnel"),
+					).
+					Value(&s.tsMode),
+				huh.NewInput().
+					Title("Machine Tailscale Hostname").
+					Description("Your Tailscale FQDN (e.g. myhost.tail1234.ts.net).\nAuto-detected when possible — needed for the Teams webhook URL.").
+					Value(&s.gwHost).
+					Validate(func(v string) error {
+						if strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") && placeholderGatewayHost(v) {
+							return fmt.Errorf("need your machine's *.ts.net hostname (run: tailscale status)")
+						}
+						return nil
+					}),
+			))
+		},
+	))
+
 	// ── 9. Messaging Channels ────────────────────────────────────────────────
 	steps = append(steps, tui.OnboardFormStep(
 		"💬", "Messaging Channels", "Connect Telegram, Slack, Discord, WhatsApp, or Teams",
@@ -587,15 +625,27 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 		"💬", "Microsoft Teams Setup", "",
 		func() bool { return containsStr(s.selectedChannels, "msteams") },
 		func() *huh.Form {
-			return huh.NewForm(huh.NewGroup(
+			funnelMode := s.gwMode == "tailscale" && strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel")
+			appIDDesc := "Microsoft App ID from your Azure Bot registration."
+			if funnelMode {
+				appIDDesc = "Microsoft App ID from your Azure Bot registration.\nWebhook will be served via Tailscale Funnel at <your-funnel-url>/teams/api/messages"
+			}
+			fields := []huh.Field{
 				huh.NewInput().Title("Azure Bot App ID").
-					Description("Microsoft App ID from your Azure Bot registration.").
+					Description(appIDDesc).
 					Value(&s.teamsAppID),
 				huh.NewInput().Title("Azure Bot App Password").Password(true).
 					Value(&s.teamsAppPassword),
-				huh.NewInput().Title("Webhook Listen Address").
-					Description("Port for Bot Framework webhook (default :3978).").
-					Value(&s.teamsListenAddr),
+			}
+			// In Tailscale Funnel mode Teams mounts on the gateway — no separate listen addr needed.
+			if !funnelMode {
+				fields = append(fields,
+					huh.NewInput().Title("Webhook Listen Address").
+						Description("Port for Bot Framework webhook (default :3978).").
+						Value(&s.teamsListenAddr),
+				)
+			}
+			fields = append(fields,
 				huh.NewSelect[string]().Title("Teams Security Mode").
 					Options(
 						huh.NewOption("Allowlist (Recommended)", "allowlist"),
@@ -606,7 +656,8 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 				huh.NewInput().Title("Allowed Teams User IDs").
 					Description("Comma-separated AAD object IDs. Leave empty for open mode.").
 					Value(&s.teamsAllowFromRaw),
-			))
+			)
+			return huh.NewForm(huh.NewGroup(fields...))
 		},
 	))
 
@@ -1386,7 +1437,7 @@ func buildConfigYAML(s *onboardState) string {
 	if s.gwToken != "" {
 		sb.WriteString(fmt.Sprintf("  token: \"%s\"\n", s.gwToken))
 	}
-	if s.gwMode == "tailscale" {
+	if s.gwMode == "tailscale" || strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") {
 		sb.WriteString(fmt.Sprintf("  tailscale:\n    mode: \"%s\"\n", s.tsMode))
 	}
 	sb.WriteString("\n")
@@ -1495,8 +1546,15 @@ func buildConfigYAML(s *onboardState) string {
 				if s.teamsAppPassword != "" {
 					sb.WriteString(fmt.Sprintf("    app_password: %q\n", s.teamsAppPassword))
 				}
-				if l := strings.TrimSpace(s.teamsListenAddr); l != "" && l != ":3978" {
-					sb.WriteString(fmt.Sprintf("    listen_addr: %q\n", l))
+				// Tailscale Funnel: mount Teams on the gateway so the shared HTTPS
+				// Funnel endpoint serves /teams/api/messages. Standalone :3978 is not
+				// reachable from Microsoft's servers in Funnel-only setups.
+				if s.gwMode == "tailscale" && strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") {
+					sb.WriteString("    expose_via: \"gateway\"\n")
+				} else {
+					if l := strings.TrimSpace(s.teamsListenAddr); l != "" && l != ":3978" {
+						sb.WriteString(fmt.Sprintf("    listen_addr: %q\n", l))
+					}
 				}
 				sb.WriteString(fmt.Sprintf("    dm_mode: %q\n", s.teamsDMMode))
 				writeAllowFrom(&sb, s.teamsAllowFromRaw)
