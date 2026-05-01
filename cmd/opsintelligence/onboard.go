@@ -77,13 +77,51 @@ func ensureSelectValue(opts []huh.Option[string], current, prefix string) []huh.
 	return append([]huh.Option[string]{huh.NewOption(prefix+label, current)}, opts...)
 }
 
+const tailscaleMacAppCLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
+// resolveTailscaleCLI returns an executable path for the Tailscale CLI.
+// Order: OPSINTELLIGENCE_TAILSCALE_BIN, TAILSCALE_CLI, PATH lookup,
+// then the binary bundled inside Tailscale.app on macOS (not on PATH by default).
+func resolveTailscaleCLI() string {
+	for _, key := range []string{"OPSINTELLIGENCE_TAILSCALE_BIN", "TAILSCALE_CLI"} {
+		if p := strings.TrimSpace(os.Getenv(key)); p != "" {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	if p, err := exec.LookPath("tailscale"); err == nil && p != "" {
+		return p
+	}
+	if runtime.GOOS == "darwin" {
+		if st, err := os.Stat(tailscaleMacAppCLI); err == nil && !st.IsDir() {
+			return tailscaleMacAppCLI
+		}
+	}
+	return ""
+}
+
+// tailscaleStatusJSON runs `tailscale status --json` via resolveTailscaleCLI.
+func tailscaleStatusJSON(ctx context.Context) ([]byte, error) {
+	bin := resolveTailscaleCLI()
+	if bin == "" {
+		return nil, fmt.Errorf("tailscale CLI not found: install CLI integration from Tailscale settings, add brew's tailscale to PATH, or set OPSINTELLIGENCE_TAILSCALE_BIN")
+	}
+	cmd := exec.CommandContext(ctx, bin, "status", "--json")
+	if runtime.GOOS == "darwin" && strings.Contains(bin, "Tailscale.app") {
+		// Bundled macOS binary chooses GUI vs CLI from env; force CLI when spawned from OpsIntelligence.
+		cmd.Env = append(os.Environ(), "TAILSCALE_BE_CLI=1")
+	}
+	return cmd.Output()
+}
+
 // detectTailscaleHostname queries `tailscale status --json` and returns the
 // machine's Tailscale FQDN (e.g. "mymachine.tail1234.ts.net"). Returns "" if
 // Tailscale is not installed, not running, or the query fails.
 func detectTailscaleHostname() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+	out, err := tailscaleStatusJSON(ctx)
 	if err != nil {
 		return ""
 	}
@@ -125,7 +163,7 @@ func embeddedTailscaleGatewayOrigin(bind, tailscaleMode string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+	out, err := tailscaleStatusJSON(ctx)
 	if err != nil {
 		return ""
 	}
@@ -1540,7 +1578,7 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 					Value(&gwHost).
 					Validate(func(v string) error {
 						if strings.EqualFold(strings.TrimSpace(tsMode), "funnel") && placeholderGatewayHost(v) {
-							return fmt.Errorf("install Tailscale, run `tailscale up`, or enter your *.ts.net hostname (not localhost)")
+							return fmt.Errorf("need a real *.ts.net hostname for Funnel (Tailscale → CLI integration, or OPSINTELLIGENCE_TAILSCALE_BIN); not localhost")
 						}
 						return nil
 					}),

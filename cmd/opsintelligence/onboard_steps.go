@@ -466,7 +466,7 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 					Value(&s.gwHost).
 					Validate(func(v string) error {
 						if strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") && placeholderGatewayHost(v) {
-							return fmt.Errorf("install Tailscale, run `tailscale up`, or enter your *.ts.net hostname (not localhost)")
+							return fmt.Errorf("need a real *.ts.net hostname for Funnel (Tailscale menu → CLI integration, or set OPSINTELLIGENCE_TAILSCALE_BIN); not localhost")
 						}
 						return nil
 					}),
