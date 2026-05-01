@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.52] — 2026-04-30
+
+### Added
+
+- **Microsoft Teams inbound JWT verification** (`internal/channels/msteams/verify.go`, `msteams.go`, tests): Verify Bot Framework Bearer tokens (OpenID metadata → JWKS, RS256, issuer/audience/expiry) before handling activities. **`Channel.WithEmulatorMode()`** disables verification for the Bot Framework Emulator / local development.
+
 ## [0.3.51] — 2026-04-30
 
 ### Fixed
