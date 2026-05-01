@@ -128,6 +128,21 @@ type RepoIntelConfig struct {
 	// Default false so operators opt in explicitly (Settings → repo_intel or YAML).
 	ShowCallgraphLibraryPackages bool `yaml:"show_callgraph_library_packages"`
 
+	// FullIndexDisable skips the full-tree GitHub fetch used for repo-scoped RAG.
+	FullIndexDisable bool `yaml:"full_index_disable"`
+
+	// FullIndexMaxFiles caps blobs fetched per repo for full indexing (0 = indexer default).
+	FullIndexMaxFiles int `yaml:"full_index_max_files"`
+
+	// FullIndexMaxFileKB skips blobs larger than this many KiB (0 = indexer default 256).
+	FullIndexMaxFileKB int `yaml:"full_index_max_file_kb"`
+
+	// FullIndexChunkRunes splits each file into hybrid chunks (0 = indexer default).
+	FullIndexChunkRunes int `yaml:"full_index_chunk_runes"`
+
+	// FullIndexConcurrency limits parallel blob downloads (0 = indexer default).
+	FullIndexConcurrency int `yaml:"full_index_concurrency"`
+
 	// WorkQueueDepth is the channel buffer for the sequential processing queue.
 	// Default: 256.
 	WorkQueueDepth int `yaml:"work_queue_depth"`

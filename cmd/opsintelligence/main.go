@@ -62,7 +62,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.49" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.50" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1817,16 +1817,28 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			log.Warn("repo intelligence LLM router init failed", zap.Error(riErr))
 		} else {
 			maxFiles := riCfg.MaxFilesPerRepo
+			fullMaxBlob := 0
+			if riCfg.FullIndexMaxFileKB > 0 {
+				fullMaxBlob = riCfg.FullIndexMaxFileKB * 1024
+			}
 			idxr := repointel.NewIndexer(repointel.IndexerConfig{
-				GitHubToken:     cfg.DevOps.GitHub.Token,
-				MemoryDir:       memDir,
-				MaxFilesPerRepo: maxFiles,
+				GitHubToken:            cfg.DevOps.GitHub.Token,
+				MemoryDir:              memDir,
+				MaxFilesPerRepo:        maxFiles,
+				FullIndexDisable:       riCfg.FullIndexDisable,
+				FullIndexMaxFiles:      riCfg.FullIndexMaxFiles,
+				FullIndexMaxFileBytes:  fullMaxBlob,
+				FullIndexChunkRunes:    riCfg.FullIndexChunkRunes,
+				FullIndexConcurrency:   riCfg.FullIndexConcurrency,
 			}, riRouter, log)
 			scnr := repointel.NewScanner(riRouter, log)
 
 			riMgrCfg := repointel.ManagerConfig{
-				RegistryPath: registryFile,
-				MemoryDir:    memDir,
+				RegistryPath:    registryFile,
+				MemoryDir:       memDir,
+				SemanticRAG:     memMgr.Semantic,
+				RAGChunkSize:    cfg.Memory.Mining.ChunkSize,
+				RAGChunkOverlap: cfg.Memory.Mining.ChunkOverlap,
 			}
 			// Wire embedding provider for the vector memory base when available.
 			if e, ok := embedReg.Default(); ok {

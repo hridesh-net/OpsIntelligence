@@ -965,6 +965,67 @@ button.ghost.danger:hover {
 .repo-detail-artifacts { margin-top: 8px; font-size: 12px; line-height: 1.5; }
 .memory-prose { margin: 0; white-space: pre-wrap; line-height: 1.55; font-size: 14px; }
 
+/* Repo “Ask” (hybrid RAG search) */
+.repo-ask-intro { margin: 0 0 16px; font-size: 13px; line-height: 1.55; max-width: 72ch; }
+.repo-ask-form { display: flex; flex-direction: column; gap: 8px; max-width: 56rem; }
+.repo-ask-label { font-size: 12px; font-weight: 600; color: var(--fg-muted); }
+.repo-ask-textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  color: var(--fg);
+  resize: vertical;
+}
+.repo-ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-top: 4px; }
+.repo-ask-hint { font-size: 12px; }
+.repo-ask-results { margin-top: 20px; }
+.repo-ask-hit-list { display: flex; flex-direction: column; gap: 14px; }
+.repo-ask-hit {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+  overflow: hidden;
+}
+.repo-ask-hit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  background: var(--bg-elev);
+}
+.repo-ask-snippet {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+}
+.repo-index-tree-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: rgba(255, 191, 91, 0.1);
+  border: 1px solid rgba(255, 191, 91, 0.35);
+  border-radius: var(--radius);
+  max-width: 56rem;
+}
+.repo-ask-post-note { margin-bottom: 12px; }
+
 .scan-summary { margin-bottom: 16px; }
 .scan-meta { display: flex; gap: 20px; font-size: 13px; color: var(--fg-muted); flex-wrap: wrap; }
 .scan-meta strong { color: var(--fg); }

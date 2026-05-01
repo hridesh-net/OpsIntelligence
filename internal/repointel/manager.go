@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/embeddings"
+	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"go.uber.org/zap"
 )
 
@@ -44,6 +45,15 @@ type ManagerConfig struct {
 	// MonitorInterval is how often Start() polls each indexed repo's HEAD SHA
 	// and re-enqueues it when the remote has new commits. Default 6h.
 	MonitorInterval time.Duration
+
+	// SemanticRAG, when non-nil with Embedder, mirrors each repo's intel chunks
+	// (same material as hybrid index) into agent semantic memory for runner RAG.
+	SemanticRAG memory.SemanticStore
+
+	// RAGChunkSize / RAGChunkOverlap split large intel blobs before embedding (token-ish heuristics).
+	// Defaults match memory.Manager when zero.
+	RAGChunkSize    int
+	RAGChunkOverlap int
 }
 
 func (c *ManagerConfig) applyDefaults() {
@@ -58,6 +68,12 @@ func (c *ManagerConfig) applyDefaults() {
 	}
 	if c.EmbeddingDimensions <= 0 {
 		c.EmbeddingDimensions = 1536
+	}
+	if c.RAGChunkSize <= 0 {
+		c.RAGChunkSize = 512
+	}
+	if c.RAGChunkOverlap < 0 {
+		c.RAGChunkOverlap = 64
 	}
 }
 
@@ -242,6 +258,7 @@ func (m *Manager) AddRepo(entry RepoEntry) error {
 
 // RemoveRepo removes the repo from the registry and clears its hybrid store entries.
 func (m *Manager) RemoveRepo(id string) error {
+	m.purgeSemanticRAG(context.Background(), id)
 	_ = m.hybrid.DeleteRepo(id)
 	return m.registry.Remove(id)
 }
@@ -455,7 +472,7 @@ func (m *Manager) writeProgressFile(e ProgressEvent) {
 
 // pipelineSteps is the total number of steps in the processing pipeline.
 // Used by the TUI to render a progress bar.
-const pipelineSteps = 6
+const pipelineSteps = 8
 
 // process runs index → scan sequentially for one repo.
 func (m *Manager) process(ctx context.Context, id string) {
@@ -533,9 +550,18 @@ func (m *Manager) process(ctx context.Context, id string) {
 	step(5, ProgressIndexing, "indexing into hybrid search store")
 	m.indexHybrid(ctx, id, mem, scanResult)
 
-	// ── Step 6: Done ──────────────────────────────────────────────────────────
+	// ── Step 6: Full-repository text index (hybrid + mirrored RAG) ─────────────
+	step(6, ProgressIndexing, "indexing full repository tree for scoped search")
+	entry, _ = m.registry.Get(id)
+	fullFiles := m.indexFullRepo(ctx, id, entry, mem.HeadSHA)
+
+	// ── Step 7: Agent semantic RAG (sqlite-vec documents) ───────────────────────
+	step(7, ProgressIndexing, "mirroring repo intel to agent semantic memory (RAG)")
+	m.indexSemanticRAG(ctx, id, mem, scanResult, fullFiles)
+
+	// ── Step 8: Done ───────────────────────────────────────────────────────────
 	doneMsg := fmt.Sprintf("done — risk=%s  CVEs=%d  bottlenecks=%d", scanResult.RiskLevel, len(scanResult.CVEs), len(scanResult.Bottlenecks))
-	step(6, ProgressDone, doneMsg)
+	step(8, ProgressDone, doneMsg)
 
 	if m.log != nil {
 		m.log.Info("repointel processing complete",
@@ -644,6 +670,97 @@ func (m *Manager) buildCallGraph(ctx context.Context, id string, mem *RepoMemory
 			zap.Int("edges", len(cg.Edges)),
 		)
 	}
+}
+
+// indexFullRepo fetches indexable text files from the full Git tree, embeds them,
+// and upserts hybrid chunks with kind "source". Returns raw files for semantic RAG mirroring.
+func (m *Manager) indexFullRepo(ctx context.Context, repoID string, entry RepoEntry, headSHA string) []RawFile {
+	if m.hybrid == nil || m.indexer == nil || strings.TrimSpace(headSHA) == "" {
+		return nil
+	}
+	files, treeTruncated, err := m.indexer.FetchFullIndexRawFiles(ctx, entry, headSHA)
+	if err != nil {
+		if m.log != nil {
+			m.log.Warn("repointel: full index fetch failed", zap.String("repo", repoID), zap.Error(err))
+		}
+		return nil
+	}
+	if err := m.registry.SetIndexTreeTruncated(repoID, treeTruncated); err != nil && m.log != nil {
+		m.log.Warn("repointel: persist tree truncated flag failed", zap.String("repo", repoID), zap.Error(err))
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	if err := m.hybrid.DeleteChunksByKind(repoID, string(ChunkSource)); err != nil && m.log != nil {
+		m.log.Warn("repointel: delete old source chunks failed", zap.String("repo", repoID), zap.Error(err))
+	}
+	run := m.indexer.FullIndexChunkRunes()
+	chunks := ChunksFromSourceFiles(repoID, files, run)
+	const batch = 48
+	for i := 0; i < len(chunks); i += batch {
+		end := i + batch
+		if end > len(chunks) {
+			end = len(chunks)
+		}
+		sub := chunks[i:end]
+		var vecs [][]float32
+		if m.cfg.Embedder != nil {
+			texts := make([]string, len(sub))
+			for j := range sub {
+				texts[j] = sub[j].Content
+			}
+			resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+				Model:     m.cfg.Embedder.DefaultModel(),
+				Texts:     texts,
+				InputType: embeddings.InputTypeDocument,
+			})
+			if err != nil {
+				if m.log != nil {
+					m.log.Warn("repointel: full index embed batch failed",
+						zap.String("repo", repoID), zap.Int("from", i), zap.Error(err))
+				}
+			} else {
+				vecs = resp.Embeddings
+			}
+		}
+		if err := m.hybrid.UpsertChunks(sub, vecs); err != nil && m.log != nil {
+			m.log.Warn("repointel: full index hybrid upsert failed", zap.String("repo", repoID), zap.Error(err))
+		}
+	}
+	if m.log != nil {
+		m.log.Info("repointel: full repo index complete",
+			zap.String("repo", repoID),
+			zap.Int("files", len(files)),
+			zap.Int("chunks", len(chunks)),
+		)
+	}
+	return files
+}
+
+// SearchRepo runs hybrid keyword + vector search restricted to one repository.
+func (m *Manager) SearchRepo(ctx context.Context, repoID, query string, k int) ([]HybridResult, error) {
+	if m.hybrid == nil {
+		return nil, fmt.Errorf("hybrid search is not configured (embeddings required)")
+	}
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if k <= 0 {
+		k = 12
+	}
+	var qv []float32
+	if m.cfg.Embedder != nil {
+		resp, err := m.cfg.Embedder.Embed(ctx, &embeddings.EmbedRequest{
+			Model:     m.cfg.Embedder.DefaultModel(),
+			Texts:     []string{q},
+			InputType: embeddings.InputTypeQuery,
+		})
+		if err == nil && len(resp.Embeddings) > 0 {
+			qv = resp.Embeddings[0]
+		}
+	}
+	return m.hybrid.SearchRepo(repoID, q, qv, k)
 }
 
 // indexHybrid chunks memory + scan into FTS5 + vec0 for hybrid search.

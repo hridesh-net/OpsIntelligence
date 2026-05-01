@@ -75,6 +75,10 @@ type RepoEntry struct {
 	IndexedAt   time.Time   `yaml:"indexed_at,omitempty" json:"indexed_at,omitempty"`
 	HeadSHA     string      `yaml:"head_sha,omitempty" json:"head_sha,omitempty"`
 	IndexError  string      `yaml:"index_error,omitempty" json:"index_error,omitempty"`
+	// IndexTreeTruncated is set when the last full-repo index used GitHub's
+	// recursive tree API and the response had truncated=true (very large trees).
+	// Keyword search and RAG over the full tree may then miss some paths.
+	IndexTreeTruncated bool `yaml:"index_tree_truncated,omitempty" json:"index_tree_truncated,omitempty"`
 
 	// Scan state
 	ScanStatus ScanStatus `yaml:"scan_status" json:"scan_status"`
@@ -123,10 +127,10 @@ type RepoMemory struct {
 	HeadSHA   string    `json:"head_sha,omitempty"`
 
 	// LLM-extracted knowledge
-	Architecture string           `json:"architecture"`  // high-level overview
+	Architecture string           `json:"architecture"` // high-level overview
 	PrimaryLang  string           `json:"primary_lang"`
 	Languages    []string         `json:"languages,omitempty"`
-	KeyFiles     []string         `json:"key_files,omitempty"`     // important entry points
+	KeyFiles     []string         `json:"key_files,omitempty"` // important entry points
 	Conventions  []CodeConvention `json:"conventions,omitempty"`
 	Dependencies []Dependency     `json:"dependencies,omitempty"`
 	TestPatterns string           `json:"test_patterns,omitempty"` // how tests are structured
@@ -190,12 +194,12 @@ func (m *RepoMemory) ReviewContext() string {
 
 // CVEFinding is a known or suspected CVE in a dependency.
 type CVEFinding struct {
-	Severity    string   `json:"severity"`              // critical|high|medium|low
+	Severity    string   `json:"severity"` // critical|high|medium|low
 	Package     string   `json:"package"`
 	Version     string   `json:"version,omitempty"`
 	Description string   `json:"description"`
-	Fix         string   `json:"fix,omitempty"`         // recommended action
-	CVEIDs      []string `json:"cve_ids,omitempty"`     // e.g. ["CVE-2024-1234"]
+	Fix         string   `json:"fix,omitempty"`     // recommended action
+	CVEIDs      []string `json:"cve_ids,omitempty"` // e.g. ["CVE-2024-1234"]
 }
 
 // BottleneckFinding is a performance or reliability risk in the codebase.

@@ -12,6 +12,7 @@ package gateway
 //   GET  /api/v1/repos/{id}/memory   Return the repo's LLM-extracted memory.
 //   GET  /api/v1/repos/{id}/callgraph Return the function/module call graph JSON.
 //   GET  /api/v1/repos/{id}/symbols   Return persisted symbol index (from graph).
+//   POST /api/v1/repos/{id}/search    Hybrid search scoped to this repo (full index + memory chunks).
 //   GET  /api/v1/repos/{id}/scan     Return the latest scan result.
 //   GET  /api/v1/repos/{id}/users    List users for a repo.
 //   POST /api/v1/repos/{id}/users    Add a user to a repo.
@@ -19,6 +20,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -140,6 +142,12 @@ func (a *RepoIntelAdapter) HandleRepos(w http.ResponseWriter, r *http.Request) {
 	case "symbols":
 		if r.Method == http.MethodGet {
 			a.handleSymbols(w, r, repoID)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "search":
+		if r.Method == http.MethodPost {
+			a.handleRepoSearch(w, r, repoID)
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -320,6 +328,46 @@ func (a *RepoIntelAdapter) handleSymbols(w http.ResponseWriter, _ *http.Request,
 		return
 	}
 	repoWriteJSON(w, http.StatusOK, sym)
+}
+
+type repoSearchRequest struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+// ── /api/v1/repos/{id}/search ───────────────────────────────────────────────
+
+func (a *RepoIntelAdapter) handleRepoSearch(w http.ResponseWriter, r *http.Request, id string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req repoSearchRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+	if req.Limit <= 0 || req.Limit > 50 {
+		req.Limit = 15
+	}
+	results, err := a.mgr.SearchRepo(r.Context(), id, req.Query, req.Limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp := map[string]any{
+		"repo_id": id,
+		"hits":    results,
+	}
+	if e, err := a.mgr.GetRepo(id); err == nil && e.IndexTreeTruncated {
+		resp["index_tree_truncated"] = true
+	}
+	repoWriteJSON(w, http.StatusOK, resp)
 }
 
 // ── /api/v1/repos/progress ─────────────────────────────────────────────────────

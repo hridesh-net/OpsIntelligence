@@ -24,13 +24,13 @@ type HybridStore struct {
 
 // HybridResult is one ranked result from a hybrid search.
 type HybridResult struct {
-	ChunkID  string
-	RepoID   string
-	Kind     string
-	Heading  string
-	FilePath string
-	Content  string
-	Score    float64 // RRF score — higher is better
+	ChunkID  string  `json:"chunk_id"`
+	RepoID   string  `json:"repo_id"`
+	Kind     string  `json:"kind"`
+	Heading  string  `json:"heading"`
+	FilePath string  `json:"file_path,omitempty"`
+	Content  string  `json:"content"`
+	Score    float64 `json:"score"` // RRF score — higher is better
 }
 
 const rrfK = 60 // standard RRF constant
@@ -161,6 +161,47 @@ func (hs *HybridStore) UpsertChunks(chunks []Chunk, embeddings [][]float32) erro
 	return tx.Commit()
 }
 
+// DeleteChunksByKind removes all chunks for a repo with the given kind (e.g. "source").
+func (hs *HybridStore) DeleteChunksByKind(repoID, kind string) error {
+	if hs == nil {
+		return nil
+	}
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	tx, err := hs.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.Query(`SELECT id FROM repo_chunks WHERE repo_id = ? AND kind = ?`, repoID, kind)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		if _, err = tx.Exec(`DELETE FROM vec_repo_chunks WHERE chunk_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`DELETE FROM fts_repo_chunks WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`DELETE FROM repo_chunks WHERE repo_id = ? AND kind = ?`, repoID, kind); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // DeleteRepo removes all chunks for repoID from every table.
 func (hs *HybridStore) DeleteRepo(repoID string) error {
 	if hs == nil {
@@ -284,6 +325,98 @@ func (hs *HybridStore) Search(query string, queryVec []float32, k int) ([]Hybrid
 	}
 
 	// ── Fetch metadata ──────────────────────────────────────────────────────
+	var results []HybridResult
+	for _, sc := range ranked {
+		var r HybridResult
+		err := hs.db.QueryRow(`
+			SELECT id, repo_id, kind, heading, COALESCE(file_path,''), content
+			FROM repo_chunks WHERE id = ?
+		`, sc.id).Scan(&r.ChunkID, &r.RepoID, &r.Kind, &r.Heading, &r.FilePath, &r.Content)
+		if err != nil {
+			continue
+		}
+		r.Score = sc.score
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// SearchRepo is like Search but restricts hits to repoID (for repo-scoped RAG UI).
+func (hs *HybridStore) SearchRepo(repoID, query string, queryVec []float32, k int) ([]HybridResult, error) {
+	if hs == nil {
+		return nil, nil
+	}
+	if k <= 0 {
+		k = 10
+	}
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	ftsRanks := map[string]int{}
+	if query != "" {
+		ftsQ := buildFTSQuery(query)
+		rows, err := hs.db.Query(`
+			SELECT f.id FROM fts_repo_chunks f
+			INNER JOIN repo_chunks r ON r.id = f.id
+			WHERE r.repo_id = ? AND f MATCH ?
+			ORDER BY rank
+			LIMIT ?`, repoID, ftsQ, k*3)
+		if err == nil {
+			rank := 1
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err == nil {
+					ftsRanks[id] = rank
+					rank++
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	vecRanks := map[string]int{}
+	if len(queryVec) == hs.dims {
+		blob := float32sToBytes(queryVec)
+		rows, err := hs.db.Query(`
+			SELECT v.chunk_id FROM vec_repo_chunks v
+			INNER JOIN repo_chunks r ON r.id = v.chunk_id
+			WHERE r.repo_id = ? AND v.embedding MATCH ? AND k = ?
+			ORDER BY distance
+		`, repoID, blob, k*3)
+		if err == nil {
+			rank := 1
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err == nil {
+					vecRanks[id] = rank
+					rank++
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	allIDs := unionKeys(ftsRanks, vecRanks)
+	type scored struct {
+		id    string
+		score float64
+	}
+	var ranked []scored
+	for _, id := range allIDs {
+		score := 0.0
+		if r, ok := ftsRanks[id]; ok {
+			score += 1.0 / float64(rrfK+r)
+		}
+		if r, ok := vecRanks[id]; ok {
+			score += 1.0 / float64(rrfK+r)
+		}
+		ranked = append(ranked, scored{id, score})
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+	if len(ranked) > k {
+		ranked = ranked[:k]
+	}
+
 	var results []HybridResult
 	for _, sc := range ranked {
 		var r HybridResult

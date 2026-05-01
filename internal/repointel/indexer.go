@@ -33,6 +33,21 @@ type IndexerConfig struct {
 
 	// MemoryDir is the directory where per-repo memory JSON files are written.
 	MemoryDir string
+
+	// FullIndexDisable skips the full-tree fetch used for repo-scoped RAG (hybrid + semantic).
+	FullIndexDisable bool
+
+	// FullIndexMaxFiles caps how many text blobs are fetched per repo (default 5000).
+	FullIndexMaxFiles int
+
+	// FullIndexMaxFileBytes skips blobs larger than this (default 256 KiB).
+	FullIndexMaxFileBytes int
+
+	// FullIndexChunkRunes splits each file into hybrid chunks of roughly this many runes (default 3500).
+	FullIndexChunkRunes int
+
+	// FullIndexConcurrency bounds parallel GitHub blob downloads (default 8).
+	FullIndexConcurrency int
 }
 
 func (c *IndexerConfig) applyDefaults() {
@@ -43,6 +58,18 @@ func (c *IndexerConfig) applyDefaults() {
 	if c.MaxFilesPerRepo <= 0 {
 		// Slightly higher default improves graph + memory coverage on mid-size repos.
 		c.MaxFilesPerRepo = 32
+	}
+	if c.FullIndexMaxFiles <= 0 {
+		c.FullIndexMaxFiles = 5000
+	}
+	if c.FullIndexMaxFileBytes <= 0 {
+		c.FullIndexMaxFileBytes = 256 * 1024
+	}
+	if c.FullIndexChunkRunes <= 0 {
+		c.FullIndexChunkRunes = 3500
+	}
+	if c.FullIndexConcurrency <= 0 {
+		c.FullIndexConcurrency = 8
 	}
 }
 
@@ -509,4 +536,12 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// FullIndexChunkRunes returns the configured rune window for full-repo source chunks.
+func (idx *Indexer) FullIndexChunkRunes() int {
+	if idx == nil || idx.cfg.FullIndexChunkRunes <= 0 {
+		return 3500
+	}
+	return idx.cfg.FullIndexChunkRunes
 }

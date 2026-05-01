@@ -766,6 +766,11 @@
           label: "Show external library / package nodes in call graph",
           type: "checkbox",
         },
+        { key: "full_index_disable", label: "Disable full-repository RAG index", type: "checkbox" },
+        { key: "full_index_max_files", label: "Full index max files per repo", type: "number", min: 0 },
+        { key: "full_index_max_file_kb", label: "Full index max file size (KB)", type: "number", min: 0 },
+        { key: "full_index_chunk_runes", label: "Full index chunk size (runes)", type: "number", min: 0 },
+        { key: "full_index_concurrency", label: "Full index download concurrency", type: "number", min: 0 },
         { key: "docs_dir", label: "Docs dir", type: "text" },
         { key: "check_interval", label: "Check interval", type: "duration" },
         {
@@ -2166,6 +2171,7 @@
           </p>
           ${fullRepo.index_error ? `<p class="repo-detail-err">Index error: ${escapeHTML(fullRepo.index_error)}</p>` : ""}
           ${fullRepo.scan_error ? `<p class="repo-detail-err">Scan error: ${escapeHTML(fullRepo.scan_error)}</p>` : ""}
+          ${fullRepo.index_tree_truncated ? `<p class="repo-index-tree-note" role="status">GitHub returned a <strong>truncated</strong> directory tree on the last full-repo index. Search and RAG over the tree may be incomplete for very large repositories.</p>` : ""}
           ${artifactLine()}
         </div>
         <div class="repo-detail-actions" id="repo-detail-actions"></div>
@@ -2173,6 +2179,7 @@
           <button class="tab-btn active" data-tab="scan">Scan Results</button>
           <button class="tab-btn" data-tab="memory">Index Memory</button>
           <button class="tab-btn" data-tab="graph">Call graph</button>
+          <button class="tab-btn" data-tab="ask">Ask repo</button>
           <button class="tab-btn" data-tab="users">Users (${userList.length})</button>
         </div>
         <div id="repo-tab-content" class="repo-tab-content"></div>
@@ -2540,6 +2547,61 @@
             });
           }
         })();
+      } else if (name === "ask") {
+        const treeNote = fullRepo.index_tree_truncated
+          ? `<p class="repo-index-tree-note" role="status">This repo’s last index used a <strong>truncated</strong> GitHub tree response — results may miss some files.</p>`
+          : "";
+        tabContent.innerHTML = `
+          <div class="repo-ask-panel">
+            ${treeNote}
+            <p class="muted repo-ask-intro">Search across the <strong>full indexed tree</strong> for this repository (keyword + semantic hybrid). Run <strong>Sync</strong> after enabling repo intel so indexing completes.</p>
+            <form id="repo-ask-form" class="repo-ask-form">
+              <label class="repo-ask-label" for="repo-ask-q">Question or keywords</label>
+              <textarea id="repo-ask-q" class="repo-ask-textarea" rows="3" placeholder="e.g. How is authentication implemented?"></textarea>
+              <div class="repo-ask-actions">
+                <button type="submit" class="primary">Search</button>
+                <span class="muted repo-ask-hint">Results are ranked passages from indexed files and repo memory.</span>
+              </div>
+            </form>
+            <div id="repo-ask-results" class="repo-ask-results"></div>
+          </div>`;
+        const form = tabContent.querySelector("#repo-ask-form");
+        const qEl = tabContent.querySelector("#repo-ask-q");
+        const outEl = tabContent.querySelector("#repo-ask-results");
+        form.addEventListener("submit", async (ev) => {
+          ev.preventDefault();
+          const q = String(qEl.value || "").trim();
+          if (!q) {
+            outEl.innerHTML = `<p class="muted">Enter a query.</p>`;
+            return;
+          }
+          outEl.innerHTML = `<div class="loading">Searching…</div>`;
+          try {
+            const data = await sendJSON(`${API}/repos/${enc}/search`, "POST", { query: q, limit: 18 });
+            const hits = Array.isArray(data.hits) ? data.hits : [];
+            if (!hits.length) {
+              outEl.innerHTML = `<p class="muted">No hits. Try different keywords or confirm sync finished (Settings → embeddings required for semantic ranking).</p>`;
+              return;
+            }
+            const searchTrunc = data.index_tree_truncated
+              ? `<p class="repo-index-tree-note repo-ask-post-note" role="status">GitHub tree was truncated when this repo was indexed — not every path is searchable.</p>`
+              : "";
+            outEl.innerHTML = `${searchTrunc}<div class="repo-ask-hit-list">${hits
+              .map(
+                (h) => `<article class="repo-ask-hit">
+                <header class="repo-ask-hit-head">
+                  <span class="mono-cell">${escapeHTML(h.file_path || h.heading || "—")}</span>
+                  <span class="pill">${escapeHTML(h.kind || "chunk")}</span>
+                  <span class="muted">score ${typeof h.score === "number" ? h.score.toFixed(3) : "—"}</span>
+                </header>
+                <pre class="repo-ask-snippet">${escapeHTML(String(h.content || "").slice(0, 4000))}</pre>
+              </article>`,
+              )
+              .join("")}</div>`;
+          } catch (err) {
+            outEl.innerHTML = `<p class="placeholder">${escapeHTML(err.message || "search failed")}</p>`;
+          }
+        });
       } else if (name === "users") {
         const list = userList;
         tabContent.innerHTML = list.length

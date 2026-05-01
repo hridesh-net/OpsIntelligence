@@ -16,7 +16,7 @@ import (
 // The file is re-written atomically on every mutation.
 type Registry struct {
 	mu   sync.RWMutex
-	path string            // absolute path to repos.yaml
+	path string                // absolute path to repos.yaml
 	data map[string]*RepoEntry // keyed by RepoEntry.ID
 }
 
@@ -223,6 +223,19 @@ func (r *Registry) SetCallGraphFile(id, relPath string) error {
 		return fmt.Errorf("repointel: repo %q not found", id)
 	}
 	e.CallGraphFile = relPath
+	return r.save()
+}
+
+// SetIndexTreeTruncated records whether GitHub's recursive tree response was
+// truncated during the last full-repository index step.
+func (r *Registry) SetIndexTreeTruncated(id string, truncated bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.data[id]
+	if !ok {
+		return fmt.Errorf("repointel: repo %q not found", id)
+	}
+	e.IndexTreeTruncated = truncated
 	return r.save()
 }
 

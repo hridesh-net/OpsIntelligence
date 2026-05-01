@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.50] — 2026-04-30
+
+### Added
+
+- **Full-repository hybrid index** (`internal/repointel/full_index.go`, `manager.go`, `indexer.go`, `hybridstore.go`): After the existing snapshot index, sync walks the GitHub recursive tree (bounded by config), fetches text blobs, chunks them as hybrid `source` kind, and embeds for scoped search. YAML under `repo_intel`: `full_index_disable`, `full_index_max_files`, `full_index_max_file_kb`, `full_index_chunk_runes`, `full_index_concurrency` (`internal/config/config.go`, `cmd/opsintelligence/main.go`).
+- **Repo-scoped search API** (`internal/gateway/repos_api.go`): `POST /api/v1/repos/{id}/search` with JSON `{ "query", "limit" }` returns hybrid FTS + vector hits for that repo. Response may include `index_tree_truncated` when GitHub’s tree was truncated.
+- **Dashboard “Ask repo” tab** (`app.js`, `style.css`): Question/keyword search against the indexed repo; surfaces tree-truncation warnings when applicable.
+- **Semantic RAG mirror** (`internal/repointel/semantic_rag.go`): Full-index file chunks are mirrored into agent semantic memory alongside existing repo intel chunks.
+- **GitHub tree truncation visibility** (`model.go`, `registry.go`, `full_index.go`, `manager.go`, `repos_api.go`, dashboard, `repos_tui.go`): Registry field `index_tree_truncated` persists the last full-index tree `truncated` flag so operators know search/RAG may be incomplete on huge trees.
+
+### Changed
+
+- **Sync pipeline** (`manager.go`, `repos_tui.go`): Progress steps extended to include full-tree index and semantic RAG mirror (8 steps total in the TUI).
+
 ## [0.3.49] — 2026-04-30
 
 ### Added

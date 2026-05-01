@@ -590,7 +590,7 @@ func (m reposTUIModel) effectiveProgress(e repointel.RepoEntry) (repointel.Progr
 			Kind:    repointel.ProgressIndexing,
 			Message: "indexing codebase",
 			Step:    1,
-			Total:   6,
+			Total:   8,
 		}, true
 	case e.ScanStatus == repointel.ScanScanning:
 		return repointel.ProgressEvent{
@@ -598,7 +598,7 @@ func (m reposTUIModel) effectiveProgress(e repointel.RepoEntry) (repointel.Progr
 			Kind:    repointel.ProgressScanning,
 			Message: "scanning for CVEs and bottlenecks",
 			Step:    4,
-			Total:   6,
+			Total:   8,
 		}, true
 	default:
 		return repointel.ProgressEvent{}, false
@@ -642,6 +642,10 @@ func (m reposTUIModel) renderMemoryTab() string {
 	sb.WriteString(title + "\n")
 	sb.WriteString(Muted.Render(fmt.Sprintf("  Indexed %s · SHA %s · %s",
 		fmtTime(entry.IndexedAt), shortSHA(entry.HeadSHA), mem.PrimaryLang)) + "\n")
+	if entry.IndexTreeTruncated {
+		sb.WriteString(lipgloss.NewStyle().Foreground(ColorNeon).Render(
+			"  ! GitHub tree was truncated on last full index — search/RAG may miss paths.") + "\n")
+	}
 	sb.WriteString("\n")
 
 	// Architecture
