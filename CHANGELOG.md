@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.56] — 2026-05-01
+
+### Fixed
+
+- **Onboarding — Tailscale Funnel hostname** (`onboard.go`, `onboard_steps.go`): Introduce `placeholderGatewayHost` so loopback-style gateway hosts are replaced whenever `tailscale status --json` succeeds; require a real hostname when **Funnel** is selected; avoid emitting `https://127.0.0.1` webhook hints. Legacy sequential onboard gains the same hostname field and validation.
+
 ## [0.3.55] — 2026-04-30
 
 ### Added
