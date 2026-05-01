@@ -2273,9 +2273,12 @@ func (r *Runner) HandleChatCommand(ctx context.Context, text string, replyFn cha
 			return true
 		}
 		_ = replyFn(fmt.Sprintf("🚀 Starting autonomous agent in background. Goal: %s", goal))
+		// Fork a child runner so the goroutine has its own per-turn scratch fields
+		// (localIntelScratch, localIntelRoutingTools, turnAuditPolicyHash, etc.).
+		// Shared state (provider, tools, memory) is safe for concurrent use.
+		child := r.WithSession(r.sessionID)
 		go func() {
-			// run in background
-			res, err := r.RunAutonomous(context.Background(), goal)
+			res, err := child.RunAutonomous(context.Background(), goal)
 			if err != nil {
 				_ = replyFn(fmt.Sprintf("❌ Autonomous task failed: %v", err))
 			} else {

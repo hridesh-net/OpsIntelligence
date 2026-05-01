@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.53] — 2026-04-30
+
+### Fixed
+
+- **Background autonomous runs** (`internal/agent/runner.go`): `HandleChatCommand` now forks the runner with `WithSession` before `go RunAutonomous`, so the background goroutine does not share per-turn scratch state (`localIntelScratch`, routing fields, audit hashes) with the interactive runner.
+
 ## [0.3.52] — 2026-04-30
 
 ### Added
