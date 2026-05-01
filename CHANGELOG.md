@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.54] — 2026-04-30
+
+### Added
+
+- **Microsoft Teams on the gateway** (`channels.teams.expose_via: gateway`): Mount the Bot Framework webhook on the OpsIntelligence gateway at `/teams/` (`/teams/api/messages`, `/teams/health`) so a single public HTTPS surface (for example Tailscale Funnel or a reverse proxy in front of the gateway) serves both the dashboard and Teams. Standalone mode remains the default when `expose_via` is empty or `standalone`.
+
+### Changed
+
+- **`internal/channels/msteams`**: Refactor HTTP routing into `buildMux`, `Handler`, and `GatewayHandler` so the same handler can run behind either a dedicated listener or the gateway.
+
+### Fixed
+
+- **Teams + `expose_via: gateway`**: Use one `*msteams.Channel` with `WithReliableOutbound` and register `channelSenders["msteams"]` so tool-based outbound matches inbound. Require `--serve` / `opsintelligence start` when using gateway exposure.
+
 ## [0.3.53] — 2026-04-30
 
 ### Fixed

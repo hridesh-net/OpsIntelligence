@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
+	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -62,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.53" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.54" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -2014,6 +2015,22 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		log.Info("channel active", zap.String("channel", ch.Name()))
 	})
 
+	// Teams expose_via: gateway — one shared *msteams.Channel for gateway mount + tool outbound.
+	var teamsGatewayMount *msteams.Channel
+	if t := cfg.Channels.Teams; t != nil && t.ExposeVia == "gateway" {
+		tc, err := msteams.New(t.AppID, t.AppPassword, t.ListenAddr, t.DMMode, t.AllowFrom)
+		if err != nil {
+			return fmt.Errorf("microsoft teams (expose_via: gateway): %w", err)
+		}
+		teamsRS := chadapter.NewReliableSender("msteams", tc, reliabilityCfg)
+		tc.WithReliableOutbound(teamsRS)
+		channelSenders["msteams"] = reliableToolSender{rs: teamsRS}
+		teamsGatewayMount = tc
+	}
+	if teamsGatewayMount != nil && !serve {
+		return fmt.Errorf("channels.teams.expose_via: gateway requires the HTTP gateway (use `opsintelligence start` or `opsintelligence agent --serve`)")
+	}
+
 	// Heartbeats: periodic synthetic turns on a dedicated session (no chat spam).
 	hb := cfg.Agent.Heartbeat
 	if hb.Enabled && (serve || activeChannels > 0) {
@@ -2066,6 +2083,13 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			return err
 		} else if waReg != nil {
 			srv.WebhookAdapters = waReg
+		}
+
+		// ── Teams gateway mount (expose_via: gateway) ──────────────────────────
+		// Bot Framework webhook URL: <gateway-public-url>/teams/api/messages
+		if teamsGatewayMount != nil {
+			srv.TeamsChannel = teamsGatewayMount
+			srv.TeamsMessageHandler = runner.HandleChannelMessage
 		}
 
 		authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)

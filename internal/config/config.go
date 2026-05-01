@@ -1042,6 +1042,15 @@ type MSTeamsConfig struct {
 	ListenAddr  string   `yaml:"listen_addr"`  // HTTP listen address for Bot Framework webhook (default :3978)
 	DMMode      string   `yaml:"dm_mode"`      // open, allowlist, disabled (empty + non-empty allow_from defaults to allowlist)
 	AllowFrom   []string `yaml:"allow_from"`   // Whitelisted Teams user IDs (from.id / AAD object id)
+
+	// ExposeVia controls how the Teams inbound webhook is exposed:
+	//   ""           / "standalone" — Teams starts its own HTTP server on ListenAddr.
+	//                                 Point your own nginx/Caddy/cloud LB at it.
+	//   "gateway"                   — Teams mounts on the OpsIntelligence gateway at /teams/.
+	//                                 Inherits whatever the gateway uses (Tailscale Funnel,
+	//                                 TLS cert, LAN bind). Bot Framework webhook URL becomes
+	//                                 <gateway-public-url>/teams/api/messages.
+	ExposeVia string `yaml:"expose_via"`
 }
 
 // ─────────────────────────────────────────────
@@ -1348,6 +1357,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Channels.Outbound.DLQPath = filepath.Join(cfg.StateDir, "channels", "dlq.ndjson")
 	}
 	if t := cfg.Channels.Teams; t != nil {
+		t.ExposeVia = strings.ToLower(strings.TrimSpace(t.ExposeVia))
+		if t.ExposeVia == "standalone" {
+			t.ExposeVia = ""
+		}
 		t.DMMode = strings.ToLower(strings.TrimSpace(t.DMMode))
 		allowN := 0
 		for _, id := range t.AllowFrom {

@@ -20,6 +20,9 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/automation"
+	authpkg "github.com/opsintelligence/opsintelligence/internal/auth"
+	"github.com/opsintelligence/opsintelligence/internal/channels"
+	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
@@ -27,7 +30,6 @@ import (
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
-	authpkg "github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
 	"github.com/opsintelligence/opsintelligence/internal/webui/dashboard"
 )
@@ -90,6 +92,13 @@ type Server struct {
 	// Initialised by NewServer; tracks running/completed tasks so peer agents
 	// can poll tasks/get and cancel via tasks/cancel.
 	A2ATasks *A2ATaskStore
+
+	// TeamsChannel, when set, mounts the Microsoft Teams Bot Framework webhook
+	// handler on this gateway at /teams/ (health at /teams/health, webhook at
+	// /teams/api/messages). Set by main when channels.teams.expose_via: gateway.
+	// The gateway's public URL (Tailscale Funnel, TLS, LAN) is inherited automatically.
+	TeamsChannel        *msteams.Channel
+	TeamsMessageHandler channels.MessageHandler
 }
 
 // NewServer initializes a new Gateway server on the specified port.
@@ -306,6 +315,17 @@ func (s *Server) Start() error {
 		})
 	} else {
 		mux.HandleFunc("/api/webhook/", auth(s.withCorrelation(s.handleWebhook)))
+	}
+
+	// ── Teams gateway mount (expose_via: gateway) ────────────────────────────
+	// Mounts the Bot Framework webhook handler at /teams/ so Teams and GitHub
+	// webhooks share the same public HTTPS endpoint (Tailscale Funnel, TLS cert,
+	// or cloud LB). Teams webhook URL: <gateway-url>/teams/api/messages
+	if s.TeamsChannel != nil && s.TeamsMessageHandler != nil {
+		teamsCtx := context.Background()
+		teamsHandler := s.TeamsChannel.GatewayHandler(teamsCtx, s.TeamsMessageHandler)
+		mux.Handle("/teams/", http.StripPrefix("/teams", teamsHandler))
+		log.Printf("channels/msteams: gateway-mounted at /teams/api/messages")
 	}
 
 	if s.Gmail != nil {

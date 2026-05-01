@@ -180,7 +180,11 @@ func buildChannelRegistry(cfg *config.Config, deps *channelStartDeps) *chanregis
 	// ── Microsoft Teams ───────────────────────────────────────────────────────
 	reg.Add(chanregistry.Registration{
 		Entry: chanregistry.Entry{ID: "msteams", DisplayName: "Microsoft Teams"},
-		Configured: func() bool { return cfg.Channels.Teams != nil },
+		// When expose_via: gateway the channel is mounted on the gateway server
+		// directly (see main.go), not registered as a standalone channel here.
+		Configured: func() bool {
+			return cfg.Channels.Teams != nil && cfg.Channels.Teams.ExposeVia != "gateway" // standalone server on listen_addr
+		},
 		Build: func() (channels.Channel, error) {
 			if deps == nil {
 				return nil, nil

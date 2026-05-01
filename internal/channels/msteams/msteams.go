@@ -216,9 +216,40 @@ func (c *Channel) Send(ctx context.Context, msg adapter.OutboundMessage) (*adapt
 	}, nil
 }
 
-// StartInbound implements [adapter.InboundLifecycle]. It starts an HTTP server that receives
-// Bot Framework Activity POSTs from Teams on /api/messages and exposes /health for probes.
+// Handler returns the Teams HTTP handler (health + /api/messages) without starting
+// a server. Use this when expose_via: gateway is configured so the caller can mount
+// the handler on an existing mux (e.g. the OpsIntelligence gateway). The Bot Framework
+// webhook URL must be set to <gateway-public-url>/teams/api/messages.
+func (c *Channel) Handler(ctx context.Context, h adapter.InboundHandler) http.Handler {
+	return c.buildMux(ctx, h)
+}
+
+// StartInbound implements [adapter.InboundLifecycle]. It starts a standalone HTTP server
+// that receives Bot Framework Activity POSTs on /api/messages and exposes /health for probes.
+// Use this (the default) when expose_via is empty or "standalone".
 func (c *Channel) StartInbound(ctx context.Context, h adapter.InboundHandler) error {
+	mux := c.buildMux(ctx, h)
+
+	c.server = &http.Server{
+		Addr:         c.listenAddr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("msteams: server error: %v", err)
+		}
+	}()
+
+	log.Printf("channels/msteams: listening for Bot Framework activities on %s/api/messages", c.listenAddr)
+	return nil
+}
+
+// buildMux constructs the Teams HTTP ServeMux shared by Handler and StartInbound.
+func (c *Channel) buildMux(ctx context.Context, h adapter.InboundHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -345,27 +376,21 @@ func (c *Channel) StartInbound(ctx context.Context, h adapter.InboundHandler) er
 		}(ev)
 	})
 
-	c.server = &http.Server{
-		Addr:         c.listenAddr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	go func() {
-		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("msteams: server error: %v", err)
-		}
-	}()
-
-	log.Printf("channels/msteams: listening for Bot Framework activities on %s/api/messages", c.listenAddr)
-	return nil
+	return mux
 }
 
 // Start implements [channels.Channel].
 func (c *Channel) Start(ctx context.Context, handler channels.MessageHandler) error {
 	return c.StartInbound(ctx, c.legacyInboundHandler(handler))
+}
+
+// GatewayHandler returns the Teams HTTP handler for mounting on the gateway mux
+// without starting a standalone server. It accepts the same channels.MessageHandler
+// as Start so callers can pass runner.HandleChannelMessage directly. Use this when
+// expose_via: gateway is configured; Bot Framework webhook URL becomes
+// <gateway-public-url>/teams/api/messages.
+func (c *Channel) GatewayHandler(ctx context.Context, handler channels.MessageHandler) http.Handler {
+	return c.buildMux(ctx, c.legacyInboundHandler(handler))
 }
 
 func (c *Channel) legacyInboundHandler(handler channels.MessageHandler) adapter.InboundHandler {
