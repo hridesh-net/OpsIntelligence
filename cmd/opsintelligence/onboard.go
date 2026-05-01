@@ -110,6 +110,62 @@ func placeholderGatewayHost(h string) bool {
 	}
 }
 
+// embeddedTsnetDNSLabel must match the Hostname passed to tsnet.Server in
+// internal/gateway/server.go for the embedded gateway listener.
+const embeddedTsnetDNSLabel = "opsintelligence"
+
+// embeddedTailscaleGatewayOrigin returns the origin for the embedded tsnet
+// listener (http://opsintelligence.<magic-dns-suffix> for serve, https:// for
+// funnel). It returns "" if the Tailscale CLI is unavailable or MagicDNS
+// suffix cannot be read.
+func embeddedTailscaleGatewayOrigin(bind, tailscaleMode string) string {
+	b := strings.TrimSpace(bind)
+	if b != "tailscale" && b != "tailnet" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		CurrentTailnet struct {
+			MagicDNSSuffix string `json:"MagicDNSSuffix"`
+		} `json:"CurrentTailnet"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return ""
+	}
+	suffix := strings.TrimSuffix(strings.TrimSpace(st.CurrentTailnet.MagicDNSSuffix), ".")
+	if suffix == "" {
+		return ""
+	}
+	scheme := "http"
+	if strings.EqualFold(strings.TrimSpace(tailscaleMode), "funnel") {
+		scheme = "https"
+	}
+	return scheme + "://" + embeddedTsnetDNSLabel + "." + suffix
+}
+
+// effectiveGatewayOrigin returns the best gateway URL origin for the CLI and
+// status dashboard (health, /dashboard/, API callers). When gateway.bind is
+// embedded Tailscale, this prefers https://opsintelligence.<tailnet-suffix>
+// over gateway.host from YAML (which names this OS machine, not the tsnet
+// listener hostname).
+func effectiveGatewayOrigin(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	bind := strings.TrimSpace(cfg.Gateway.Bind)
+	if bind == "tailscale" || bind == "tailnet" {
+		if o := embeddedTailscaleGatewayOrigin(bind, cfg.Gateway.Tailscale.Mode); o != "" {
+			return o
+		}
+	}
+	return cfg.PublicGatewayBaseURL()
+}
+
 func normalizeGatewayBind(bind string) string {
 	switch strings.TrimSpace(bind) {
 	case "loopback", "127.0.0.1", "":

@@ -367,7 +367,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		PlanoEndpoint: cfg.Plano.Endpoint,
 		MCPEnabled:    cfg.MCP.Server.Enabled,
 		MCPTransport:  mcpTransport,
-		GatewayBase:   cfg.PublicGatewayBaseURL(),
+		GatewayBase:   effectiveGatewayOrigin(cfg),
 		GatewayBind:   gwBind,
 		RunTraceFile:  cfg.Agent.RunTraceFile,
 		RunTraceMode:  cfg.Agent.RunTraceMode,
@@ -400,27 +400,9 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 	}
 }
 
-// resolvePublicGatewayURL returns the best public URL for the gateway.
-// When Tailscale Funnel is configured but gateway.host is unset, it falls back
-// to live-querying `tailscale status --json` for the machine's FQDN.
+// resolvePublicGatewayURL returns the best public URL for the gateway (see effectiveGatewayOrigin).
 func resolvePublicGatewayURL(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	bind := strings.TrimSpace(cfg.Gateway.Bind)
-	isTailscale := bind == "tailscale" || bind == "tailnet"
-	isFunnel := strings.EqualFold(strings.TrimSpace(cfg.Gateway.Tailscale.Mode), "funnel")
-
-	if isTailscale && isFunnel {
-		h := strings.TrimSpace(cfg.Gateway.Host)
-		if h == "" {
-			h = detectTailscaleHostname() // live query
-		}
-		if h != "" {
-			return "https://" + strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
-		}
-	}
-	return cfg.PublicGatewayBaseURL()
+	return effectiveGatewayOrigin(cfg)
 }
 
 func statusCmd(gf *globalFlags) *cobra.Command {
@@ -437,7 +419,7 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 			if err != nil || !CheckPID(pid) {
 				fmt.Println("● OpsIntelligence is NOT running.")
 				fmt.Printf("  Start with: opsintelligence start\n\n")
-				gw := cfg.PublicGatewayBaseURL()
+				gw := effectiveGatewayOrigin(cfg)
 				fmt.Printf("  After start, dashboard: %s/dashboard/\n", gw)
 				fmt.Printf("  Health check: curl -sS %s/health\n", gw)
 				bind := strings.TrimSpace(cfg.Gateway.Bind)
@@ -1688,7 +1670,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		Enterprise:              cfg.Agent.Enterprise,
 		EnablePlanning:          agentPlanningEnabled(cfg),
 		EnableReflection:        agentReflectionEnabled(cfg),
-		GatewayPublicBaseURL:    cfg.PublicGatewayBaseURL(),
+		GatewayPublicBaseURL:    effectiveGatewayOrigin(cfg),
 		ExtensionPromptAppend:   extPrompt,
 		StateDir:                cfg.StateDir,
 		LocalIntel: agent.LocalIntelRunnerConfig{
@@ -1756,7 +1738,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		EnabledSkillNames:       activeSkillNames,
 		RunTracePath:            childRunTrace,
 		ProviderName:            providerNameForCaps,
-		GatewayPublicBaseURL:    cfg.PublicGatewayBaseURL(),
+		GatewayPublicBaseURL:    effectiveGatewayOrigin(cfg),
 		ExtensionPromptAppend:   extPrompt,
 		DefaultToolsProfile:     cfg.Security.Profile,
 		Guardrail:               guardrail,

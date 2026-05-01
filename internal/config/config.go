@@ -1561,12 +1561,13 @@ func DefaultConfigPath() string {
 }
 
 // PublicGatewayBaseURL returns the origin (no trailing slash) used for public-facing
-// links — e.g. the Teams webhook URL and dashboard links printed at startup.
+// links when YAML-derived defaults suffice — http://<host>:<port> for LAN/loopback,
+// or https://<gateway.host> when tailscale bind + funnel + gateway.host is set.
 //
-// When gateway.bind is "tailscale"/"tailnet" with mode "funnel", and gateway.host
-// is set to the Tailscale machine name (e.g. "opsintelligence"), the URL is
-// "https://<host>" (no port — Tailscale Funnel always terminates TLS on 443).
-// Otherwise falls back to http://<host>:<port>.
+// Embedded Tailscale (gateway.bind tailscale/tailnet): callers should resolve the
+// public dashboard URL via tailscale status --json MagicDNSSuffix and hostname
+// "opsintelligence" unless integrating elsewhere — gateway.host names this OS machine,
+// not necessarily the embedded listener DNS label.
 func (c *Config) PublicGatewayBaseURL() string {
 	if c == nil {
 		return ""

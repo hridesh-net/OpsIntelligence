@@ -343,6 +343,7 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.Port)
 	// Accept both "tailnet" (legacy) and "tailscale" (written by the onboarding wizard).
 	if s.Bind == "tailnet" || s.Bind == "tailscale" {
+		// MagicDNS label: sync name with embeddedTsnetDNSLabel in cmd/opsintelligence/onboard.go.
 		tsHostname := "opsintelligence"
 		s.TS = &tsnet.Server{
 			Hostname: tsHostname,

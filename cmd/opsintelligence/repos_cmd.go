@@ -523,7 +523,7 @@ func notifyRepoSyncViaGateway(cfg *config.Config, repoID string) (string, error)
 	if cfg == nil {
 		return "fallback", fmt.Errorf("config not loaded")
 	}
-	base := strings.TrimSuffix(cfg.PublicGatewayBaseURL(), "/")
+	base := strings.TrimSuffix(effectiveGatewayOrigin(cfg), "/")
 	if base == "" {
 		return "fallback", fmt.Errorf("gateway base URL is empty")
 	}

@@ -69,7 +69,7 @@ func runPRReviewsList(gf *globalFlags) error {
 	if err != nil {
 		return err
 	}
-	base := cfg.PublicGatewayBaseURL()
+	base := effectiveGatewayOrigin(cfg)
 	body, err := prReviewsGET(base+"/api/v1/pr-reviews", cfg.Gateway.Token)
 	if err != nil {
 		return fmt.Errorf("pr-reviews list: %w", err)
@@ -142,7 +142,7 @@ func runPRReviewsEvents(gf *globalFlags, taskID string, since int) error {
 	if err != nil {
 		return err
 	}
-	base := cfg.PublicGatewayBaseURL()
+	base := effectiveGatewayOrigin(cfg)
 	url := fmt.Sprintf("%s/api/v1/pr-reviews/%s/events?since=%d", base, taskID, since)
 	body, err := prReviewsGET(url, cfg.Gateway.Token)
 	if err != nil {
@@ -203,7 +203,7 @@ func runPRReviewsCancel(gf *globalFlags, taskID string) error {
 	if err != nil {
 		return err
 	}
-	base := cfg.PublicGatewayBaseURL()
+	base := effectiveGatewayOrigin(cfg)
 	url := fmt.Sprintf("%s/api/v1/pr-reviews/%s/cancel", base, taskID)
 
 	req, err := http.NewRequest(http.MethodPost, url, nil)
