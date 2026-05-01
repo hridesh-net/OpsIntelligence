@@ -1,0 +1,11 @@
+---
+description: Do not add IDE or assistant attribution footers or badges to project artifacts.
+alwaysApply: true
+---
+
+# No tool attribution footers
+
+- **Never** add strings such as `Made with Cursor`, `Made-with: Cursor`, `Made with Claude`, `Made-with: Claude`, or equivalent branding footers to:
+  - README, docs, comments, HTML, generated files, commit messages, PR descriptions, or release notes
+- **Never** add HTML `<meta>` tags, badges, or footer blocks whose sole purpose is to credit Cursor, Claude, or other coding assistants.
+- If the user explicitly asks for such attribution, treat that as an exception only for that request.
