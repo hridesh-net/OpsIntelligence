@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.57] — 2026-05-01
+
+### Fixed
+
+- **Tailscale dashboard URL** (`cmd/opsintelligence/onboard.go`, `main.go`, `repos_cmd.go`, `pr_reviews_cmd.go`): Status and CLI helpers now prefer **`https://opsintelligence.<MagicDNS-suffix>`** for embedded `gateway.bind` tailscale/tailnet, matching the tsnet listener hostname instead of `gateway.host` from YAML (which names the OS machine).
+- **Tailscale CLI resolution** (`onboard.go`): Resolve binary via `OPSINTELLIGENCE_TAILSCALE_BIN`, `TAILSCALE_CLI`, `PATH`, then **`/Applications/Tailscale.app/Contents/MacOS/Tailscale`** on macOS; run bundled CLI with **`TAILSCALE_BE_CLI=1`** so `status --json` works when the GUI install omits PATH.
+
 ## [0.3.56] — 2026-05-01
 
 ### Fixed
