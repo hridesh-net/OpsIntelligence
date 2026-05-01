@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.54" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.55" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -389,7 +389,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		CWD:               cwd,
 		RoutingModel:      cfg.Routing.Default,
 		GatewayHostPort:   fmt.Sprintf("%s:%d", webHost, cfg.Gateway.Port),
-		GatewayPublicBase: strings.TrimSuffix(strings.TrimSpace(cfg.PublicGatewayBaseURL()), "/"),
+		GatewayPublicBase: strings.TrimSuffix(strings.TrimSpace(resolvePublicGatewayURL(cfg)), "/"),
 		Enterprise:        cfg.Agent.Enterprise,
 		Planning:          optionalBoolString(cfg.Agent.Planning),
 		Reflection:        optionalBoolString(cfg.Agent.Reflection),
@@ -398,6 +398,29 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		MCPClientCount:    len(cfg.MCP.Clients),
 		Limits:            limits,
 	}
+}
+
+// resolvePublicGatewayURL returns the best public URL for the gateway.
+// When Tailscale Funnel is configured but gateway.host is unset, it falls back
+// to live-querying `tailscale status --json` for the machine's FQDN.
+func resolvePublicGatewayURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	bind := strings.TrimSpace(cfg.Gateway.Bind)
+	isTailscale := bind == "tailscale" || bind == "tailnet"
+	isFunnel := strings.EqualFold(strings.TrimSpace(cfg.Gateway.Tailscale.Mode), "funnel")
+
+	if isTailscale && isFunnel {
+		h := strings.TrimSpace(cfg.Gateway.Host)
+		if h == "" {
+			h = detectTailscaleHostname() // live query
+		}
+		if h != "" {
+			return "https://" + strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+		}
+	}
+	return cfg.PublicGatewayBaseURL()
 }
 
 func statusCmd(gf *globalFlags) *cobra.Command {

@@ -23,6 +23,7 @@ type OnboardSummary struct {
 	GatewayHost       string
 	GatewayPort       int
 	GatewayMode       string
+	TailscalePublicURL string // non-empty when Tailscale Funnel is active
 	LocalIntelEnabled bool
 	LocalIntelGGUF    string
 	MemPalaceEnabled  bool
@@ -234,11 +235,15 @@ func (m *OnboardSummaryModel) renderOverview(query string) string {
 	if len(s.Skills) > 0 {
 		skills = strings.Join(s.Skills, ", ")
 	}
+	gatewayVal := fmt.Sprintf("%s:%d (%s)", s.GatewayHost, s.GatewayPort, nz(s.GatewayMode, "loopback"))
+	if s.TailscalePublicURL != "" {
+		gatewayVal = s.TailscalePublicURL + " (Tailscale Funnel)"
+	}
 	kv := []struct{ k, v string }{
 		{"primary_provider", nz(s.PrimaryProvider, "—")},
 		{"primary_model", nz(s.PrimaryModel, "—")},
 		{"embed_provider", nz(s.EmbedProvider, "—")},
-		{"gateway", fmt.Sprintf("%s:%d (%s)", s.GatewayHost, s.GatewayPort, nz(s.GatewayMode, "loopback"))},
+		{"gateway", gatewayVal},
 		{"channels", channels},
 		{"skills", skills},
 		{"mempalace", boolStr(s.MemPalaceEnabled)},

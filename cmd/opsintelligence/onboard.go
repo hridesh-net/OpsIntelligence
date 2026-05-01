@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -74,6 +75,28 @@ func ensureSelectValue(opts []huh.Option[string], current, prefix string) []huh.
 		label = label[:69] + "…"
 	}
 	return append([]huh.Option[string]{huh.NewOption(prefix+label, current)}, opts...)
+}
+
+// detectTailscaleHostname queries `tailscale status --json` and returns the
+// machine's Tailscale FQDN (e.g. "mymachine.tail1234.ts.net"). Returns "" if
+// Tailscale is not installed, not running, or the query fails.
+func detectTailscaleHostname() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		Self struct {
+			DNSName string `json:"DNSName"`
+		} `json:"Self"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return ""
+	}
+	// DNSName has a trailing dot — trim it.
+	return strings.TrimSuffix(strings.TrimSpace(st.Self.DNSName), ".")
 }
 
 func normalizeGatewayBind(bind string) string {
@@ -466,17 +489,24 @@ func runOnboarding(configPath string) (bool, error) {
 
 	tui.PrintOnboardSaved(configPath)
 
+	// Build the Tailscale public URL for the summary when Funnel is configured.
+	var tailscalePublicURL string
+	if normalizeGatewayBind(state.gwMode) == "tailscale" && strings.EqualFold(state.tsMode, "funnel") && state.gwHost != "" {
+		tailscalePublicURL = "https://" + strings.TrimPrefix(strings.TrimPrefix(state.gwHost, "https://"), "http://")
+	}
+
 	// Show summary in a separate TUI program (after alt-screen exits).
 	summary := tui.OnboardSummary{
-		PrimaryProvider:   state.primary.provider,
-		PrimaryModel:      state.primary.model,
-		SecondaryProv:     state.secondary.provider,
-		EmbedProvider:     state.embed.provider,
-		EmbedModel:        state.embed.model,
-		GatewayHost:       state.gwHost,
-		GatewayPort:       state.gwPort,
-		GatewayMode:       normalizeGatewayBind(state.gwMode),
-		LocalIntelEnabled: state.localIntelEnabled,
+		PrimaryProvider:    state.primary.provider,
+		PrimaryModel:       state.primary.model,
+		SecondaryProv:      state.secondary.provider,
+		EmbedProvider:      state.embed.provider,
+		EmbedModel:         state.embed.model,
+		GatewayHost:        state.gwHost,
+		GatewayPort:        state.gwPort,
+		GatewayMode:        normalizeGatewayBind(state.gwMode),
+		TailscalePublicURL: tailscalePublicURL,
+		LocalIntelEnabled:  state.localIntelEnabled,
 		LocalIntelGGUF:    state.localIntelGGUF,
 		MemPalaceEnabled:  state.memPalaceEnabled,
 		PlanoEnabled:      state.usePlano,
@@ -495,6 +525,26 @@ func runOnboarding(configPath string) (bool, error) {
 	fmt.Println()
 	_ = tui.RunOnboardSummary(summary)
 	fmt.Println()
+
+	// When Tailscale Funnel is configured, print the webhook URLs the user needs
+	// to register in Azure / GitHub so they can copy them directly.
+	if tailscalePublicURL != "" {
+		fmt.Println("─────────────────────────────────────────────")
+		fmt.Println("  Webhook URLs (register these in your portals)")
+		fmt.Println()
+		if len(state.selectedChannels) > 0 {
+			for _, ch := range state.selectedChannels {
+				if ch == "msteams" {
+					fmt.Printf("  Microsoft Teams  →  %s/teams/api/messages\n", tailscalePublicURL)
+				}
+			}
+		}
+		fmt.Printf("  GitHub webhook   →  %s/api/webhook/github\n", tailscalePublicURL)
+		fmt.Println()
+		fmt.Println("  Set these in Azure Bot → Configuration and GitHub → Settings → Webhooks.")
+		fmt.Println("─────────────────────────────────────────────")
+		fmt.Println()
+	}
 
 	return true, nil
 }

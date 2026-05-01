@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.55] — 2026-04-30
+
+### Added
+
+- **Onboarding + Tailscale Funnel URLs** (`onboard.go`, `onboard_steps.go`, `onboard_summary.go`): Auto-detect Tailscale FQDN via `tailscale status --json`, optional hostname field on the Tailscale step, summary line for the public HTTPS origin, and post-onboard copy-paste lines for **Teams** (`…/teams/api/messages`) and **GitHub** (`…/api/webhook/github`) when Funnel is selected.
+- **Gateway startup hints** (`internal/gateway/server.go`): After tsnet connects, log the resolved public URL and funnel webhook paths for Teams and GitHub.
+
+### Changed
+
+- **`PublicGatewayBaseURL`** (`internal/config/config.go`): For `gateway.bind` tailscale/tailnet with `tailscale.mode: funnel` and a non-empty `gateway.host`, return `https://…` without a port (Funnel terminates TLS on 443).
+- **`resolvePublicGatewayURL`** (`cmd/opsintelligence/main.go`): When Funnel is active and `gateway.host` is empty, fall back to `tailscale status --json` so the dashboard shows a usable public base URL.
+- **Gateway bind** (`internal/gateway/server.go`): Treat `bind: tailscale` the same as `tailnet` for embedded Tailscale (matches YAML written by onboarding).
+
 ## [0.3.54] — 2026-04-30
 
 ### Added

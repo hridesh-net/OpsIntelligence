@@ -1560,12 +1560,32 @@ func DefaultConfigPath() string {
 	return filepath.Join(home, ".opsintelligence", "opsintelligence.yaml")
 }
 
-// PublicGatewayBaseURL returns the origin (no trailing slash) for links the agent can give users
-// to open local HTML dashboards served by the gateway under /workspace/.
+// PublicGatewayBaseURL returns the origin (no trailing slash) used for public-facing
+// links — e.g. the Teams webhook URL and dashboard links printed at startup.
+//
+// When gateway.bind is "tailscale"/"tailnet" with mode "funnel", and gateway.host
+// is set to the Tailscale machine name (e.g. "opsintelligence"), the URL is
+// "https://<host>" (no port — Tailscale Funnel always terminates TLS on 443).
+// Otherwise falls back to http://<host>:<port>.
 func (c *Config) PublicGatewayBaseURL() string {
 	if c == nil {
 		return ""
 	}
+	bind := strings.TrimSpace(c.Gateway.Bind)
+	isTailscale := bind == "tailscale" || bind == "tailnet"
+	isFunnel := strings.EqualFold(strings.TrimSpace(c.Gateway.Tailscale.Mode), "funnel")
+
+	if isTailscale && isFunnel && strings.TrimSpace(c.Gateway.Host) != "" {
+		// gateway.host holds the Tailscale machine name or full *.ts.net hostname.
+		// Funnel always uses port 443 with TLS.
+		h := strings.TrimSpace(c.Gateway.Host)
+		if !strings.Contains(h, ".") {
+			// bare hostname — caller should set the full *.ts.net name, but be safe
+			return "https://" + h
+		}
+		return "https://" + h
+	}
+
 	h := c.Gateway.Host
 	if h == "" {
 		h = "127.0.0.1"

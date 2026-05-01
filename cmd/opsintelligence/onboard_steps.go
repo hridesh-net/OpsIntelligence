@@ -441,11 +441,16 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 			return nil
 		},
 	))
-	// Tailscale mode form (conditional)
+	// Tailscale mode + hostname form (conditional on Tailscale bind being selected)
 	steps = append(steps, tui.OnboardConditionalFormStep(
 		"🌐", "Gateway — Tailscale", "",
 		func() bool { return s.gwMode == "tailscale" },
 		func() *huh.Form {
+			// Auto-detect the machine's Tailscale FQDN so the user can confirm it.
+			detectedHost := detectTailscaleHostname()
+			if detectedHost != "" && (s.gwHost == "" || s.gwHost == "127.0.0.1") {
+				s.gwHost = detectedHost
+			}
 			return huh.NewForm(huh.NewGroup(
 				huh.NewSelect[string]().
 					Title("Tailscale Mode").
@@ -455,6 +460,10 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 						huh.NewOption("Funnel (Public Internet via Tailscale)", "funnel"),
 					).
 					Value(&s.tsMode),
+				huh.NewInput().
+					Title("Tailscale Hostname").
+					Description("Your machine's Tailscale FQDN (e.g. opsintelligence.tail1234.ts.net).\nAuto-detected above — confirm or override.").
+					Value(&s.gwHost),
 			))
 		},
 	))

@@ -341,9 +341,11 @@ func (s *Server) Start() error {
 	}
 
 	addr := fmt.Sprintf(":%d", s.Port)
-	if s.Bind == "tailnet" {
+	// Accept both "tailnet" (legacy) and "tailscale" (written by the onboarding wizard).
+	if s.Bind == "tailnet" || s.Bind == "tailscale" {
+		tsHostname := "opsintelligence"
 		s.TS = &tsnet.Server{
-			Hostname: "opsintelligence",
+			Hostname: tsHostname,
 		}
 
 		var ln net.Listener
@@ -358,6 +360,29 @@ func (s *Server) Start() error {
 		if err != nil {
 			return fmt.Errorf("tailscale listen error: %w", err)
 		}
+
+		// Resolve and log the actual public URL after the tailnet connection is up.
+		go func() {
+			lc, err := s.TS.LocalClient()
+			if err != nil {
+				return
+			}
+			st, err := lc.Status(context.Background())
+			if err != nil || st.CurrentTailnet == nil {
+				return
+			}
+			suffix := st.CurrentTailnet.MagicDNSSuffix // e.g. "tail1234.ts.net"
+			scheme := "http"
+			if s.Tailscale.Mode == "funnel" {
+				scheme = "https"
+			}
+			publicURL := fmt.Sprintf("%s://%s.%s", scheme, tsHostname, suffix)
+			log.Printf("OpsIntelligence gateway public URL (Tailscale %s): %s", s.Tailscale.Mode, publicURL)
+			if s.Tailscale.Mode == "funnel" {
+				log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
+				log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+			}
+		}()
 
 		s.HTTPServer = &http.Server{Handler: mux}
 		log.Printf("OpsIntelligence gateway + web UI listening via Tailscale (%s) on %s", s.Tailscale.Mode, addr)
