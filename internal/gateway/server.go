@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,8 +57,12 @@ type Server struct {
 		Mode        string
 		ResetOnExit bool
 	}
-	TS              *tsnet.Server
-	hostFunnelPort  int // non-zero when we started host `tailscale funnel`
+	TS *tsnet.Server
+	// hostFunnel* is set when gateway.tailscale.mode=funnel with loopback/LAN bind
+	// and we spawn `tailscale funnel <port>` (long-running child).
+	hostFunnelMu    sync.Mutex
+	hostFunnelCmd  *exec.Cmd
+	hostFunnelPort int
 	Config *config.Config
 	Gmail  *automation.GmailWatcher
 	Voice  *voice.Daemon
@@ -431,8 +436,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.TS != nil {
 		s.TS.Close()
 	}
-	if s.hostFunnelPort > 0 && s.Tailscale.ResetOnExit {
-		s.stopHostFunnel(s.hostFunnelPort)
+	s.hostFunnelMu.Lock()
+	if s.hostFunnelCmd != nil && s.hostFunnelCmd.Process != nil {
+		_ = s.hostFunnelCmd.Process.Kill()
+		s.hostFunnelCmd = nil
+	}
+	port := s.hostFunnelPort
+	s.hostFunnelPort = 0
+	s.hostFunnelMu.Unlock()
+	if port > 0 && s.Tailscale.ResetOnExit {
+		s.stopHostFunnel(port)
 	}
 	if s.HTTPServer != nil {
 		err := s.HTTPServer.Shutdown(ctx)
@@ -459,19 +472,34 @@ func (s *Server) startHostFunnel(port int) {
 	}
 
 	portStr := fmt.Sprintf("%d", port)
-	out, err := exec.Command(bin, "funnel", portStr).CombinedOutput()
-	if err != nil {
-		log.Printf("gateway: `tailscale funnel %s` failed: %v — %s", portStr, err, strings.TrimSpace(string(out)))
+	// `tailscale funnel <port>` is a long-running proxy; do not use CombinedOutput
+	// or this goroutine would block forever and never record hostFunnelPort / URLs.
+	cmd := exec.Command(bin, "funnel", portStr)
+	cmd.Env = hostTailscaleEnv(os.Environ(), bin)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		log.Printf("gateway: `tailscale funnel %s` failed to start: %v", portStr, err)
 		return
 	}
+	s.hostFunnelMu.Lock()
+	s.hostFunnelCmd = cmd
 	s.hostFunnelPort = port
-	log.Printf("gateway: Tailscale Funnel active on port %d", port)
+	s.hostFunnelMu.Unlock()
+	log.Printf("gateway: Tailscale Funnel child started on port %s (pid %d)", portStr, cmd.Process.Pid)
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			log.Printf("gateway: tailscale funnel exited: %v", err)
+		}
+	}()
 
 	// Resolve and log the public URL from host Tailscale status.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		stOut, stErr := exec.CommandContext(ctx, bin, "status", "--json").Output()
+		stCmd := exec.CommandContext(ctx, bin, "status", "--json")
+		stCmd.Env = hostTailscaleEnv(os.Environ(), bin)
+		stOut, stErr := stCmd.Output()
 		cancel()
 		if stErr != nil {
 			time.Sleep(2 * time.Second)
@@ -504,9 +532,13 @@ func (s *Server) stopHostFunnel(port int) {
 	// "tailscale funnel --https=<port> off" or "tailscale funnel off" depending on version.
 	// Try the port-specific form first; fall back to blanket off.
 	portStr := fmt.Sprintf("%d", port)
-	if out, err := exec.Command(bin, "funnel", "--https="+portStr, "off").CombinedOutput(); err != nil {
+	off1 := exec.Command(bin, "funnel", "--https="+portStr, "off")
+	off1.Env = hostTailscaleEnv(os.Environ(), bin)
+	if out, err := off1.CombinedOutput(); err != nil {
 		log.Printf("gateway: `tailscale funnel --https=%s off` failed (%v: %s), trying `tailscale funnel off`", portStr, err, strings.TrimSpace(string(out)))
-		if out2, err2 := exec.Command(bin, "funnel", "off").CombinedOutput(); err2 != nil {
+		off2 := exec.Command(bin, "funnel", "off")
+		off2.Env = hostTailscaleEnv(os.Environ(), bin)
+		if out2, err2 := off2.CombinedOutput(); err2 != nil {
 			log.Printf("gateway: `tailscale funnel off` failed: %v — %s", err2, strings.TrimSpace(string(out2)))
 		}
 	}
@@ -532,6 +564,14 @@ func resolveHostTailscaleBin() string {
 		return macAppCLI
 	}
 	return ""
+}
+
+func hostTailscaleEnv(base []string, bin string) []string {
+	env := base
+	if strings.Contains(bin, "Tailscale.app") {
+		env = append(append([]string(nil), env...), "TAILSCALE_BE_CLI=1")
+	}
+	return env
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {

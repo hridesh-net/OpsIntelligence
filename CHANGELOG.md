@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.59] — 2026-05-01
+
+### Fixed
+
+- **Host `tailscale funnel`** (`internal/gateway/server.go`): Start funnel with **`cmd.Start()`** instead of `CombinedOutput()` — the CLI is long-running, so the previous code blocked forever, never recorded `hostFunnelPort`, and never logged the public webhook URLs. Kill the child on gateway shutdown; apply **`TAILSCALE_BE_CLI=1`** for the macOS `.app` CLI when spawning funnel/status/off.
+
+### Changed
+
+- **`install.sh`**: **`OPSINTELLIGENCE_CURL_RETRIES`** (default `3`) controls curl `--retry`; set to **`0`** for a single download attempt. Log a short note when retries are enabled so repeated curl messages are less confusing.
+
 ## [0.3.58] — 2026-05-01
 
 ### Added

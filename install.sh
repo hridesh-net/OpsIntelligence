@@ -18,6 +18,8 @@
 #                        asset is missing / 404s.)
 #   NO_SOURCE_FALLBACK=1 Disable the auto source-build fallback. With this set, a
 #                        missing release binary fails hard the same way it used to.
+#   OPSINTELLIGENCE_CURL_RETRIES  Number of curl retries for release / Go downloads (default: 3).
+#                        Set to 0 for a single attempt (no "retrying" delays on flaky networks).
 #   OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1  When a source build is needed but no system
 #                        'go' is on PATH, do not download the official Go tarball from
 #                        go.dev — fail immediately (airgapped / client locked-down installs).
@@ -135,9 +137,10 @@ check_deps() {
 curl_get() {
   local out="$1"
   local url="$2"
+  local retries="${OPSINTELLIGENCE_CURL_RETRIES:-3}"
   curl -fsSL \
     --connect-timeout 25 \
-    --retry 3 \
+    --retry "$retries" \
     --retry-delay 2 \
     --retry-all-errors \
     -o "$out" "$url"
@@ -251,6 +254,9 @@ install_binary() {
   tmp_bin="$(mktemp "${TMPDIR:-/tmp}/opsintelligence.XXXXXX")"
 
   log "Downloading pre-built binary for ${PLATFORM}..."
+  if [[ "${OPSINTELLIGENCE_CURL_RETRIES:-3}" != "0" ]]; then
+    log "Network note: curl may retry transient errors (set OPSINTELLIGENCE_CURL_RETRIES=0 to try once only)."
+  fi
   mkdir -p "$INSTALL_DIR"
 
   if curl_get "$tmp_bin" "$download_url"; then
