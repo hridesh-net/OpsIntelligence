@@ -99,6 +99,17 @@ func detectTailscaleHostname() string {
 	return strings.TrimSuffix(strings.TrimSpace(st.Self.DNSName), ".")
 }
 
+// placeholderGatewayHost reports values that are fine for loopback/LAN gateway
+// host but must not be used as a Tailscale MagicDNS / Funnel public hostname.
+func placeholderGatewayHost(h string) bool {
+	switch strings.ToLower(strings.TrimSpace(h)) {
+	case "", "127.0.0.1", "localhost", "::1", "0.0.0.0":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeGatewayBind(bind string) string {
 	switch strings.TrimSpace(bind) {
 	case "loopback", "127.0.0.1", "":
@@ -491,8 +502,8 @@ func runOnboarding(configPath string) (bool, error) {
 
 	// Build the Tailscale public URL for the summary when Funnel is configured.
 	var tailscalePublicURL string
-	if normalizeGatewayBind(state.gwMode) == "tailscale" && strings.EqualFold(state.tsMode, "funnel") && state.gwHost != "" {
-		tailscalePublicURL = "https://" + strings.TrimPrefix(strings.TrimPrefix(state.gwHost, "https://"), "http://")
+	if normalizeGatewayBind(state.gwMode) == "tailscale" && strings.EqualFold(state.tsMode, "funnel") && !placeholderGatewayHost(state.gwHost) {
+		tailscalePublicURL = "https://" + strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(state.gwHost), "https://"), "http://")
 	}
 
 	// Show summary in a separate TUI program (after alt-screen exits).
@@ -1454,6 +1465,9 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 	}
 
 	if gwMode == "tailscale" {
+		if h := detectTailscaleHostname(); h != "" && placeholderGatewayHost(gwHost) {
+			gwHost = h
+		}
 		formTS := huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
@@ -1464,6 +1478,16 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 						huh.NewOption("Funnel (Public Internet via Tailscale)", "funnel"),
 					).
 					Value(&tsMode),
+				huh.NewInput().
+					Title("Tailscale Hostname").
+					Description("Your machine's Tailscale FQDN (e.g. myhost.tail1234.ts.net).\nAuto-detected when possible — required for Funnel webhook URLs.").
+					Value(&gwHost).
+					Validate(func(v string) error {
+						if strings.EqualFold(strings.TrimSpace(tsMode), "funnel") && placeholderGatewayHost(v) {
+							return fmt.Errorf("install Tailscale, run `tailscale up`, or enter your *.ts.net hostname (not localhost)")
+						}
+						return nil
+					}),
 			),
 		).WithTheme(theme)
 		_ = formTS.Run()

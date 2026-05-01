@@ -448,7 +448,7 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 		func() *huh.Form {
 			// Auto-detect the machine's Tailscale FQDN so the user can confirm it.
 			detectedHost := detectTailscaleHostname()
-			if detectedHost != "" && (s.gwHost == "" || s.gwHost == "127.0.0.1") {
+			if detectedHost != "" && placeholderGatewayHost(s.gwHost) {
 				s.gwHost = detectedHost
 			}
 			return huh.NewForm(huh.NewGroup(
@@ -462,8 +462,14 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 					Value(&s.tsMode),
 				huh.NewInput().
 					Title("Tailscale Hostname").
-					Description("Your machine's Tailscale FQDN (e.g. opsintelligence.tail1234.ts.net).\nAuto-detected above — confirm or override.").
-					Value(&s.gwHost),
+					Description("Your machine's Tailscale FQDN (e.g. opsintelligence.tail1234.ts.net).\nAuto-detected when possible — required for Funnel public URLs.").
+					Value(&s.gwHost).
+					Validate(func(v string) error {
+						if strings.EqualFold(strings.TrimSpace(s.tsMode), "funnel") && placeholderGatewayHost(v) {
+							return fmt.Errorf("install Tailscale, run `tailscale up`, or enter your *.ts.net hostname (not localhost)")
+						}
+						return nil
+					}),
 			))
 		},
 	))
