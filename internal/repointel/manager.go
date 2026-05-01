@@ -117,21 +117,26 @@ func NewManager(
 		return nil, fmt.Errorf("repointel manager: %w", err)
 	}
 
-	// Open hybrid store when an embedder is available.
+	// Open hybrid store whenever dimensions are known (applyDefaults sets 1536).
+	// FTS keyword search works without an embedder; vec rows are filled only when
+	// Embedder is configured during indexing and for query vectors in SearchRepo.
 	var hs *HybridStore
-	if cfg.Embedder != nil {
-		hsPath := filepath.Join(cfg.MemoryDir, "repointel.db")
-		hs, err = NewHybridStore(hsPath, cfg.EmbeddingDimensions)
-		if err != nil {
-			if log != nil {
-				log.Warn("repointel: hybrid store init failed; search disabled", zap.Error(err))
-			}
-			hs = nil
-		} else if log != nil {
-			log.Info("repointel: hybrid store ready",
-				zap.String("path", hsPath),
-				zap.Int("dims", cfg.EmbeddingDimensions))
+	dims := cfg.EmbeddingDimensions
+	if dims <= 0 {
+		dims = 1536
+	}
+	hsPath := filepath.Join(cfg.MemoryDir, "repointel.db")
+	hs, err = NewHybridStore(hsPath, dims)
+	if err != nil {
+		if log != nil {
+			log.Warn("repointel: hybrid store init failed; repo search disabled", zap.Error(err))
 		}
+		hs = nil
+	} else if log != nil {
+		log.Info("repointel: hybrid store ready",
+			zap.String("path", hsPath),
+			zap.Int("dims", dims),
+			zap.Bool("embedder_configured", cfg.Embedder != nil))
 	}
 
 	return &Manager{
@@ -740,7 +745,7 @@ func (m *Manager) indexFullRepo(ctx context.Context, repoID string, entry RepoEn
 // SearchRepo runs hybrid keyword + vector search restricted to one repository.
 func (m *Manager) SearchRepo(ctx context.Context, repoID, query string, k int) ([]HybridResult, error) {
 	if m.hybrid == nil {
-		return nil, fmt.Errorf("hybrid search is not configured (embeddings required)")
+		return nil, fmt.Errorf("hybrid search store unavailable (init failed or disabled)")
 	}
 	q := strings.TrimSpace(query)
 	if q == "" {

@@ -17,6 +17,11 @@ type PalaceRoute struct {
 
 // MatchesDocument returns true when the route aligns with a document taxonomy.
 func (r PalaceRoute) MatchesDocument(d Document) bool {
+	// Repo Intel chunks are indexed without palace/wing/room; they are global
+	// grounding for codebases and must not be filtered out by heuristic routing.
+	if strings.EqualFold(strings.TrimSpace(d.SourceType), "repo_intel") {
+		return true
+	}
 	if strings.TrimSpace(r.Palace) != "" && !strings.EqualFold(r.Palace, d.Palace) {
 		return false
 	}

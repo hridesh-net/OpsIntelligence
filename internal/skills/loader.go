@@ -11,11 +11,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
 type loader struct {
+	mu     sync.RWMutex
 	skills map[string]*Skill
 }
 
@@ -37,6 +39,12 @@ func (l *loader) LoadAll(ctx context.Context, dir string) error {
 		return err
 	}
 
+	// Load all skills without holding the lock, then batch-insert.
+	type result struct {
+		skill *Skill
+		dir   string
+	}
+	var loaded []result
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -47,8 +55,13 @@ func (l *loader) LoadAll(ctx context.Context, dir string) error {
 			fmt.Fprintf(os.Stderr, "skills: failed to load skill in %s: %v\n", skillDir, err)
 			continue
 		}
-		l.skills[skill.Name] = skill
+		loaded = append(loaded, result{skill: skill, dir: skillDir})
 	}
+	l.mu.Lock()
+	for _, r := range loaded {
+		l.skills[r.skill.Name] = r.skill
+	}
+	l.mu.Unlock()
 	return nil
 }
 
@@ -90,7 +103,9 @@ func (l *loader) loadSkill(skillDir string) (*Skill, error) {
 }
 
 func (l *loader) Get(name string) (*Skill, bool) {
+	l.mu.RLock()
 	s, ok := l.skills[name]
+	l.mu.RUnlock()
 	return s, ok
 }
 
@@ -98,24 +113,32 @@ func (l *loader) Get(name string) (*Skill, bool) {
 // This is used by the MCP adapter to inject external server tools as skill nodes.
 func (l *loader) Register(skill *Skill) {
 	if skill != nil && skill.Name != "" {
+		l.mu.Lock()
 		l.skills[skill.Name] = skill
+		l.mu.Unlock()
 	}
 }
 
 func (l *loader) ReadSkillNode(skillName string, nodeName string) (*Node, bool) {
+	l.mu.RLock()
 	skill, ok := l.skills[skillName]
+	l.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
+	l.mu.RLock()
 	node, ok := skill.Nodes[nodeName]
+	l.mu.RUnlock()
 	return node, ok
 }
 
 func (l *loader) List() []Skill {
-	var out []Skill
+	l.mu.RLock()
+	out := make([]Skill, 0, len(l.skills))
 	for _, s := range l.skills {
 		out = append(out, *s)
 	}
+	l.mu.RUnlock()
 	return out
 }
 
@@ -157,7 +180,9 @@ func (l *loader) BuildContext(activeSkillNames []string) string {
 	var eligible []string
 	var errors []string
 	for _, name := range activeSkillNames {
+		l.mu.RLock()
 		s, ok := l.skills[name]
+		l.mu.RUnlock()
 		if !ok {
 			continue
 		}
@@ -196,6 +221,14 @@ func (l *loader) FindBridges(paths []string) []*Node {
 		return nil
 	}
 
+	l.mu.RLock()
+	// Snapshot the skills map to avoid holding the lock during graph traversal.
+	snapshot := make(map[string]*Skill, len(l.skills))
+	for k, v := range l.skills {
+		snapshot[k] = v
+	}
+	l.mu.RUnlock()
+
 	// 1. Find which skill and node each path belongs to
 	skillToNodes := make(map[string][]string)
 	for _, p := range paths {
@@ -205,7 +238,7 @@ func (l *loader) FindBridges(paths []string) []*Node {
 		}
 
 		found := false
-		for _, s := range l.skills {
+		for _, s := range snapshot {
 			for _, n := range s.Nodes {
 				if n.FilePath == absPath {
 					skillToNodes[s.Name] = append(skillToNodes[s.Name], n.Name)
@@ -225,7 +258,7 @@ func (l *loader) FindBridges(paths []string) []*Node {
 		if len(nodeNames) < 2 {
 			continue
 		}
-		skill := l.skills[skillName]
+		skill := snapshot[skillName]
 		bridgeNames := FindBridges(skill, nodeNames)
 		for _, bn := range bridgeNames {
 			if node, ok := skill.Nodes[bn]; ok {
@@ -239,7 +272,9 @@ func (l *loader) FindBridges(paths []string) []*Node {
 
 func (l *loader) RepairAllEnabled(ctx context.Context, enabledNames []string) error {
 	for _, name := range enabledNames {
+		l.mu.RLock()
 		skill, ok := l.skills[name]
+		l.mu.RUnlock()
 		if !ok {
 			continue
 		}

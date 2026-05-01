@@ -52,6 +52,8 @@ type SubAgentSvc struct {
 	LocalIntel agent.LocalIntelRunnerConfig
 	// MaxToolCallsPerUserTurn is copied from parent agent.autonomy (0 = unlimited).
 	MaxToolCallsPerUserTurn int
+	// EmbedQuery mirrors the master runner's semantic RAG query path (embeddings registry).
+	EmbedQuery func(context.Context, string) ([]float32, error)
 }
 
 // EnsureTaskManager wires a TaskManager that reuses the same sync executor as
@@ -204,6 +206,7 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		EnableReflection:        false,
 		StateDir:                s.Store.StateDir(),
 		LocalIntel:              s.LocalIntel,
+		EmbedQuery:              s.EmbedQuery,
 	}, s.Provider, childReg, s.Mem, s.Log, workspace)
 
 	run = run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)

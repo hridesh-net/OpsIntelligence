@@ -62,7 +62,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.50" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.51" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1642,6 +1642,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	if localIntelCache == "" {
 		localIntelCache = filepath.Join(cfg.StateDir, "localintel")
 	}
+	// Prefer the embeddings registry for RAG query vectors so repo_intel and
+	// semantic memory work when the chat provider cannot embed (e.g. Anthropic).
+	var embedQueryFn func(context.Context, string) ([]float32, error)
+	if _, ok := embedReg.Default(); ok {
+		embedQueryFn = func(c context.Context, text string) ([]float32, error) {
+			return embedReg.EmbedQuery(c, text)
+		}
+	}
 	runner := agent.NewRunner(agent.Config{
 		MaxIterations:           cfg.Agent.MaxIterations,
 		MaxToolCallsPerUserTurn: cfg.Agent.Autonomy.MaxToolCallsPerTurn,
@@ -1678,6 +1686,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			FailOpen:            cfg.Agent.Palace.FailOpen,
 			LogDecisions:        cfg.Agent.Palace.LogDecisions,
 		},
+		EmbedQuery: embedQueryFn,
 	}, p, toolReg, memMgr, log, cfg.StateDir).WithCatalog(catalog).WithHardware(hw)
 
 	// ── Security: Guardrail + Audit Log ────────────────────────────────
@@ -1739,6 +1748,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			SmartRouting:          cfg.Agent.LocalIntel.SmartRouting,
 			SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 		},
+		EmbedQuery: embedQueryFn,
 	}
 	// Async task orchestration: lets the master agent dispatch multiple
 	// sub-agent runs in parallel (e.g. review 3 PRs simultaneously) while
@@ -1822,14 +1832,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				fullMaxBlob = riCfg.FullIndexMaxFileKB * 1024
 			}
 			idxr := repointel.NewIndexer(repointel.IndexerConfig{
-				GitHubToken:            cfg.DevOps.GitHub.Token,
-				MemoryDir:              memDir,
-				MaxFilesPerRepo:        maxFiles,
-				FullIndexDisable:       riCfg.FullIndexDisable,
-				FullIndexMaxFiles:      riCfg.FullIndexMaxFiles,
-				FullIndexMaxFileBytes:  fullMaxBlob,
-				FullIndexChunkRunes:    riCfg.FullIndexChunkRunes,
-				FullIndexConcurrency:   riCfg.FullIndexConcurrency,
+				GitHubToken:           cfg.DevOps.GitHub.Token,
+				MemoryDir:             memDir,
+				MaxFilesPerRepo:       maxFiles,
+				FullIndexDisable:      riCfg.FullIndexDisable,
+				FullIndexMaxFiles:     riCfg.FullIndexMaxFiles,
+				FullIndexMaxFileBytes: fullMaxBlob,
+				FullIndexChunkRunes:   riCfg.FullIndexChunkRunes,
+				FullIndexConcurrency:  riCfg.FullIndexConcurrency,
 			}, riRouter, log)
 			scnr := repointel.NewScanner(riRouter, log)
 

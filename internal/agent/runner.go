@@ -19,13 +19,13 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/opsintelligence/opsintelligence/internal/channels"
+	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/localintel"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
-	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
@@ -124,10 +124,14 @@ type Config struct {
 	// MaxToolCallsPerUserTurn caps tool executions per Run/RunStream (0 = unlimited).
 	MaxToolCallsPerUserTurn int
 	EmbeddingModel          string
-	SessionID               string // The persistent session ID for this runner
-	ChannelID               string // The message channel ID (e.g. "slack")
-	ProviderName            string // Lowercase provider ID for capability detection
-	ToolsProfile            string // "full" or "coding"
+	// EmbedQuery embeds user text for semantic RAG and lessons via the
+	// embeddings registry (e.g. OpenAI embeddings while chat uses Anthropic).
+	// When set, it takes precedence over provider.Embed + EmbeddingModel.
+	EmbedQuery   func(ctx context.Context, text string) ([]float32, error)
+	SessionID    string // The persistent session ID for this runner
+	ChannelID    string // The message channel ID (e.g. "slack")
+	ProviderName string // Lowercase provider ID for capability detection
+	ToolsProfile string // "full" or "coding"
 	// GatewayPublicBaseURL is e.g. http://127.0.0.1:18790 — used to tell users where /workspace/ files are served.
 	GatewayPublicBaseURL string
 	// ExtensionPromptAppend is optional text from opsintelligence.yaml extensions.prompt_files (markdown fragments).
@@ -248,6 +252,20 @@ func (r *Runner) WithSystemPromptAugmentor(fn func(ctx context.Context) string) 
 }
 
 // NewRunner creates a new agent runner.
+// embedForRAG resolves a query vector for semantic memory (lessons + RAG docs).
+func (r *Runner) embedForRAG(ctx context.Context, text string) ([]float32, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("empty text")
+	}
+	if r.cfg.EmbedQuery != nil {
+		return r.cfg.EmbedQuery(ctx, text)
+	}
+	if strings.TrimSpace(r.cfg.EmbeddingModel) != "" {
+		return r.provider.Embed(ctx, r.cfg.EmbeddingModel, text)
+	}
+	return nil, fmt.Errorf("no embedding path configured")
+}
+
 func NewRunner(
 	cfg Config,
 	p provider.Provider,
@@ -761,14 +779,15 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			}
 
 			// Store any lessons learned
-			if strings.Contains(critique, "<lesson_learned>") && r.cfg.EmbeddingModel != "" {
+			if strings.Contains(critique, "<lesson_learned>") {
 				lessonText := extractTag(critique, "lesson_learned")
 				if lessonText != "" {
-					emb, _ := r.provider.Embed(ctx, r.cfg.EmbeddingModel, userMessage)
-					_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
-						ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
-						Success: success, Embedding: emb, CreatedAt: time.Now(),
-					})
+					if emb, err := r.embedForRAG(ctx, userMessage); err == nil && len(emb) > 0 {
+						_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
+							ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
+							Success: success, Embedding: emb, CreatedAt: time.Now(),
+						})
+					}
 				}
 			}
 		}
@@ -1372,9 +1391,9 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 
 	// Corrective Memory (Lessons Learned from past tasks) + RAG grounding context.
 	// Both use the same embedding so we only call Embed once per prompt build.
-	if query != "" && r.cfg.EmbeddingModel != "" {
-		emb, err := r.provider.Embed(ctx, r.cfg.EmbeddingModel, query)
-		if err == nil {
+	if query != "" {
+		emb, err := r.embedForRAG(ctx, query)
+		if err == nil && len(emb) > 0 {
 			// ── 1. Past lessons ──────────────────────────────────────────────────
 			lessons, err := r.memory.Semantic.SearchLessons(ctx, emb, 3)
 			if err == nil && len(lessons) > 0 {
@@ -1807,14 +1826,15 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 			}
 
 			// Store any lessons learned
-			if strings.Contains(critique, "<lesson_learned>") && r.cfg.EmbeddingModel != "" {
+			if strings.Contains(critique, "<lesson_learned>") {
 				lessonText := extractTag(critique, "lesson_learned")
 				if lessonText != "" {
-					emb, _ := r.provider.Embed(ctx, r.cfg.EmbeddingModel, userMessage)
-					_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
-						ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
-						Success: success, Embedding: emb, CreatedAt: time.Now(),
-					})
+					if emb, err := r.embedForRAG(ctx, userMessage); err == nil && len(emb) > 0 {
+						_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
+							ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
+							Success: success, Embedding: emb, CreatedAt: time.Now(),
+						})
+					}
 				}
 			}
 		}

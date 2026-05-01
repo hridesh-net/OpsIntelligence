@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.51] — 2026-04-30
+
+### Fixed
+
+- **Repo Intel hybrid search without embedder** (`internal/repointel/manager.go`): Open `repointel.db` whenever embedding dimensions are known (default 1536). Keyword (FTS) search works without a configured embedder; vectors are optional for ranking and indexing.
+- **Agent + sub-agent semantic RAG** (`internal/agent/runner.go`, `cmd/opsintelligence/main.go`, `internal/tools/subagent.go`): Wire `EmbedQuery` from the embeddings registry so prompt-time RAG and lessons use the same vectors as repo_intel mirroring, even when the **chat** provider cannot embed (e.g. Anthropic).
+- **Palace prompt routing vs. repo_intel** (`internal/memory/palace_router.go`): Documents with `source_type: repo_intel` bypass heuristic palace filters so mirrored codebase chunks are not dropped from grounding context.
+- **Repos TUI Graph tab** (`cmd/opsintelligence/tui/repos_tui.go`): Preserve call-graph list selection across periodic registry refresh (only reset cursor when the selected repo row changes).
+
+### Changed
+
+- **Skills registry concurrency** (`internal/skills/loader.go`): Protect the in-memory skill map with `sync.RWMutex` for safe concurrent reads/registration.
+- **Git hygiene** (`.gitignore`): Ignore local dev binaries `opsintel_dev`, `opsintel_*`; remove accidentally tracked `opsintel_dev` from the repository.
+
 ## [0.3.50] — 2026-04-30
 
 ### Added

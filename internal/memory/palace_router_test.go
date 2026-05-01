@@ -26,6 +26,14 @@ func TestHeuristicPalaceRouter_Route(t *testing.T) {
 	}
 }
 
+func TestPalaceRouteMatchesRepoIntelBypassesTaxonomy(t *testing.T) {
+	route := PalaceRoute{Palace: "workspace", Wing: "doc", Room: "x"}
+	doc := Document{SourceType: "repo_intel", Palace: "", Wing: "", Room: ""}
+	if !route.MatchesDocument(doc) {
+		t.Fatal("repo_intel grounding docs must not be dropped by palace prompt routing")
+	}
+}
+
 func TestMatchesIncludeExclude(t *testing.T) {
 	if !matchesIncludeExclude("memory/day.md", []string{"memory/*.md"}, nil) {
 		t.Fatal("expected include to match memory markdown")

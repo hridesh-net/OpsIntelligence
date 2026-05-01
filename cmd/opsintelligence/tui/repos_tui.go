@@ -101,7 +101,8 @@ type reposTUIModel struct {
 	callGraph *repointel.CallGraph
 
 	// Graph tab state
-	graphSelected int // index into callGraph.Nodes
+	graphSelected int    // index into callGraph.Nodes
+	graphRepoID   string // repo row ID for which graphSelected is valid; avoids resetting on periodic reload
 
 	// Live progress from Manager.Progress channel, keyed by repo ID.
 	progress map[string]repointel.ProgressEvent
@@ -1097,11 +1098,21 @@ func (m *reposTUIModel) loadSelectedContent() {
 	m.memory = nil
 	m.scan = nil
 	m.callGraph = nil
-	m.graphSelected = 0
+
 	if len(m.entries) == 0 || m.selectedRepo >= len(m.entries) {
+		m.graphSelected = 0
+		m.graphRepoID = ""
 		return
 	}
 	e := m.entries[m.selectedRepo]
+	// Only reset graph list cursor when the selected *repo row* changes.
+	// Periodic registry refresh (repoAutoRefreshMsg) re-calls this for the same
+	// repo; resetting graphSelected every time made the Graph tab jump to top.
+	if e.ID != m.graphRepoID {
+		m.graphSelected = 0
+	}
+	m.graphRepoID = e.ID
+
 	if e.MemoryFile != "" && e.IndexStatus == repointel.IndexReady {
 		abs := filepath.Join(m.cfg.MemoryDir, e.MemoryFile)
 		mem, err := repointel.LoadMemory(abs)
@@ -1122,6 +1133,13 @@ func (m *reposTUIModel) loadSelectedContent() {
 		if err == nil {
 			m.callGraph = cg
 		}
+	}
+	if m.callGraph != nil && len(m.callGraph.Nodes) > 0 {
+		if m.graphSelected >= len(m.callGraph.Nodes) {
+			m.graphSelected = len(m.callGraph.Nodes) - 1
+		}
+	} else {
+		m.graphSelected = 0
 	}
 }
 

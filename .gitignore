@@ -10,6 +10,8 @@
 !vendor/github.com/jupiterrider/ffi/assets/libffi/windows_amd64/libffi-8.dll
 bin/
 /opsintelligence
+/opsintel_dev
+opsintel_*
 
 # Test binary, built with `go test -c`
 *.test
