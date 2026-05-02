@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.60] — 2026-05-01
+
+### Fixed
+
+- **`install.sh` downloads hanging indefinitely** (`install.sh`): `curl_get` now sets **`--max-time`** (default **300s** via `OPSINTELLIGENCE_CURL_MAX_TIME`), increases connect timeout to **30s**, and logs the **exact download URL** before fetching. When stderr is a TTY (typical `curl … | bash`), curl uses **`--progress-bar`** so progress is visible instead of a silent stall.
+
 ## [0.3.59] — 2026-05-01
 
 ### Fixed

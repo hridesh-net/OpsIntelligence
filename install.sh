@@ -20,6 +20,8 @@
 #                        missing release binary fails hard the same way it used to.
 #   OPSINTELLIGENCE_CURL_RETRIES  Number of curl retries for release / Go downloads (default: 3).
 #                        Set to 0 for a single attempt (no "retrying" delays on flaky networks).
+#   OPSINTELLIGENCE_CURL_MAX_TIME  Max seconds for each curl download (default: 300). Prevents
+#                        indefinite hangs on stalled GitHub / proxy connections.
 #   OPSINTELLIGENCE_SKIP_GO_BOOTSTRAP=1  When a source build is needed but no system
 #                        'go' is on PATH, do not download the official Go tarball from
 #                        go.dev — fail immediately (airgapped / client locked-down installs).
@@ -138,12 +140,25 @@ curl_get() {
   local out="$1"
   local url="$2"
   local retries="${OPSINTELLIGENCE_CURL_RETRIES:-3}"
-  curl -fsSL \
-    --connect-timeout 25 \
-    --retry "$retries" \
-    --retry-delay 2 \
-    --retry-all-errors \
-    -o "$out" "$url"
+  local max_time="${OPSINTELLIGENCE_CURL_MAX_TIME:-300}"
+  # Without --max-time a stalled TCP connection can hang forever (user sees only "Downloading…").
+  if [[ -t 2 ]]; then
+    curl -fL -S --progress-bar \
+      --connect-timeout 30 \
+      --max-time "$max_time" \
+      --retry "$retries" \
+      --retry-delay 2 \
+      --retry-all-errors \
+      -o "$out" "$url"
+  else
+    curl -fsSL \
+      --connect-timeout 30 \
+      --max-time "$max_time" \
+      --retry "$retries" \
+      --retry-delay 2 \
+      --retry-all-errors \
+      -o "$out" "$url"
+  fi
 }
 
 # Remove temporary Go toolchain downloaded by bootstrap_go_toolchain.
@@ -254,6 +269,8 @@ install_binary() {
   tmp_bin="$(mktemp "${TMPDIR:-/tmp}/opsintelligence.XXXXXX")"
 
   log "Downloading pre-built binary for ${PLATFORM}..."
+  log "Source: $download_url"
+  log "Timeouts: connect 30s, total ${OPSINTELLIGENCE_CURL_MAX_TIME:-300}s per attempt (set OPSINTELLIGENCE_CURL_MAX_TIME to override)."
   if [[ "${OPSINTELLIGENCE_CURL_RETRIES:-3}" != "0" ]]; then
     log "Network note: curl may retry transient errors (set OPSINTELLIGENCE_CURL_RETRIES=0 to try once only)."
   fi
