@@ -17,7 +17,7 @@ func TestLoadForDoctor_runTraceAutoDefault(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("nil cfg")
 	}
-	want := filepath.Join(cfg.StateDir, "logs", "runtrace.ndjson")
+	want := filepath.Join(cfg.StateDir, "logs", "agent", "runtrace.ndjson")
 	if cfg.Agent.RunTraceFile != want {
 		t.Fatalf("RunTraceFile = %q, want %q", cfg.Agent.RunTraceFile, want)
 	}

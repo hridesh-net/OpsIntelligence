@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 )
 
-// PidFile returns the path to the PID file in the given state directory.
+// PidFile returns the path to the PID file for the given state directory.
+// Lives under runtime/ in the structured layout.
 func PidFile(stateDir string) string {
-	return filepath.Join(stateDir, "opsintelligence.pid")
+	return dirs.New(stateDir).PidFile()
 }
 
 // WritePID writes the current process ID to the PID file.

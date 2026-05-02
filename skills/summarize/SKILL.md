@@ -1,87 +1,46 @@
 ---
 name: summarize
-description: Summarize or extract text/transcripts from URLs, podcasts, and local files (great fallback for “transcribe this YouTube/video”).
-homepage: https://summarize.sh
+description: Summarize URLs, articles, PDFs, and YouTube videos using the agent’s built-in LLM — no external CLI required.
 metadata:
   {
-    "opsintelligence":
+    “opsintelligence”:
       {
-        "emoji": "🧾",
-        "requires": { "bins": ["summarize"] },
-        "install":
-          [
-            {
-              "id": "brew",
-              "kind": "brew",
-              "formula": "steipete/tap/summarize",
-              "bins": ["summarize"],
-              "label": "Install summarize (brew)",
-            },
-          ],
+        “emoji”: “🧾”,
       },
   }
 ---
 
 # Summarize
 
-Fast CLI to summarize URLs, local files, and YouTube links.
+Summarize URLs, articles, PDFs, YouTube videos, and any pasted text using the agent’s LLM directly.
+No external CLI dependency — works out of the box.
 
 ## When to use (trigger phrases)
 
 Use this skill immediately when the user asks any of:
 
-- “use summarize.sh”
-- “what’s this link/video about?”
-- “summarize this URL/article”
-- “transcribe this YouTube/video” (best-effort transcript extraction; no `yt-dlp` needed)
+- “summarize this URL / article / page”
+- “what’s this link about?”
+- “give me the key points from this PDF”
+- “transcribe / summarize this YouTube video”
+- “tldr this”
 
-## Quick start
+## How to summarize
 
-```bash
-summarize "https://example.com" --model google/gemini-3-flash-preview
-summarize "/path/to/file.pdf" --model google/gemini-3-flash-preview
-summarize "https://youtu.be/dQw4w9WgXcQ" --youtube auto
-```
+### URL or article
+Fetch the page with the `xurl` tool (or `exec curl -s <url>`), then summarize the returned text.
 
-## YouTube: summary vs transcript
+### YouTube video
+Use `exec yt-dlp --write-auto-sub --sub-format vtt --skip-download -o /tmp/yt %(url)s` to pull captions, read the `.vtt` file, strip timestamps, and produce a summary. If `yt-dlp` is unavailable, fetch the page HTML and extract the `<title>` + description as a best-effort fallback.
 
-Best-effort transcript (URLs only):
+### PDF or local file
+Read the file with the `read_file` tool (or `exec pdftotext`), then summarize the extracted text.
 
-```bash
-summarize "https://youtu.be/dQw4w9WgXcQ" --youtube auto --extract-only
-```
+### Pasted text
+Summarize directly — no tool needed.
 
-If the user asked for a transcript but it’s huge, return a tight summary first, then ask which section/time range to expand.
+## Output format
 
-## Model + keys
-
-Set the API key for your chosen provider:
-
-- OpenAI: `OPENAI_API_KEY`
-- Anthropic: `ANTHROPIC_API_KEY`
-- xAI: `XAI_API_KEY`
-- Google: `GEMINI_API_KEY` (aliases: `GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`)
-
-Default model is `google/gemini-3-flash-preview` if none is set.
-
-## Useful flags
-
-- `--length short|medium|long|xl|xxl|<chars>`
-- `--max-output-tokens <count>`
-- `--extract-only` (URLs only)
-- `--json` (machine readable)
-- `--firecrawl auto|off|always` (fallback extraction)
-- `--youtube auto` (Apify fallback if `APIFY_API_TOKEN` set)
-
-## Config
-
-Optional config file: `~/.summarize/config.json`
-
-```json
-{ "model": "openai/gpt-5.2" }
-```
-
-Optional services:
-
-- `FIRECRAWL_API_KEY` for blocked sites
-- `APIFY_API_TOKEN` for YouTube fallback
+- Default: bullet-point key takeaways + one-sentence TL;DR at the top
+- If the user specifies a length (short / medium / long), match it
+- For transcripts: lead with a tight summary, then offer to expand a specific section

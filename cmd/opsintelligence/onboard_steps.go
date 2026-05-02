@@ -543,11 +543,11 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 					Title("Select messaging channels to enable").
 					Description("Configure credentials for each selected channel next.").
 					Options(
-						huh.NewOption(tgLabel, "telegram"),
-						huh.NewOption(dcLabel, "discord"),
-						huh.NewOption(slLabel, "slack"),
-						huh.NewOption(waLabel, "whatsapp"),
-						huh.NewOption(msLabel, "msteams"),
+						huh.NewOption(tgLabel, "telegram").Selected(containsStr(s.selectedChannels, "telegram")),
+						huh.NewOption(dcLabel, "discord").Selected(containsStr(s.selectedChannels, "discord")),
+						huh.NewOption(slLabel, "slack").Selected(containsStr(s.selectedChannels, "slack")),
+						huh.NewOption(waLabel, "whatsapp").Selected(containsStr(s.selectedChannels, "whatsapp")),
+						huh.NewOption(msLabel, "msteams").Selected(containsStr(s.selectedChannels, "msteams")),
 					).
 					Value(&s.selectedChannels),
 			))

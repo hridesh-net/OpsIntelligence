@@ -4,29 +4,32 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 )
 
-// ManagedBaseDir is the directory under state_dir where OpsIntelligence keeps MemPalace venv and world.
+// ManagedBaseDir returns the MemPalace directory under stateDir.
 func ManagedBaseDir(stateDir string) string {
-	return filepath.Join(stateDir, "mempalace")
+	return dirs.New(stateDir).MemPalace
 }
 
 // ManagedVenvRoot returns the path to the dedicated Python venv for MemPalace.
 func ManagedVenvRoot(stateDir string) string {
-	return filepath.Join(ManagedBaseDir(stateDir), "venv")
+	return dirs.New(stateDir).MemPalaceVenv()
 }
 
-// ManagedWorldDir is the default "world" path passed to `mempalace init` for managed installs.
+// ManagedWorldDir is the default "world" path passed to `mempalace init`.
 func ManagedWorldDir(stateDir string) string {
-	return filepath.Join(ManagedBaseDir(stateDir), "world")
+	return dirs.New(stateDir).MemPalaceWorld()
 }
 
-// WorldInitMarker is written after a successful `mempalace init` for the managed world.
+// WorldInitMarker is written after a successful `mempalace init`.
 func WorldInitMarker(stateDir string) string {
-	return filepath.Join(ManagedBaseDir(stateDir), ".world_initialized")
+	return dirs.New(stateDir).MemPalaceInitMarker()
 }
 
-// VenvInterpreter returns the python executable inside an existing venv layout.
+// VenvInterpreter returns the python executable inside venvRoot.
+// venvRoot is the path returned by ManagedVenvRoot.
 func VenvInterpreter(venvRoot string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(venvRoot, "Scripts", "python.exe")
@@ -38,7 +41,7 @@ func VenvInterpreter(venvRoot string) string {
 	return filepath.Join(venvRoot, "bin", "python")
 }
 
-// VenvMempalaceCLI returns the mempalace console script path inside the venv, if present.
+// VenvMempalaceCLI returns the mempalace console script path inside the venv.
 func VenvMempalaceCLI(venvRoot string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(venvRoot, "Scripts", "mempalace.exe")

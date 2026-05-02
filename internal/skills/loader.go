@@ -280,6 +280,11 @@ func (l *loader) RepairAllEnabled(ctx context.Context, enabledNames []string) er
 		}
 		met, _ := l.CheckRequirements(skill)
 		if !met {
+			if skill.Metadata.OpsIntelligence.Install == nil {
+				// No install instructions defined — skip silently rather than
+				// printing a confusing "repair failed" message.
+				continue
+			}
 			fmt.Printf("🔧 Proactive self-healing: Skill %q is missing dependencies. Attempting repair...\n", name)
 			if err := l.InstallDependency(ctx, skill); err != nil {
 				fmt.Printf("❌ Proactive repair failed for %q: %v\n", name, err)

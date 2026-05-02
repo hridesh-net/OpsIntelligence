@@ -2,7 +2,31 @@
 name: tmux
 description: Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output.
 metadata:
-  { "opsintelligence": { "emoji": "🧵", "os": ["darwin", "linux"], "requires": { "bins": ["tmux"] } } }
+  {
+    "opsintelligence":
+      {
+        "emoji": "🧵",
+        "os": ["darwin", "linux"],
+        "requires": { "bins": ["tmux"] },
+        "install":
+          [
+            {
+              "id": "brew",
+              "kind": "brew",
+              "formula": "tmux",
+              "bins": ["tmux"],
+              "label": "Install tmux (brew)",
+            },
+            {
+              "id": "apt",
+              "kind": "apt",
+              "package": "tmux",
+              "bins": ["tmux"],
+              "label": "Install tmux (apt)",
+            },
+          ],
+      },
+  }
 ---
 
 # tmux Session Control

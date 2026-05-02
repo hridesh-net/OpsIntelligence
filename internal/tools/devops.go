@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"github.com/opsintelligence/opsintelligence/internal/devops/github"
 	"github.com/opsintelligence/opsintelligence/internal/devops/gitlab"
 	"github.com/opsintelligence/opsintelligence/internal/devops/jenkins"
@@ -92,7 +92,7 @@ func NewReviewFn(ctx context.Context, cfg config.DevOpsConfig, prov provider.Pro
 	// Build trace store.
 	traceDir := cfg.GitHub.TraceDir
 	if traceDir == "" && opts.StateDir != "" {
-		traceDir = filepath.Join(opts.StateDir, "pipeline-traces")
+		traceDir = dirs.New(opts.StateDir).LogsPipeline
 	}
 	var store pipeline.TraceStore
 	if traceDir != "" && traceDir != "none" {

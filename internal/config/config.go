@@ -9,9 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
 	"gopkg.in/yaml.v3"
 )
+
+// Dirs returns the canonical filesystem layout for this config's StateDir.
+// All components that need file paths should call this rather than constructing
+// paths from StateDir directly (Dependency Inversion Principle).
+func (c *Config) Dirs() *dirs.Layout {
+	return dirs.New(c.StateDir)
+}
 
 // Config is the root configuration structure for OpsIntelligence.
 type Config struct {
@@ -1159,6 +1167,8 @@ func applyDefaults(cfg *Config) {
 			cfg.StateDir = filepath.Join(home, ".opsintelligence")
 		}
 	}
+	// All path derivations go through the layout so there is one source of truth.
+	layout := dirs.New(cfg.StateDir)
 	if cfg.Gateway.Host == "" {
 		cfg.Gateway.Host = "127.0.0.1"
 	}
@@ -1169,10 +1179,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Memory.WorkingTokenBudget = 100_000
 	}
 	if cfg.Memory.EpisodicDBPath == "" {
-		cfg.Memory.EpisodicDBPath = filepath.Join(cfg.StateDir, "memory", "episodic.db")
+		cfg.Memory.EpisodicDBPath = layout.EpisodicDB()
 	}
 	if cfg.Memory.SemanticDBPath == "" {
-		cfg.Memory.SemanticDBPath = filepath.Join(cfg.StateDir, "memory", "semantic.db")
+		cfg.Memory.SemanticDBPath = layout.SemanticDB()
 	}
 	if cfg.Memory.SemanticBackend == "" {
 		cfg.Memory.SemanticBackend = "sqlite_vec"
@@ -1196,7 +1206,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Memory.Mining.MaxFilesPerRun = 1000
 	}
 	if strings.TrimSpace(cfg.Memory.Mining.StatePath) == "" {
-		cfg.Memory.Mining.StatePath = filepath.Join(cfg.StateDir, "memory", "mining_state.json")
+		cfg.Memory.Mining.StatePath = layout.MiningState()
 	}
 	if strings.TrimSpace(cfg.Memory.MemPalace.MCPClientName) == "" {
 		cfg.Memory.MemPalace.MCPClientName = "mempalace"
@@ -1245,7 +1255,7 @@ func applyDefaults(cfg *Config) {
 					base = filepath.Join(home, strings.TrimPrefix(base, "~"))
 				}
 			}
-			cfg.Datastore.DSN = "file:" + filepath.Join(base, "ops.db") + "?_foreign_keys=on&_busy_timeout=5000"
+			cfg.Datastore.DSN = "file:" + dirs.New(base).OpsDB() + "?_foreign_keys=on&_busy_timeout=5000"
 		}
 	}
 	if strings.TrimSpace(cfg.Datastore.Migrations) == "" {
@@ -1254,10 +1264,10 @@ func applyDefaults(cfg *Config) {
 
 	applyAuthDefaults(cfg)
 	if cfg.Agent.ToolsDir == "" {
-		cfg.Agent.ToolsDir = filepath.Join(cfg.StateDir, "tools")
+		cfg.Agent.ToolsDir = layout.Tools
 	}
 	if cfg.Agent.SkillsDir == "" {
-		cfg.Agent.SkillsDir = filepath.Join(cfg.StateDir, "skills")
+		cfg.Agent.SkillsDir = layout.Skills
 	}
 	applyAgentRunTrace(cfg)
 	if cfg.Agent.RunTraceFile != "" && !filepath.IsAbs(cfg.Agent.RunTraceFile) {
@@ -1291,7 +1301,7 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 	if cfg.Teams.Dir == "" {
-		cfg.Teams.Dir = filepath.Join(cfg.StateDir, "teams")
+		cfg.Teams.Dir = layout.Teams
 	}
 	if cfg.DevOps.GitHub.BaseURL == "" {
 		cfg.DevOps.GitHub.BaseURL = "https://api.github.com"
@@ -1308,7 +1318,7 @@ func applyDefaults(cfg *Config) {
 	resolveDevOpsTokens(&cfg.DevOps)
 	applyTeamPromptFiles(cfg)
 	if strings.TrimSpace(cfg.Agent.LocalIntel.CacheDir) == "" {
-		cfg.Agent.LocalIntel.CacheDir = filepath.Join(cfg.StateDir, "localintel")
+		cfg.Agent.LocalIntel.CacheDir = layout.LocalIntel
 	}
 	if len(cfg.Embeddings.Priority) == 0 {
 		cfg.Embeddings.Priority = []string{"openai", "ollama", "cohere", "voyage", "mistral", "google", "huggingface"}
@@ -1326,7 +1336,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Voice.TTSModel = "voxcpm"
 	}
 	if cfg.Voice.VenvPath == "" {
-		cfg.Voice.VenvPath = filepath.Join(cfg.StateDir, "voice_env")
+		cfg.Voice.VenvPath = filepath.Join(layout.Runtime, "voice_env")
 	}
 
 	if cfg.Security.OwnerOnlyPaths == nil {
@@ -1354,7 +1364,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Channels.Outbound.BreakerCooldownS = 30
 	}
 	if strings.TrimSpace(cfg.Channels.Outbound.DLQPath) == "" {
-		cfg.Channels.Outbound.DLQPath = filepath.Join(cfg.StateDir, "channels", "dlq.ndjson")
+		cfg.Channels.Outbound.DLQPath = layout.DLQ()
 	}
 	if t := cfg.Channels.Teams; t != nil {
 		t.ExposeVia = strings.ToLower(strings.TrimSpace(t.ExposeVia))
@@ -1425,7 +1435,7 @@ func applyAgentRunTrace(cfg *Config) {
 
 	// auto, on, enabled, true, yes — same behavior: default file when unset.
 	if strings.TrimSpace(cfg.Agent.RunTraceFile) == "" {
-		cfg.Agent.RunTraceFile = "logs/runtrace.ndjson"
+		cfg.Agent.RunTraceFile = "logs/agent/runtrace.ndjson"
 	}
 	if e := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE_FILE")); e != "" {
 		cfg.Agent.RunTraceFile = e

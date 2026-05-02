@@ -72,7 +72,14 @@ func (r *Runner) ensureLocalIntelEngine() localintel.Engine {
 		r.localIntelEng = eng
 		r.localIntelOpenErr = err
 		if err != nil {
-			r.log.Warn("local_intel: open", zap.Error(err))
+			// Missing native library is a setup issue, not a runtime fault — log
+			// at Info so it doesn't appear as an error in the TUI status bar.
+			if strings.Contains(err.Error(), "libllama") || strings.Contains(err.Error(), "gollama backend") {
+				r.log.Info("local_intel: native library not installed — local inference disabled",
+					zap.String("hint", "install llama.cpp (brew install llama.cpp) or set local_intel.enabled: false to suppress"))
+			} else {
+				r.log.Warn("local_intel: open", zap.Error(err))
+			}
 			return
 		}
 		if eng == nil || !eng.Available() {

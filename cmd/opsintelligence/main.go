@@ -21,6 +21,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -63,7 +64,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v0.3.60" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v0.3.61" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -441,7 +442,7 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 
 			// Count installed skills
 			skillCount := 0
-			customDir := filepath.Join(cfg.StateDir, "skills", "custom")
+			customDir := cfg.Dirs().SkillsCustom
 			if entries, err := os.ReadDir(customDir); err == nil {
 				for _, e := range entries {
 					if e.IsDir() {
@@ -832,7 +833,7 @@ func toolsCmd(gf *globalFlags) *cobra.Command {
 			w.Flush()
 
 			// ── Section 2: Skill tools ─────────────────────────────────────────
-			customDir := filepath.Join(cfg.StateDir, "skills", "custom")
+			customDir := cfg.Dirs().SkillsCustom
 			skillReg := skills.NewRegistry()
 			_ = skillReg.LoadAll(context.Background(), customDir)
 			allSkills := skillReg.List()
@@ -863,7 +864,7 @@ func toolsCmd(gf *globalFlags) *cobra.Command {
 			// ── Section 3: Auto-generated tools ───────────────────────────────
 			creator, err := autotool.NewCreator(autotool.CreatorConfig{
 				ToolsDir: cfg.Agent.ToolsDir,
-				VenvPath: filepath.Join(cfg.StateDir, "venv"),
+				VenvPath: cfg.Dirs().VEnv,
 				Timeout:  30,
 			}, log)
 			var autoList []autotool.ToolMeta
@@ -1293,6 +1294,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return err
 	}
 
+	// Migrate pre-v0.4 flat state layout to the structured enterprise layout,
+	// then ensure all required directories exist. Idempotent on repeat runs.
+	layout := cfg.Dirs()
+	dirs.Migrate(layout)
+	if err := layout.EnsureAll(); err != nil {
+		log.Warn("state directory setup incomplete", zap.Error(err))
+	}
+
 	shutdownTracing := obstracing.Init(ctx, obstracing.Config{
 		Enabled:     cfg.Tracing.Enabled,
 		Endpoint:    cfg.Tracing.OTLPEndpoint,
@@ -1380,8 +1389,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	log.Info("using model", zap.String("model", modelInfo.ID), zap.String("provider", p.Name()))
 
 	// Extract bundled skills on first run
-	bundledDir := filepath.Join(cfg.StateDir, "skills", "bundled")
-	customDir := filepath.Join(cfg.StateDir, "skills", "custom")
+	bundledDir := cfg.Dirs().SkillsBundled
+	customDir := cfg.Dirs().SkillsCustom
 	if err := extractBundledSkills(bundledDir); err != nil {
 		log.Warn("failed to extract bundled skills", zap.Error(err))
 	}
@@ -1647,7 +1656,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	}
 	localIntelCache := strings.TrimSpace(cfg.Agent.LocalIntel.CacheDir)
 	if localIntelCache == "" {
-		localIntelCache = filepath.Join(cfg.StateDir, "localintel")
+		localIntelCache = cfg.Dirs().LocalIntel
 	}
 	// Prefer the embeddings registry for RAG query vectors so repo_intel and
 	// semantic memory work when the chat provider cannot embed (e.g. Anthropic).
@@ -1712,7 +1721,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 
 	secLogPath := cfg.Security.LogPath
 	if secLogPath == "" {
-		secLogPath = filepath.Join(cfg.StateDir, "security", "audit.ndjson")
+		secLogPath = cfg.Dirs().AuditLog()
 	}
 	auditLog, auditErr := security.NewAuditLog(secLogPath, cfg.Security.PIIMask, log)
 	if auditErr != nil {
@@ -1927,7 +1936,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		cronJobs,
 		runner,
 		log,
-		filepath.Join(cfg.StateDir, "cron_jobs.json"),
+		cfg.Dirs().CronJobs(),
 	)
 	if err := cronDaemon.Start(); err != nil {
 		log.Warn("failed to start cron daemon", zap.Error(err))
@@ -2212,7 +2221,7 @@ func loadSmartPrompts(cfg *config.Config, log *zap.Logger) (*prompts.Library, st
 		Embedded:     embed,
 		EmbeddedRoot: ".",
 		ExtraDirs:    cfg.SmartPrompts.ExtraSourceDirs,
-		Dir:          filepath.Join(stateDir, "prompts"),
+		Dir:          dirs.New(stateDir).Prompts,
 	}
 	lib, err := ld.Load()
 	if err != nil {

@@ -351,7 +351,27 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.Port)
 	// Accept both "tailnet" (legacy) and "tailscale" (written by the onboarding wizard).
 	if s.Bind == "tailnet" || s.Bind == "tailscale" {
-		// MagicDNS label: sync name with embeddedTsnetDNSLabel in cmd/opsintelligence/onboard.go.
+		// Embedded tsnet creates its OWN Tailscale node (hostname "opsintelligence")
+		// separate from the host machine's node. It needs TS_AUTHKEY to authenticate
+		// non-interactively; without it ListenFunnel blocks indefinitely waiting for
+		// browser auth. When TS_AUTHKEY is absent we fall back to the host Tailscale
+		// Funnel path (same as bind:lan + tailscale.mode:funnel) so the user doesn't
+		// need an extra auth key — their existing Tailscale login is used instead.
+		hasAuthKey := strings.TrimSpace(os.Getenv("TS_AUTHKEY")) != ""
+		if !hasAuthKey && s.Tailscale.Mode == "funnel" {
+			log.Printf("gateway: TS_AUTHKEY not set — falling back to host Tailscale Funnel (embedded tsnet needs a separate auth key)")
+			log.Printf("gateway: binding on 0.0.0.0%s, then running `tailscale funnel %d` via host Tailscale", addr, s.Port)
+			fullAddr := fmt.Sprintf("0.0.0.0%s", addr)
+			s.HTTPServer = &http.Server{
+				Addr:    fullAddr,
+				Handler: mux,
+			}
+			go s.startHostFunnel(s.Port)
+			log.Printf("OpsIntelligence gateway + web UI listening on http://%s", fullAddr)
+			return s.HTTPServer.ListenAndServe()
+		}
+
+		// ── Embedded tsnet path (TS_AUTHKEY required for non-interactive auth) ──
 		tsHostname := "opsintelligence"
 		s.TS = &tsnet.Server{
 			Hostname: tsHostname,

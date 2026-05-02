@@ -9,10 +9,10 @@ import (
 
 func TestManagedPaths(t *testing.T) {
 	const sd = "/tmp/ac"
-	if g, w := filepath.Join(sd, "mempalace"), ManagedBaseDir(sd); g != w {
+	if g, w := filepath.Join(sd, "data", "mempalace"), ManagedBaseDir(sd); g != w {
 		t.Fatalf("ManagedBaseDir: got %q want %q", w, g)
 	}
-	if g, w := filepath.Join(sd, "mempalace", "venv"), ManagedVenvRoot(sd); g != w {
+	if g, w := filepath.Join(sd, "data", "mempalace", "venv"), ManagedVenvRoot(sd); g != w {
 		t.Fatalf("ManagedVenvRoot: got %q want %q", w, g)
 	}
 }

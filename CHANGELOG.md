@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.61] — 2026-05-02
+
+### Added
+
+- **Canonical state directory layout** (`internal/dirs`): single `Layout` type for `data/`, `logs/`, `runtime/`, `config/`, skills, workspace, etc. **`dirs.Migrate`** moves existing flat `~/.opsintelligence` trees idempotently; **`runAgent`** runs migration then **`EnsureAll`**. **`Config.Dirs()`** and **`applyDefaults`** derive default paths from the layout.
+
+### Changed
+
+- **Bundled skill docs** (`skills/summarize/SKILL.md`, `skills/tmux/SKILL.md`): copy edits and clearer tmux guidance.
+- **Embedded tsnet + Funnel without `TS_AUTHKEY`** (`internal/gateway/server.go`): when `bind` is tailscale/tailnet and `tailscale.mode` is **funnel** but **`TS_AUTHKEY`** is unset, fall back to **host** `tailscale funnel` on `0.0.0.0` so the gateway does not block on interactive tsnet login.
+
+### Fixed
+
+- **Onboarding channel multi-select** (`onboard_steps.go`): pre-select options that match already-chosen channels when revisiting the step.
+- **Skills repair noise** (`internal/skills/loader.go`): skip skills with no **`opsintelligence.install`** block instead of surfacing a confusing repair failure.
+- **Local intel missing native libs** (`internal/agent/runner_localintel.go`): log missing **libllama** / gollama at **Info** with a setup hint so the TUI status bar does not show a false error.
+
 ## [0.3.60] — 2026-05-01
 
 ### Fixed
