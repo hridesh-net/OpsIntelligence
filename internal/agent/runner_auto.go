@@ -24,7 +24,9 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 			CreatedAt: time.Now(),
 		}
 		r.working.Append(goalMsg)
-		_ = r.memory.Episodic.Save(ctx, goalMsg)
+		if err := r.memory.Episodic.Save(ctx, goalMsg); err != nil {
+			r.log.Warn("episodic save failed", zap.Error(err))
+		}
 	}
 
 	defer func() {
@@ -60,7 +62,9 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 				CreatedAt: time.Now(),
 			}
 			r.working.Append(planMsg)
-			_ = r.memory.Episodic.Save(ctx, planMsg)
+			if err := r.memory.Episodic.Save(ctx, planMsg); err != nil {
+				r.log.Warn("episodic save failed", zap.Error(err))
+			}
 		}
 	}
 
@@ -78,7 +82,9 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 				CreatedAt: time.Now(),
 			}
 			r.working.Append(checkMsg)
-			_ = r.memory.Episodic.Save(ctx, checkMsg)
+			if err := r.memory.Episodic.Save(ctx, checkMsg); err != nil {
+				r.log.Warn("episodic save failed", zap.Error(err))
+			}
 		}
 
 		req := r.buildRequestV3(ctx, goal)
@@ -131,7 +137,9 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 			CreatedAt: time.Now(),
 		}
 		r.working.Append(assistantMsg)
-		_ = r.memory.Episodic.Save(ctx, assistantMsg)
+		if err := r.memory.Episodic.Save(ctx, assistantMsg); err != nil {
+			r.log.Warn("episodic save failed", zap.Error(err))
+		}
 
 		if len(toolCalls) == 0 && resp.FinishReason == provider.FinishReasonStop {
 			// In autonomous mode, we don't exit if no tools are called. We nudge the agent.
@@ -145,7 +153,9 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 				CreatedAt: time.Now(),
 			}
 			r.working.Append(nudgeMsg)
-			_ = r.memory.Episodic.Save(ctx, nudgeMsg)
+			if err := r.memory.Episodic.Save(ctx, nudgeMsg); err != nil {
+				r.log.Warn("episodic save failed", zap.Error(err))
+			}
 			time.Sleep(loopDelay)
 			continue
 		}
@@ -174,13 +184,15 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 				CreatedAt: time.Now(),
 			}
 			r.working.Append(toolResultMsg)
-			_ = r.memory.Episodic.Save(ctx, toolResultMsg)
+			if err := r.memory.Episodic.Save(ctx, toolResultMsg); err != nil {
+				r.log.Warn("episodic save failed", zap.Error(err))
+			}
 		}
 
 		// If finish_task was called, we gracefully exit the autonomous loop
 		if finished {
 			// Compact working memory if over budget.
-			r.working.Compact(r.working.TotalTokens())
+			r.working.Compact(int(float64(r.working.MaxTokens()) * 0.7))
 
 			return &RunResult{
 				SessionID:  r.sessionID,

@@ -551,6 +551,5 @@ func Default(
 		CronTool{PersistencePath: filepath.Join(stateDir, "cron_jobs.json")},
 		MessageTool{Senders: channelSenders},
 		SendMediaTool{},
-		ListHardwareTool{},
 	}
 }

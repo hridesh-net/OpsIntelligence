@@ -12,7 +12,6 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/channels"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
-	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -27,10 +26,9 @@ type Channel struct {
 	sessionID string
 	dmMode    string
 	allowFrom []string
-	voice     *voice.Client
 }
 
-func New(dbPath string, sessionID string, dmMode string, allowFrom []string, logLevel string, voiceClient *voice.Client) (*Channel, error) {
+func New(dbPath string, sessionID string, dmMode string, allowFrom []string, logLevel string) (*Channel, error) {
 	waLevel := "WARN"
 	switch strings.ToLower(logLevel) {
 	case "debug":
@@ -62,7 +60,6 @@ func New(dbPath string, sessionID string, dmMode string, allowFrom []string, log
 		sessionID: sessionID,
 		dmMode:    dmMode,
 		allowFrom: allowFrom,
-		voice:     voiceClient,
 	}, nil
 }
 
@@ -143,25 +140,6 @@ func (c *Channel) extractMultimodal(ctx context.Context, m *waProto.Message) ([]
 				ImageData:     data, // Store in ImageData or a new field if we want to be explicit
 				ImageMimeType: aud.GetMimetype(),
 			})
-
-			// pro-actively transcribe if voice client is available
-			if c.voice != nil {
-				// try to determine format from mimetype
-				format := "ogg"
-				if strings.Contains(aud.GetMimetype(), "mp4") {
-					format = "mp4"
-				}
-				transcription, err := c.voice.STT(data, format)
-				if err == nil && transcription != "" {
-					txt += "\n[Voice Note]: " + transcription
-					parts = append(parts, provider.ContentPart{
-						Type: provider.ContentTypeText,
-						Text: "[Voice Note Transcription]: " + transcription,
-					})
-				} else {
-					log.Printf("WhatsApp: transcription failed or empty: %v", err)
-				}
-			}
 
 			// If we have an audio part but no text, add a fallback to avoid agent errors
 			if txt == "" {
@@ -283,39 +261,6 @@ func (c *Channel) handleMessage(
 			return nil
 		}
 
-		// If the incoming message was audio, try to reply with audio (continuous conversation)
-		isAudio := false
-		for _, p := range parts {
-			if p.Type == provider.ContentTypeAudio {
-				isAudio = true
-				break
-			}
-		}
-
-		if isAudio && c.voice != nil {
-			voiceData, err := c.voice.TTS(chunk, "")
-			if err == nil {
-				resp, err := c.client.Upload(ctx, voiceData, whatsmeow.MediaAudio)
-				if err == nil {
-					_, err = c.client.SendMessage(ctx, chatJID, &waProto.Message{
-						AudioMessage: &waProto.AudioMessage{
-							URL:           proto.String(resp.URL),
-							DirectPath:    proto.String(resp.DirectPath),
-							MediaKey:      resp.MediaKey,
-							Mimetype:      proto.String("audio/ogg; codecs=opus"),
-							FileSHA256:    resp.FileSHA256,
-							FileEncSHA256: resp.FileEncSHA256,
-							FileLength:    proto.Uint64(resp.FileLength),
-							PTT:           proto.Bool(true), // Send as voice note
-						},
-					})
-					return err
-				}
-			}
-			log.Printf("WhatsApp: voice synthesis/upload failed: %v", err)
-		}
-
-		// Fallback to text if not audio or audio failed
 		const maxLen = 4000
 		var err error
 		for len(chunk) > 0 {

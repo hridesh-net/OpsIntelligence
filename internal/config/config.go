@@ -44,9 +44,6 @@ type Config struct {
 	// Routing defines multi-model task routing rules.
 	Routing RoutingConfig `yaml:"routing"`
 
-	// Hardware configures C++ sensing integration.
-	Hardware HardwareConfig `yaml:"hardware"`
-
 	// Agent configures the agent runner behavior.
 	Agent AgentConfig `yaml:"agent"`
 
@@ -77,9 +74,6 @@ type Config struct {
 
 	// Gmail configures Gmail Pub/Sub watcher settings.
 	Gmail GmailConfig `yaml:"gmail"`
-
-	// Voice configures internal STT/TTS and continuous conversation.
-	Voice VoiceConfig `yaml:"voice"`
 
 	// Extensions configures optional hooks available in OpsIntelligence (prompt
 	// fragments only; there is no Node plugin loader). See `opsintelligence extensions list`.
@@ -603,16 +597,6 @@ type GmailConfig struct {
 	PushEndpoint string `yaml:"push_endpoint"` // Public URL for Pub/Sub push (if not using Tailscale)
 }
 
-// VoiceConfig configures internal voice processing (STT/TTS).
-type VoiceConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	ServicePort   int    `yaml:"service_port"`    // default: 11000
-	STTModel      string `yaml:"stt_model"`       // whisper: tiny, base, small, medium, large
-	TTSModel      string `yaml:"tts_model"`       // voxcpm
-	VoiceCloneRef string `yaml:"voice_clone_ref"` // Path to 5s voice clip
-	VenvPath      string `yaml:"venv_path"`       // Path to py venv
-}
-
 // MCPConfig configures the MCP server and external MCP client connections.
 type MCPConfig struct {
 	Server  MCPServerConfig   `yaml:"server"`
@@ -831,37 +815,6 @@ type RoutingConfig struct {
 type RoutingRule struct {
 	Task  string `yaml:"task"`
 	Model string `yaml:"model"`
-}
-
-// HardwareConfig controls C++ sensing integration.
-type HardwareConfig struct {
-	Camera CameraConfig `yaml:"camera"`
-	Audio  AudioConfig  `yaml:"audio"`
-	GPIO   GPIOConfig   `yaml:"gpio"`
-}
-
-// CameraConfig configures the camera sensing process.
-type CameraConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	BinaryPath  string `yaml:"binary_path"`
-	DeviceIndex int    `yaml:"device_index"`
-	Width       int    `yaml:"width"`
-	Height      int    `yaml:"height"`
-	FPS         int    `yaml:"fps"`
-}
-
-// AudioConfig configures the audio sensing process.
-type AudioConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	BinaryPath string `yaml:"binary_path"`
-	SampleRate int    `yaml:"sample_rate"`
-	Channels   int    `yaml:"channels"`
-}
-
-// GPIOConfig configures GPIO control.
-type GPIOConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	BinaryPath string `yaml:"binary_path"`
 }
 
 // SubagentTasksConfig tunes the in-process async sub-agent task manager
@@ -1152,9 +1105,6 @@ func applyProviderEnv(cfg *Config) {
 		cfg.Providers.Ollama = &LocalCreds{BaseURL: "http://localhost:11434"}
 	}
 
-	if os.Getenv("OPSINTELLIGENCE_VOICE_ENABLED") == "1" || os.Getenv("OPSINTELLIGENCE_VOICE_ENABLED") == "true" {
-		cfg.Voice.Enabled = true
-	}
 }
 
 // applyDefaults fills in default values for missing configuration.
@@ -1322,21 +1272,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if len(cfg.Embeddings.Priority) == 0 {
 		cfg.Embeddings.Priority = []string{"openai", "ollama", "cohere", "voyage", "mistral", "google", "huggingface"}
-	}
-
-	// Voice Defaults
-	cfg.Voice.Enabled = true // Enabled by default as an inbuilt feature
-	if cfg.Voice.ServicePort == 0 {
-		cfg.Voice.ServicePort = 11000
-	}
-	if cfg.Voice.STTModel == "" {
-		cfg.Voice.STTModel = "base"
-	}
-	if cfg.Voice.TTSModel == "" {
-		cfg.Voice.TTSModel = "voxcpm"
-	}
-	if cfg.Voice.VenvPath == "" {
-		cfg.Voice.VenvPath = filepath.Join(layout.Runtime, "voice_env")
 	}
 
 	if cfg.Security.OwnerOnlyPaths == nil {

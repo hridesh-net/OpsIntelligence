@@ -301,6 +301,107 @@ func (m *TaskManager) run(t *Task, timeout time.Duration) {
 	m.mu.Unlock()
 }
 
+// SubmitDirect schedules an arbitrary function as a managed task and returns
+// its id immediately. Unlike RunAsync, it does not require an ExecFn — the
+// caller provides the work directly. This is the preferred path for the
+// multi-agent orchestrator to launch specialist runners with custom tool sets.
+func (m *TaskManager) SubmitDirect(ctx context.Context, agentName, taskPrompt string, fn func(context.Context) (string, error)) (string, error) {
+	if taskPrompt == "" {
+		return "", errors.New("subagents.TaskManager: task prompt is required")
+	}
+	timeout := m.DefaultTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+
+	id := uuid.New().String()[:12]
+	t := &Task{
+		ID:         id,
+		SubAgentID: agentName,
+		SubAgentNm: agentName,
+		Task:       taskPrompt,
+		Status:     StatusPending,
+	}
+
+	m.mu.Lock()
+	m.tasks[id] = t
+	m.appendEventLocked(t, ProgressEvent{
+		At:      time.Now(),
+		Kind:    KindLifecycle,
+		Message: fmt.Sprintf("dispatched to specialist %q", agentName),
+	})
+	m.evictLocked()
+	m.mu.Unlock()
+
+	go m.runDirect(t, fn, timeout)
+	return id, nil
+}
+
+func (m *TaskManager) runDirect(t *Task, fn func(context.Context) (string, error), timeout time.Duration) {
+	m.mu.Lock()
+	for m.running >= m.maxConcurrent() {
+		m.cond.Wait()
+	}
+	if t.Status == StatusCancelled {
+		m.mu.Unlock()
+		return
+	}
+	m.running++
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	t.cancel = cancel
+	t.Status = StatusRunning
+	t.StartedAt = time.Now()
+	m.appendEventLocked(t, ProgressEvent{
+		At:      t.StartedAt,
+		Kind:    KindLifecycle,
+		Message: "specialist task started",
+	})
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		m.running--
+		t.CompletedAt = time.Now()
+		t.cancel = nil
+		m.cond.Signal()
+		m.appendEventLocked(t, ProgressEvent{
+			At:      t.CompletedAt,
+			Kind:    KindLifecycle,
+			Message: "specialist task " + string(t.Status),
+		})
+		m.mu.Unlock()
+		cancel()
+	}()
+
+	defer func() {
+		if r := recover(); r != nil {
+			m.mu.Lock()
+			if !t.Terminal() {
+				t.Status = StatusFailed
+				t.Error = fmt.Sprintf("panic in specialist: %v", r)
+			}
+			m.mu.Unlock()
+		}
+	}()
+
+	resp, err := fn(ctx)
+	m.mu.Lock()
+	switch {
+	case ctx.Err() == context.Canceled && t.Status == StatusCancelled:
+		if err != nil {
+			t.Error = err.Error()
+		}
+	case err != nil:
+		t.Status = StatusFailed
+		t.Error = err.Error()
+		t.Result = resp
+	default:
+		t.Status = StatusCompleted
+		t.Result = resp
+	}
+	m.mu.Unlock()
+}
+
 // Get returns a snapshot of the task with id, or false if unknown.
 func (m *TaskManager) Get(id string) (Task, bool) {
 	m.mu.Lock()

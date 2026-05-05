@@ -9,8 +9,8 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
 
-// coreSlugs are always included regardless of query — the essential tools.
-var coreSlugs = []string{
+// defaultCoreSlugs are the built-in always-included tools.
+var defaultCoreSlugs = []string{
 	"bash",
 	"read_file",
 	"write_file",
@@ -30,6 +30,7 @@ var coreSlugs = []string{
 type Catalog struct {
 	toolGraph *graph.ToolGraph
 	all       map[string]provider.ToolDef // name → full definition
+	coreSlugs []string                    // always-included tool slugs
 }
 
 // NewCatalog creates a Catalog from a populated ToolRegistry.
@@ -37,11 +38,23 @@ func NewCatalog(reg *agent.ToolRegistry, g *graph.ToolGraph) *Catalog {
 	c := &Catalog{
 		toolGraph: g,
 		all:       make(map[string]provider.ToolDef),
+		coreSlugs: append([]string(nil), defaultCoreSlugs...),
 	}
 	for _, def := range reg.Definitions() {
 		c.all[def.Name] = def
 	}
 	return c
+}
+
+// RegisterCore adds a tool slug to the always-included set.
+// Call this during startup to extend the core set without editing catalog.go.
+func (c *Catalog) RegisterCore(slug string) {
+	for _, s := range c.coreSlugs {
+		if s == slug {
+			return
+		}
+	}
+	c.coreSlugs = append(c.coreSlugs, slug)
 }
 
 // SelectForRequest returns the tool definitions to send for the current user message.
@@ -54,14 +67,14 @@ func (c *Catalog) SelectForRequest(userMessage string, caps provider.ProviderCap
 
 	// Start with mandatory core set
 	selected := map[string]bool{}
-	for _, s := range coreSlugs {
+	for _, s := range c.coreSlugs {
 		if _, ok := c.all[s]; ok {
 			selected[s] = true
 		}
 	}
 
-	// Add graph-traversed relevant tools (top 6)
-	traversed := c.toolGraph.Traverse(userMessage, 6)
+	// Add graph-traversed relevant tools (top 8: depth-3 BFS gives enough signal)
+	traversed := c.toolGraph.Traverse(userMessage, 8)
 	for _, name := range traversed {
 		if _, ok := c.all[name]; ok {
 			selected[name] = true

@@ -90,10 +90,13 @@ func (p *Provider) ListModels(ctx context.Context) ([]provider.ModelInfo, error)
 }
 
 // Embed proxies embedding requests to the inner provider (or fallback).
+// Implements provider.Embedder so callers can type-assert for optional embedding.
 func (p *Provider) Embed(ctx context.Context, model string, text string) ([]float32, error) {
 	vec, err := p.inner.Embed(ctx, model, text)
 	if err != nil && p.fallback != nil {
-		return p.fallback.Embed(ctx, model, text)
+		if emb, ok := p.fallback.(provider.Embedder); ok {
+			return emb.Embed(ctx, model, text)
+		}
 	}
 	return vec, err
 }

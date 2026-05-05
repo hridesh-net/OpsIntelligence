@@ -57,7 +57,7 @@ var intentKeywords = map[Intent][]string{
 	IntentMemory:        {"remember", "history", "session", "past", "previous", "recall", "earlier", "last time"},
 	IntentSchedule:      {"schedule", "recurring", "daily", "cron", "every", "repeat", "periodic", "automation", "job"},
 	IntentCommunicate:   {"send", "message", "notify", "alert", "slack", "push"},
-	IntentSystem:        {"process", "background", "daemon", "env", "environment", "variable", "pid", "kill", ".env", "subagent", "sub-agent", "delegate", "specialist", "spawn"},
+	IntentSystem:        {"process", "background", "daemon", "env", "environment", "variable", "pid", "kill", ".env", "subagent", "sub-agent", "delegate", "specialist", "spawn", "orchestrat"},
 	IntentPRReview:      {"pr ", "pull request", "review pr", "merge", "code review", "diff", "should we merge", "ship it", "lgtm", "approve", "request changes", "reviewers"},
 	IntentSonar:         {"sonar", "sonarqube", "quality gate", "code smell", "code smells", "coverage drop", "security hotspot", "new-code issue"},
 	IntentCICD:          {"pipeline", "workflow", "ci/cd", "ci failed", "ci broken", "regression", "failing build", "red build", "flaky test", "rerun", "workflow_run", "github actions", "jenkins", "gitlab pipeline"},
@@ -195,13 +195,15 @@ func NewToolGraph() *ToolGraph {
 }
 
 // RecordUsage adds session inertia for a tool that was just called.
-// Neighbours gain a boost on the next traversal.
+// The tool itself gets a mild self-boost (stays in context across turns)
+// and all its direct downstream neighbours get a stronger boost.
 func (g *ToolGraph) RecordUsage(toolName string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.inertia[toolName] += 0.2 // self: keep the tool visible next turn
 	for _, e := range g.edges {
 		if e.from == toolName {
-			g.inertia[e.to] += 0.3
+			g.inertia[e.to] += 0.3 // downstream neighbours: stronger boost
 		}
 	}
 }
@@ -241,8 +243,9 @@ func (g *ToolGraph) Traverse(userMessage string, topN int) []string {
 		scores[seed] = score
 	}
 
-	// BFS depth 2
-	for depth := 0; depth < 2; depth++ {
+	// BFS depth 3: depth 1 = direct companions, depth 2 = domain neighbours,
+	// depth 3 = transitive context (kept at low weight so core tools dominate).
+	for depth := 0; depth < 3; depth++ {
 		next := make(map[string]float64)
 		for from, fromScore := range scores {
 			for _, e := range g.edges {

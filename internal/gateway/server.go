@@ -30,7 +30,6 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
-	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
 	"github.com/opsintelligence/opsintelligence/internal/webui/dashboard"
@@ -65,7 +64,6 @@ type Server struct {
 	hostFunnelPort int
 	Config *config.Config
 	Gmail  *automation.GmailWatcher
-	Voice  *voice.Daemon
 	Logger *zap.Logger
 
 	// PRReview is the optional PR review pool monitor. When set, the gateway
@@ -342,12 +340,6 @@ func (s *Server) Start() error {
 		}
 	}
 
-	if s.Voice != nil {
-		if err := s.Voice.Start(context.Background()); err != nil {
-			log.Printf("Error starting Voice daemon: %v", err)
-		}
-	}
-
 	addr := fmt.Sprintf(":%d", s.Port)
 	// Accept both "tailnet" (legacy) and "tailscale" (written by the onboarding wizard).
 	if s.Bind == "tailnet" || s.Bind == "tailscale" {
@@ -471,9 +463,6 @@ func (s *Server) Stop(ctx context.Context) error {
 		err := s.HTTPServer.Shutdown(ctx)
 		if s.Gmail != nil {
 			s.Gmail.Stop()
-		}
-		if s.Voice != nil {
-			s.Voice.Stop()
 		}
 		return err
 	}

@@ -24,7 +24,6 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/channels/whatsapp"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/tools"
-	"github.com/opsintelligence/opsintelligence/internal/voice"
 )
 
 // channelStartDeps holds runtime dependencies needed when building live channel instances.
@@ -32,7 +31,6 @@ import (
 type channelStartDeps struct {
 	reliabilityCfg chadapter.ReliabilityConfig
 	channelSenders map[string]tools.ChannelSender
-	voiceClient    *voice.Client
 	stateDir       string
 	logLevel       string
 }
@@ -97,7 +95,6 @@ func buildChannelRegistry(cfg *config.Config, deps *channelStartDeps) *chanregis
 				cfg.Channels.Discord.DMMode,
 				cfg.Channels.Discord.AllowFrom,
 				requireMention,
-				deps.voiceClient,
 			)
 			if err != nil {
 				return nil, err
@@ -108,7 +105,7 @@ func buildChannelRegistry(cfg *config.Config, deps *channelStartDeps) *chanregis
 			return dc, nil
 		},
 		DoctorPing: func(ctx context.Context) error {
-			dc, err := discord.New(cfg.Channels.Discord.BotToken, cfg.Channels.Discord.DMMode, cfg.Channels.Discord.AllowFrom, true, nil)
+			dc, err := discord.New(cfg.Channels.Discord.BotToken, cfg.Channels.Discord.DMMode, cfg.Channels.Discord.AllowFrom, true)
 			if err != nil {
 				return fmt.Errorf("Discord: init: %s", formatChannelPingError("channel.discord", "init", err))
 			}
@@ -167,7 +164,6 @@ func buildChannelRegistry(cfg *config.Config, deps *channelStartDeps) *chanregis
 				cfg.Channels.WhatsApp.DMMode,
 				cfg.Channels.WhatsApp.AllowFrom,
 				deps.logLevel,
-				deps.voiceClient,
 			)
 			if err != nil {
 				return nil, err

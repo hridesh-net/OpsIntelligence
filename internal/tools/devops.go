@@ -86,7 +86,10 @@ func NewReviewFn(ctx context.Context, cfg config.DevOpsConfig, prov provider.Pro
 	}
 	router, err := pipeline.NewLLMRouter(routerCfg, opts.Log)
 	if err != nil {
-		return nil // primary provider missing — handled by caller
+		if opts.Log != nil {
+			opts.Log.Warn("PR review pipeline disabled: LLM router build failed", zap.Error(err))
+		}
+		return nil
 	}
 
 	// Build trace store.

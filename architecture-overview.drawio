@@ -1,69 +1,142 @@
-<mxfile host="app.diagrams.net" modified="2026-04-30" agent="cursor" version="22.1.0" type="device">
+<mxfile host="app.diagrams.net" modified="2026-05-04" agent="cursor" version="22.1.0" type="device">
   <diagram id="p00" name="00 — Overview &amp; refs">
-    <mxGraphModel dx="1300" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1240" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1000" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
 
-        <mxCell id="idx" value="&lt;b&gt;This file&lt;/b&gt; — use &lt;b&gt;tabs at the bottom&lt;/b&gt; of draw.io:&lt;br&gt;• &lt;b&gt;00&lt;/b&gt; (here) = hub + refs · &lt;b&gt;01–03&lt;/b&gt; = &lt;i&gt;parallel&lt;/i&gt; ingress flows (no cross-deps)&lt;br&gt;• &lt;b&gt;04–05&lt;/b&gt; = internal detail · &lt;b&gt;Component connectivity&lt;/b&gt; = separate file &lt;i&gt;architecture-connectivity.drawio&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;size=16;align=left;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="40" y="40" width="420" height="110" as="geometry"/>
+        <mxCell id="idx" value="&lt;b&gt;This file&lt;/b&gt; — use &lt;b&gt;tabs&lt;/b&gt; at the bottom of draw.io:&lt;br&gt;• &lt;b&gt;00&lt;/b&gt; hub · &lt;b&gt;01–03&lt;/b&gt; parallel ingress (no cross-deps) · &lt;b&gt;04–05&lt;/b&gt; detail&lt;br&gt;• &lt;b&gt;06&lt;/b&gt; core &lt;i&gt;RunStream&lt;/i&gt; loop (LLM ↔ tools)&lt;br&gt;Topology-only view: &lt;i&gt;architecture-connectivity.drawio&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;size=16;align=left;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="32" width="480" height="100" as="geometry"/>
         </mxCell>
 
-        <mxCell id="r1" value="&lt;b&gt;REF → Tab 01&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;HTTP / dashboard / SSE chat / WS hub&lt;br&gt;Independent of messaging webhooks.&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="180" width="200" height="72" as="geometry"/>
+        <mxCell id="r1" value="&lt;b&gt;REF → Tab 01&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;HTTP · dashboard · &lt;i&gt;POST /api/chat&lt;/i&gt; (SSE) · WebSocket hub&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="220" height="64" as="geometry"/>
         </mxCell>
-        <mxCell id="r2" value="&lt;b&gt;REF → Tab 02&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Slack · Teams · Telegram · …&lt;br&gt;Inbound &lt;i&gt;bypasses&lt;/i&gt; Gateway.&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c2185b;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="270" width="200" height="72" as="geometry"/>
+        <mxCell id="r2" value="&lt;b&gt;REF → Tab 02&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Slack · Teams · Telegram · Discord · WhatsApp · …&lt;br&gt;&lt;i&gt;HandleChannelMessage&lt;/i&gt; — no Gateway in path&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c2185b;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="240" width="220" height="72" as="geometry"/>
         </mxCell>
-        <mxCell id="r3" value="&lt;b&gt;REF → Tab 03&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;GitHub / GitLab typed webhooks&lt;br&gt;503 when router saturated.&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="360" width="200" height="78" as="geometry"/>
+        <mxCell id="r3" value="&lt;b&gt;REF → Tab 03&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;GitHub / GitLab webhooks · &lt;i&gt;webhookadapter.Router&lt;/i&gt;&lt;br&gt;verify · limiter · async runner&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="328" width="220" height="72" as="geometry"/>
         </mxCell>
-        <mxCell id="r4" value="&lt;b&gt;REF → Tab 04&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;ReliableSender · retry · breaker · DLQ&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="980" y="180" width="200" height="62" as="geometry"/>
+        <mxCell id="r6" value="&lt;b&gt;REF → Tab 06&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Per-turn loop: memory · Catalog · provider.Stream · execute tools · repeat&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8eaf6;strokeColor=#3949ab;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="416" width="220" height="64" as="geometry"/>
         </mxCell>
-        <mxCell id="r5" value="&lt;b&gt;REF → Tab 05&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;RepoIntel registry · scans · memory&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="980" y="260" width="200" height="62" as="geometry"/>
+
+        <mxCell id="r4" value="&lt;b&gt;REF → Tab 04&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Reliable outbound · retry · breaker · DLQ&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="160" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="r5" value="&lt;b&gt;REF → Tab 05&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;repointel · registry · scans · repo memory&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;strokeWidth=2;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="232" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="sk" value="&lt;b&gt;Startup context&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;skills · embeddings registry&lt;br&gt;loaded in &lt;i&gt;runAgent&lt;/i&gt; — not every message edge&lt;/font&gt;" style="shape=note;whiteSpace=wrap;html=1;fillColor=#eceff1;strokeColor=#546e7a;size=14;align=left;spacingLeft=10;spacingTop=6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="308" width="200" height="76" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="orch" value="&lt;b&gt;agents.Orchestrator&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;DevOps · Security · RepoIntel · &lt;i&gt;Registry.Best&lt;/i&gt;&lt;br&gt;delegation via &lt;i&gt;subagents.TaskManager&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;strokeWidth=2;align=left;spacingLeft=8;spacingTop=4;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="480" y="88" width="260" height="76" as="geometry"/>
         </mxCell>
 
         <mxCell id="gw" value="&lt;b&gt;Gateway&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/gateway&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ef6c00;strokeWidth=2;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="280" width="140" height="64" as="geometry"/>
+          <mxGeometry x="320" y="218" width="150" height="58" as="geometry"/>
         </mxCell>
-        <mxCell id="run" value="&lt;b&gt;agent.Runner&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;All ingress meets here&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="540" y="260" width="200" height="100" as="geometry"/>
+        <mxCell id="run" value="&lt;b&gt;agent.Runner&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Run · RunStream · RunAutonomous&lt;br&gt;&lt;i&gt;ToolCatalog&lt;/i&gt; optional (&lt;i&gt;WithCatalog&lt;/i&gt;)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=3;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="520" y="200" width="260" height="96" as="geometry"/>
         </mxCell>
-        <mxCell id="tool" value="&lt;b&gt;Tools&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/tools&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="540" y="420" width="200" height="64" as="geometry"/>
+        <mxCell id="prov" value="&lt;b&gt;provider.Registry&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/provider&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="840" y="208" width="170" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="mem" value="&lt;b&gt;Memory&lt;/b&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
-          <mxGeometry x="820" y="220" width="120" height="80" as="geometry"/>
-        </mxCell>
-        <mxCell id="ds" value="&lt;b&gt;Datastore&lt;/b&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
-          <mxGeometry x="820" y="320" width="120" height="80" as="geometry"/>
-        </mxCell>
-        <mxCell id="llm" value="&lt;b&gt;LLM APIs&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="480" y="560" width="120" height="56" as="geometry"/>
-        </mxCell>
-        <mxCell id="dvo" value="&lt;b&gt;DevOps APIs&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="620" y="560" width="120" height="56" as="geometry"/>
+        <mxCell id="llm" value="&lt;b&gt;LLM backends&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Stream / Complete&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="840" y="280" width="170" height="48" as="geometry"/>
         </mxCell>
 
-        <mxCell id="e_gw_run" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#ef6c00;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.35;" edge="1" parent="1" source="gw" target="run">
+        <mxCell id="mem" value="&lt;b&gt;Memory&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;internal/memory&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="188" width="130" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="ds" value="&lt;b&gt;Datastore / workspace&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;internal/datastore · dirs&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="288" width="130" height="76" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tg" value="&lt;b&gt;graph.ToolGraph&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;intent · BFS · session inertia&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=2;align=center;" vertex="1" parent="1">
+          <mxGeometry x="360" y="400" width="160" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="cat" value="&lt;b&gt;tools.Catalog&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;SelectForRequest&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="550" y="400" width="160" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="treg" value="&lt;b&gt;ToolRegistry&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/agent · definitions + Execute&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="740" y="400" width="200" height="56" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="dev" value="&lt;b&gt;devops&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;GitHub · GitLab · Jenkins · Sonar&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="360" y="520" width="130" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="mcp" value="&lt;b&gt;mcp&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;external tools&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="520" width="100" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="fs" value="&lt;b&gt;fs / bash&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;workspace&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="630" y="520" width="100" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub" value="&lt;b&gt;subagent tools&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;internal/subagents&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebee;strokeColor=#c62828;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="750" y="520" width="130" height="48" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_orch_run" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#388e3c;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orch" target="run">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e_run_tool" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#2e7d32;endArrow=block;endFill=1;" edge="1" parent="1" source="run" target="tool">
+        <mxCell id="e_gw_run" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#ef6c00;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.45;" edge="1" parent="1" source="gw" target="run">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e_run_mem" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#f57f17;endArrow=block;endFill=1;exitX=1;exitY=0.25;entryX=0;entryY=0.5;" edge="1" parent="1" source="run" target="mem">
+        <mxCell id="e_run_prov" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=1;exitY=0.35;entryX=0;entryY=0.5;" edge="1" parent="1" source="run" target="prov">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e_run_ds" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#f57f17;endArrow=block;endFill=1;exitX=1;exitY=0.65;entryX=0;entryY=0.5;" edge="1" parent="1" source="run" target="ds">
+        <mxCell id="e_prov_llm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;" edge="1" parent="1" source="prov" target="llm">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e_tool_llm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.35;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool" target="llm">
+        <mxCell id="e_run_mem" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#f57f17;endArrow=block;endFill=1;exitX=1;exitY=0.22;entryX=0;entryY=0.35;" edge="1" parent="1" source="run" target="mem">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="e_tool_dvo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.65;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool" target="dvo">
+        <mxCell id="e_run_ds" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#f57f17;endArrow=block;endFill=1;exitX=1;exitY=0.72;entryX=0;entryY=0.45;" edge="1" parent="1" source="run" target="ds">
           <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_run_cat" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#2e7d32;endArrow=block;endFill=1;exitX=0.42;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="run" target="cat">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_tg_cat" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#1565c0;endArrow=block;endFill=1;" edge="1" parent="1" source="tg" target="cat">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cat_treg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#2e7d32;endArrow=block;endFill=1;" edge="1" parent="1" source="cat" target="treg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_treg_dev" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="treg" target="dev">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="790" y="480"/>
+              <mxPoint x="425" y="480"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_treg_mcp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.42;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="treg" target="mcp">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="824" y="490"/>
+              <mxPoint x="560" y="490"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_treg_fs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.58;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="treg" target="fs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="856" y="500"/>
+              <mxPoint x="680" y="500"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_treg_sub" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;strokeColor=#c62828;endArrow=block;endFill=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="treg" target="sub">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="890" y="510"/>
+              <mxPoint x="815" y="510"/>
+            </Array>
+          </mxGeometry>
         </mxCell>
 
         <mxCell id="d_r1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r1" target="gw">
@@ -72,38 +145,55 @@
         <mxCell id="d_r2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r2" target="run">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="280" y="306"/>
-              <mxPoint x="280" y="240"/>
-              <mxPoint x="520" y="240"/>
-              <mxPoint x="520" y="260"/>
+              <mxPoint x="300" y="276"/>
+              <mxPoint x="300" y="248"/>
+              <mxPoint x="500" y="248"/>
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="d_r3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r3" target="run">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="240" y="399"/>
-              <mxPoint x="240" y="220"/>
-              <mxPoint x="500" y="220"/>
-              <mxPoint x="500" y="260"/>
+              <mxPoint x="300" y="364"/>
+              <mxPoint x="300" y="228"/>
+              <mxPoint x="500" y="228"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="d_r4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r4" target="tool">
+        <mxCell id="d_r6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#3949ab;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r6" target="run">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="920" y="211"/>
-              <mxPoint x="920" y="452"/>
-              <mxPoint x="740" y="452"/>
+              <mxPoint x="300" y="448"/>
+              <mxPoint x="300" y="208"/>
+              <mxPoint x="500" y="208"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_r4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r4" target="treg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1180" y="188"/>
+              <mxPoint x="1180" y="428"/>
+              <mxPoint x="940" y="428"/>
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="d_r5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#999;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="r5" target="mem">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="920" y="291"/>
-              <mxPoint x="920" y="200"/>
-              <mxPoint x="800" y="200"/>
+              <mxPoint x="1180" y="260"/>
+              <mxPoint x="1180" y="170"/>
+              <mxPoint x="1060" y="170"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_sk" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;html=1;strokeColor=#78909c;endArrow=open;endFill=0;strokeWidth=1;" edge="1" parent="1" source="sk" target="run">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1220" y="346"/>
+              <mxPoint x="1220" y="120"/>
+              <mxPoint x="780" y="120"/>
+              <mxPoint x="780" y="200"/>
             </Array>
           </mxGeometry>
         </mxCell>
@@ -112,59 +202,62 @@
   </diagram>
 
   <diagram id="p01" name="01 — Flow: HTTP &amp; dashboard">
-    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0">
+    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="720" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="h" value="&lt;b&gt;Parallel flow A&lt;/b&gt; — does &lt;i&gt;not&lt;/i&gt; share ingress with Slack/Teams or GitHub webhooks.&lt;br&gt;Straight vertical spine = no crossed edges." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="60" y="30" width="720" height="40" as="geometry"/>
+        <mxCell id="h" value="&lt;b&gt;Parallel flow A&lt;/b&gt; — independent of messaging channels and DevOps webhooks.&lt;br&gt;Vertical spine; memory on the side. Full tool loop: &lt;b&gt;tab 06&lt;/b&gt;." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="28" width="760" height="44" as="geometry"/>
         </mxCell>
-        <mxCell id="a1" value="🖥 Browser / API client" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="340" y="100" width="200" height="50" as="geometry"/>
+        <mxCell id="a1" value="Browser / API client" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="340" y="100" width="200" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="a2" value="🌐 Gateway&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;/api/chat SSE · /ws · /dashboard · /api/v1/*&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
-          <mxGeometry x="340" y="190" width="200" height="70" as="geometry"/>
+        <mxCell id="a2" value="Gateway&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/gateway — /api/chat (SSE) · /ws · dashboard · static&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="340" y="180" width="200" height="72" as="geometry"/>
         </mxCell>
-        <mxCell id="a3" value="🤖 Runner" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="340" y="300" width="200" height="56" as="geometry"/>
+        <mxCell id="a3" value="Runner.RunStream&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;session via WithSession&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="340" y="290" width="200" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="a4" value="🔧 Tools" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;" vertex="1" parent="1">
-          <mxGeometry x="340" y="390" width="200" height="50" as="geometry"/>
+        <mxCell id="a4" value="provider.Stream / Complete&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;tool_calls in response&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="340" y="390" width="200" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="a5" value="☁ LLM provider" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;" vertex="1" parent="1">
-          <mxGeometry x="340" y="480" width="200" height="50" as="geometry"/>
+        <mxCell id="a5" value="SSE chunks → client" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="340" y="490" width="200" height="44" as="geometry"/>
         </mxCell>
-        <mxCell id="a6" value="🧠 Memory (read/write turn state)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
-          <mxGeometry x="600" y="285" width="140" height="86" as="geometry"/>
+        <mxCell id="a6" value="Memory&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;read / write turn state&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="600" y="275" width="150" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="a7" value="&lt;font style=&quot;font-size:10px&quot;&gt;&lt;i&gt;Catalog&lt;/i&gt; supplies tool defs per request (tab 00)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="340" y="560" width="420" height="24" as="geometry"/>
         </mxCell>
         <mxCell id="ea1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#1565c0;strokeWidth=2;" edge="1" parent="1" source="a1" target="a2"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="ea2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#ef6c00;strokeWidth=2;" edge="1" parent="1" source="a2" target="a3"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="ea3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#2e7d32;strokeWidth=2;" edge="1" parent="1" source="a3" target="a4"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="ea4" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#c62828;strokeWidth=2;" edge="1" parent="1" source="a4" target="a5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ea4" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#1565c0;strokeWidth=2;" edge="1" parent="1" source="a4" target="a5"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="ea5" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#f57f17;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a3" target="a6"><mxGeometry relative="1" as="geometry"/></mxCell>
       </root>
     </mxGraphModel>
   </diagram>
 
   <diagram id="p02" name="02 — Flow: messaging channels">
-    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0">
+    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="720" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="h" value="&lt;b&gt;Parallel flow B&lt;/b&gt; — chat apps call the process directly (&lt;i&gt;no Gateway in path&lt;/i&gt;).&lt;br&gt;Independent of HTTP tab 01 and webhooks tab 03." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="60" y="30" width="760" height="40" as="geometry"/>
+        <mxCell id="h" value="&lt;b&gt;Parallel flow B&lt;/b&gt; — process receives events directly (&lt;i&gt;no Gateway&lt;/i&gt; on this path).&lt;br&gt;Independent of tab 01 (HTTP) and tab 03 (webhooks)." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="28" width="780" height="44" as="geometry"/>
         </mxCell>
-        <mxCell id="b1" value="💬 Slack / Teams / Telegram / …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
-          <mxGeometry x="120" y="120" width="260" height="50" as="geometry"/>
+        <mxCell id="b1" value="Chat provider (Slack, Teams, Telegram, Discord, WhatsApp, …)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
+          <mxGeometry x="120" y="110" width="320" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="b2" value="📋 Registry + channel adapter&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/channels · StartAll&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;" vertex="1" parent="1">
-          <mxGeometry x="120" y="210" width="260" height="70" as="geometry"/>
+        <mxCell id="b2" value="channels registry + bridge&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/channels — Start(ctx, HandleChannelMessage)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;" vertex="1" parent="1">
+          <mxGeometry x="120" y="200" width="320" height="68" as="geometry"/>
         </mxCell>
-        <mxCell id="b3" value="🤖 Runner (same instance as HTTP flow)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="120" y="320" width="260" height="56" as="geometry"/>
+        <mxCell id="b3" value="Runner (same instance as HTTP)&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;RunStream + channel reply callback&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="120" y="310" width="320" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="b4" value="🔧 Tools → LLM / DevOps …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;" vertex="1" parent="1">
-          <mxGeometry x="120" y="410" width="260" height="50" as="geometry"/>
+        <mxCell id="b4" value="Tool execution + LLM (see tab 06)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;" vertex="1" parent="1">
+          <mxGeometry x="120" y="400" width="320" height="44" as="geometry"/>
         </mxCell>
         <mxCell id="eb1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#ad1457;strokeWidth=2;" edge="1" parent="1" source="b1" target="b2"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="eb2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#7b1fa2;strokeWidth=2;" edge="1" parent="1" source="b2" target="b3"><mxGeometry relative="1" as="geometry"/></mxCell>
@@ -174,24 +267,24 @@
   </diagram>
 
   <diagram id="p03" name="03 — Flow: DevOps webhooks">
-    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0">
+    <mxGraphModel dx="1100" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="720" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="h" value="&lt;b&gt;Parallel flow C&lt;/b&gt; — GitHub/GitLab POST &lt;i&gt;/api/webhook/…&lt;/i&gt;. Router returns fast; agent runs detached.&lt;br&gt;Independent of tabs 01 and 02." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="60" y="30" width="780" height="40" as="geometry"/>
+        <mxCell id="h" value="&lt;b&gt;Parallel flow C&lt;/b&gt; — GitHub/GitLab POST to Gateway &lt;i&gt;/api/webhook/…&lt;/i&gt;. Router acks quickly; work continues async.&lt;br&gt;Independent of tabs 01 and 02." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="28" width="800" height="44" as="geometry"/>
         </mxCell>
-        <mxCell id="c1" value="🔔 GitHub / GitLab (HTTP POST)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;" vertex="1" parent="1">
-          <mxGeometry x="120" y="120" width="260" height="50" as="geometry"/>
+        <mxCell id="c1" value="GitHub / GitLab (HTTP POST)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="120" y="110" width="300" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="c2" value="📥 webhookadapter.Router&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;verify · semaphore · async runner&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
-          <mxGeometry x="120" y="210" width="260" height="76" as="geometry"/>
+        <mxCell id="c2" value="webhookadapter.Router&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;verify signature · concurrency limit · dispatch&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="120" y="200" width="300" height="72" as="geometry"/>
         </mxCell>
-        <mxCell id="c3" value="🤖 Runner" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="120" y="330" width="260" height="56" as="geometry"/>
+        <mxCell id="c3" value="Runner (dedicated session / webhook runner)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="120" y="310" width="300" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="c4" value="🔧 Tools + PR / pipeline actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;" vertex="1" parent="1">
-          <mxGeometry x="120" y="420" width="260" height="50" as="geometry"/>
+        <mxCell id="c4" value="DevOps tools + PR / pipeline actions (tab 06)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;" vertex="1" parent="1">
+          <mxGeometry x="120" y="400" width="300" height="44" as="geometry"/>
         </mxCell>
         <mxCell id="ec1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#f9a825;strokeWidth=2;" edge="1" parent="1" source="c1" target="c2"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="ec2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#ef6c00;strokeWidth=2;" edge="1" parent="1" source="c2" target="c3"><mxGeometry relative="1" as="geometry"/></mxCell>
@@ -205,20 +298,20 @@
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="h" value="&lt;b&gt;Detail&lt;/b&gt; — tool/channel sends (not user ingress). Explains DLQ + breaker without cluttering overview." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="h" value="&lt;b&gt;Detail&lt;/b&gt; — outbound replies from tools (not user ingress). DLQ + circuit breaker stay off the main hub." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="60" y="30" width="680" height="36" as="geometry"/>
         </mxCell>
-        <mxCell id="d1" value="🔧 Tools" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#43a047;" vertex="1" parent="1">
-          <mxGeometry x="120" y="120" width="140" height="50" as="geometry"/>
+        <mxCell id="d1" value="Tool: message / notify" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#43a047;" vertex="1" parent="1">
+          <mxGeometry x="120" y="120" width="160" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="d2" value="↩ ReliableSender&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/channels/adapter&lt;/font&gt;" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;" vertex="1" parent="1">
-          <mxGeometry x="320" y="110" width="200" height="70" as="geometry"/>
+        <mxCell id="d2" value="ReliableSender&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/channels/adapter&lt;/font&gt;" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#fff3e0;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="320" y="108" width="220" height="72" as="geometry"/>
         </mxCell>
-        <mxCell id="d3" value="💬 Channel (Slack, Teams, …)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
-          <mxGeometry x="580" y="120" width="180" height="50" as="geometry"/>
+        <mxCell id="d3" value="Channel API (Slack, Teams, …)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#ad1457;" vertex="1" parent="1">
+          <mxGeometry x="580" y="118" width="200" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="d4" value="📄 DLQ file (NDJSON)&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;channels.outbound.dlq_path&lt;/font&gt;" style="shape=document;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#616161;" vertex="1" parent="1">
-          <mxGeometry x="320" y="240" width="200" height="70" as="geometry"/>
+        <mxCell id="d4" value="DLQ (NDJSON)&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;config: channels.outbound.dlq_path&lt;/font&gt;" style="shape=document;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#616161;" vertex="1" parent="1">
+          <mxGeometry x="320" y="240" width="220" height="68" as="geometry"/>
         </mxCell>
         <mxCell id="ed1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;strokeColor=#2e7d32;" edge="1" parent="1" source="d1" target="d2"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="ed2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeWidth=2;strokeColor=#ad1457;" edge="1" parent="1" source="d2" target="d3"><mxGeometry relative="1" as="geometry"/></mxCell>
@@ -232,20 +325,85 @@
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="h" value="&lt;b&gt;Detail&lt;/b&gt; — Repo intelligence (&lt;i&gt;repointel&lt;/i&gt;): optional subsystem; API mounted on Gateway when enabled." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="60" y="30" width="700" height="36" as="geometry"/>
+        <mxCell id="h" value="&lt;b&gt;Detail&lt;/b&gt; — Repo intelligence (&lt;i&gt;repointel&lt;/i&gt;): optional; HTTP routes on Gateway when enabled. Agent tools consume the same index." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="30" width="720" height="36" as="geometry"/>
         </mxCell>
-        <mxCell id="r1" value="🌐 Gateway /api/v1/repos…" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
-          <mxGeometry x="120" y="110" width="200" height="50" as="geometry"/>
+        <mxCell id="r1" value="Gateway &lt;i&gt;/api/v1/repos…&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe0b2;strokeColor=#ef6c00;" vertex="1" parent="1">
+          <mxGeometry x="120" y="110" width="220" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="r2" value="📂 Manager + registry&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/repointel&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;" vertex="1" parent="1">
-          <mxGeometry x="120" y="200" width="200" height="70" as="geometry"/>
+        <mxCell id="r2" value="repointel manager + registry&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/repointel&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;" vertex="1" parent="1">
+          <mxGeometry x="120" y="200" width="220" height="64" as="geometry"/>
         </mxCell>
-        <mxCell id="r3" value="🧠 Per-repo memory / scans" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
-          <mxGeometry x="120" y="310" width="200" height="86" as="geometry"/>
+        <mxCell id="r3" value="Per-repo memory / scan artifacts" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="120" y="300" width="220" height="80" as="geometry"/>
         </mxCell>
         <mxCell id="er1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#ef6c00;strokeWidth=2;" edge="1" parent="1" source="r1" target="r2"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="er2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#388e3c;strokeWidth=2;" edge="1" parent="1" source="r2" target="r3"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="p06" name="06 — Core: LLM ↔ tools loop">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="920" pageHeight="880" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="h" value="&lt;b&gt;RunStream core&lt;/b&gt; — one session turn may iterate until the model stops calling tools.&lt;br&gt;Orthogonal layout: main column + left return path (no crossing)." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="48" y="24" width="820" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="n1" value="Ingress message&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;user / tool / system roles&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="340" y="88" width="240" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="n1b" value="&lt;b&gt;Optional branch&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Orchestrator picks specialist → &lt;i&gt;TaskManager&lt;/i&gt; spawn&lt;br&gt;(keywords + &lt;i&gt;Registry.Best&lt;/i&gt;)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;dashPattern=8 8;fillColor=#e8f5e9;strokeColor=#388e3c;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="620" y="72" width="260" height="84" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2" value="Memory read / write&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;internal/memory&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#fff9c4;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="360" y="168" width="200" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="n3" value="tools.Catalog.SelectForRequest&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;graph.ToolGraph · core slugs + BFS&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="330" y="278" width="260" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n4" value="provider.Stream (or Complete)&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;assistant text + optional tool_calls&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="330" y="366" width="260" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n8" value="Tool calls?&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;in this chunk&lt;/font&gt;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff8e1;strokeColor=#f9a825;" vertex="1" parent="1">
+          <mxGeometry x="375" y="448" width="170" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="n5" value="ToolRegistry.Execute&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;devops · mcp · bash · subagent · …&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#43a047;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="330" y="556" width="260" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n6" value="Append tool results&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;tool-role messages → next model call&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eceff1;strokeColor=#546e7a;" vertex="1" parent="1">
+          <mxGeometry x="330" y="644" width="260" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="n7" value="Stream tokens / final reply to client" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="600" y="452" width="260" height="44" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e01" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#1565c0;strokeWidth=2;" edge="1" parent="1" source="n1" target="n2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e02" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#2e7d32;strokeWidth=2;" edge="1" parent="1" source="n2" target="n3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e03" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#c62828;strokeWidth=2;" edge="1" parent="1" source="n3" target="n4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e04a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#f9a825;strokeWidth=2;" edge="1" parent="1" source="n4" target="n8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e04y" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#43a047;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="n8" target="n5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e05" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#546e7a;strokeWidth=2;" edge="1" parent="1" source="n5" target="n6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e08" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#c62828;strokeWidth=2;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="n6" target="n4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="220" y="670"/>
+              <mxPoint x="220" y="394"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e07" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=#1565c0;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="n8" target="n7">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_nb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;endArrow=open;strokeColor=#388e3c;strokeWidth=1;exitX=0;exitY=0.5;entryX=1;entryY=0.35;" edge="1" parent="1" source="n1b" target="n1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg" value="&lt;b&gt;Note&lt;/b&gt;: After &lt;i&gt;Append tool results&lt;/i&gt;, the loop returns to &lt;i&gt;provider.Stream&lt;/i&gt; until the model emits no further tool calls (&lt;i&gt;no&lt;/i&gt; branch)." style="shape=note;whiteSpace=wrap;html=1;fillColor=#eceff1;strokeColor=#546e7a;size=14;align=left;spacingLeft=10;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="48" y="740" width="480" height="56" as="geometry"/>
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>

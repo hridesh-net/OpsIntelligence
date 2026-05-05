@@ -1750,7 +1750,7 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 				if home, err := os.UserHomeDir(); err == nil {
 					dbPath = filepath.Join(home, ".opsintelligence", "whatsapp.db")
 				}
-				wa, err := whatsapp.New(dbPath, waSessionID, waDMMode, allowFrom, "INFO", nil)
+				wa, err := whatsapp.New(dbPath, waSessionID, waDMMode, allowFrom, "INFO")
 				if err == nil {
 					if !wa.IsLinked() {
 						tui.PrintOnboardInfo("Initiating WhatsApp pairing — scan the QR code with your phone")

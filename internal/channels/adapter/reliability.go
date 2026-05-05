@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
@@ -71,6 +72,7 @@ type ReliableSender struct {
 	channelName string
 	sender      OutboundSender
 	cfg         ReliabilityConfig
+	log         *zap.Logger
 
 	mu              sync.Mutex
 	consecutiveFail int
@@ -104,6 +106,7 @@ func NewReliableSender(channelName string, sender OutboundSender, cfg Reliabilit
 		channelName: channelName,
 		sender:      sender,
 		cfg:         cfg,
+		log:         zap.NewNop(),
 		nowFn:       time.Now,
 		sleepFn: func(ctx context.Context, d time.Duration) error {
 			t := time.NewTimer(d)
@@ -119,6 +122,14 @@ func NewReliableSender(channelName string, sender OutboundSender, cfg Reliabilit
 	}
 }
 
+// WithLogger attaches a structured logger for circuit-breaker and DLQ events.
+func (r *ReliableSender) WithLogger(l *zap.Logger) *ReliableSender {
+	if l != nil {
+		r.log = l.With(zap.String("channel", r.channelName))
+	}
+	return r
+}
+
 // Send executes the wrapped send with reliability controls.
 func (r *ReliableSender) Send(ctx context.Context, msg OutboundMessage) (*DeliveryReceipt, error) {
 	ctx, span := obstracing.StartSpan(ctx, "adapter.send")
@@ -129,14 +140,16 @@ func (r *ReliableSender) Send(ctx context.Context, msg OutboundMessage) (*Delive
 	}
 	if caps, ok := CapabilitiesFor(r.channelName); ok {
 		if !caps.Threading && (msg.ThreadRef != nil || msg.ReplyToID != "") {
-			log.Printf("channels/outbound[%s]: threading unsupported, sending without thread/reply context", r.channelName)
+			r.log.Debug("threading unsupported, sending without thread/reply context")
 			msg.ThreadRef = nil
 			msg.ReplyToID = ""
 		}
 	}
 	if allowed := r.beforeAttempt(); !allowed {
 		err := NewChannelError(ErrorKindRetryable, "circuit breaker open", nil)
-		_ = r.writeDLQ(msg, err, 0)
+		if dlqErr := r.writeDLQ(msg, err, 0); dlqErr != nil {
+			r.log.Warn("DLQ write failed", zap.Error(dlqErr))
+		}
 		metrics.Default().IncMessagesFailed(r.channelName)
 		metrics.Default().ObserveMessageLatency(r.channelName, r.nowFn().Sub(start).Seconds())
 		return nil, err
@@ -155,7 +168,9 @@ func (r *ReliableSender) Send(ctx context.Context, msg OutboundMessage) (*Delive
 
 		if IsPermanent(err) {
 			r.onFailure()
-			_ = r.writeDLQ(msg, err, attempt)
+			if dlqErr := r.writeDLQ(msg, err, attempt); dlqErr != nil {
+				r.log.Warn("DLQ write failed", zap.Error(dlqErr))
+			}
 			metrics.Default().IncMessagesFailed(r.channelName)
 			metrics.Default().ObserveMessageLatency(r.channelName, r.nowFn().Sub(start).Seconds())
 			return nil, err
@@ -172,7 +187,9 @@ func (r *ReliableSender) Send(ctx context.Context, msg OutboundMessage) (*Delive
 		}
 	}
 
-	_ = r.writeDLQ(msg, lastErr, r.cfg.Retry.MaxAttempts)
+	if dlqErr := r.writeDLQ(msg, lastErr, r.cfg.Retry.MaxAttempts); dlqErr != nil {
+		r.log.Warn("DLQ write failed", zap.Error(dlqErr))
+	}
 	metrics.Default().IncMessagesFailed(r.channelName)
 	metrics.Default().ObserveMessageLatency(r.channelName, r.nowFn().Sub(start).Seconds())
 	return nil, lastErr
@@ -214,7 +231,7 @@ func (r *ReliableSender) beforeAttempt() bool {
 			return false
 		}
 		r.halfOpenProbe = true
-		log.Printf("channels/outbound[%s]: circuit breaker HALF-OPEN", r.channelName)
+		r.log.Info("circuit breaker HALF-OPEN")
 	}
 	return true
 }
@@ -226,7 +243,7 @@ func (r *ReliableSender) onSuccess() {
 		return
 	}
 	if r.halfOpenProbe || !r.breakerOpenTill.IsZero() {
-		log.Printf("channels/outbound[%s]: circuit breaker CLOSED", r.channelName)
+		r.log.Info("circuit breaker CLOSED")
 	}
 	r.consecutiveFail = 0
 	r.breakerOpenTill = time.Time{}
@@ -242,13 +259,13 @@ func (r *ReliableSender) onFailure() {
 	if r.halfOpenProbe {
 		r.breakerOpenTill = now.Add(r.cfg.Breaker.Cooldown)
 		r.halfOpenProbe = false
-		log.Printf("channels/outbound[%s]: circuit breaker OPEN (half-open probe failed)", r.channelName)
+		r.log.Warn("circuit breaker OPEN (half-open probe failed)")
 		return
 	}
 	if r.consecutiveFail >= r.cfg.Breaker.FailureThreshold {
 		r.breakerOpenTill = now.Add(r.cfg.Breaker.Cooldown)
 		r.consecutiveFail = 0
-		log.Printf("channels/outbound[%s]: circuit breaker OPEN", r.channelName)
+		r.log.Warn("circuit breaker OPEN")
 	}
 }
 

@@ -79,7 +79,7 @@
         <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#ad1457;" edge="1" parent="1" source="chad" target="ch"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="410" y="520"/><mxPoint x="410" y="180"/><mxPoint x="540" y="180"/></Array></mxGeometry></mxCell>
         <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;strokeColor=#3949ab;dashed=1;" edge="1" parent="1" source="cmd" target="cfg"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="440" y="136"/><mxPoint x="40" y="136"/><mxPoint x="40" y="662"/><mxPoint x="440" y="662"/></Array></mxGeometry></mxCell>
 
-        <mxCell id="leg" value="&lt;b&gt;Read&lt;/b&gt;: follow arrows downward from &lt;b&gt;cmd&lt;/b&gt;. Dashed = secondary / optional wiring.&lt;br&gt;Pair with &lt;i&gt;architecture-overview.drawio&lt;/i&gt; for runtime &lt;b&gt;flows&lt;/b&gt; (tabs 01–05)." style="shape=note;whiteSpace=wrap;html=1;fillColor=#eceff1;strokeColor=#546e7a;size=14;align=left;spacingLeft=10;spacingTop=6;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="leg" value="&lt;b&gt;Read&lt;/b&gt;: follow arrows downward from &lt;b&gt;cmd&lt;/b&gt;. Dashed = secondary / optional wiring.&lt;br&gt;Pair with &lt;i&gt;architecture-overview.drawio&lt;/i&gt; for runtime &lt;b&gt;flows&lt;/b&gt; (tabs 01–06)." style="shape=note;whiteSpace=wrap;html=1;fillColor=#eceff1;strokeColor=#546e7a;size=14;align=left;spacingLeft=10;spacingTop=6;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="40" y="720" width="420" height="72" as="geometry"/>
         </mxCell>
       </root>

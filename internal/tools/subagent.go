@@ -16,7 +16,6 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
-	"github.com/opsintelligence/opsintelligence/internal/system"
 )
 
 // SubAgentSvc holds shared dependencies for sub-agent tools (delegation to specialist runners).
@@ -39,7 +38,6 @@ type SubAgentSvc struct {
 
 	Guardrail *security.Guardrail
 	AuditLog  *security.AuditLog
-	Hardware  *system.HardwareReport
 
 	// RunTracePath is the NDJSON path for child runs: agent.run_trace_subagent_file
 	// when set, otherwise the same path as the master agent.run_trace_file.
@@ -139,6 +137,13 @@ func (s *SubAgentSvc) runSyncWithTask(ctx context.Context, taskID, subAgentID, t
 	return res.Response, res.Iterations, nil
 }
 
+// SubAgentBlocklist returns the tool slugs that must never be available inside
+// a sub-agent (recursion hazards and master-only supervisor controls).
+// Specialist spawn functions should use this as their base omit list.
+func SubAgentBlocklist() []string {
+	return append([]string(nil), subAgentOmit...)
+}
+
 // subAgentOmit lists tools that must not be available inside a sub-agent.
 // These are either recursion hazards (sub-agents spawning grand-children)
 // or master-only supervisor controls (a child should not be able to
@@ -209,7 +214,7 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		EmbedQuery:              s.EmbedQuery,
 	}, s.Provider, childReg, s.Mem, s.Log, workspace)
 
-	run = run.WithCatalog(catalog).WithHardware(s.Hardware).WithSecurity(s.Guardrail, s.AuditLog)
+	run = run.WithCatalog(catalog).WithSecurity(s.Guardrail, s.AuditLog)
 
 	// Per-turn intervention augmentor (tracked tasks only).
 	if taskID != "" && s.Tasks != nil {

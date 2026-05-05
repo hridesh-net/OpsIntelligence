@@ -29,7 +29,6 @@ import (
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
-	"github.com/opsintelligence/opsintelligence/internal/system"
 )
 
 // enterprisePosturePrompt is appended when Config.Enterprise is set (binary / high-load installs).
@@ -147,6 +146,9 @@ type Config struct {
 	// EnabledSkillNames lists skills merged into this runner (for run_trace only).
 	EnabledSkillNames []string
 	Palace            PalaceConfig
+	// PalaceRouter selects taxonomy routing hints for memory searches.
+	// When nil, NewRunner installs the default HeuristicPalaceRouter.
+	PalaceRouter memory.PalaceRouter
 	// LocalIntel runs optional on-device Gemma before the main model (see opsintelligence.yaml agent.local_intel).
 	LocalIntel LocalIntelRunnerConfig
 	// DevOps is the platform configuration (GitHub, etc.) used for proactive health reporting in the system prompt.
@@ -197,7 +199,6 @@ type Runner struct {
 	// Security layer (optional; both may be nil)
 	guardrail *security.Guardrail
 	auditLog  *security.AuditLog
-	hardware  *system.HardwareReport
 
 	sessionID    string
 	channelID    string
@@ -261,7 +262,10 @@ func (r *Runner) embedForRAG(ctx context.Context, text string) ([]float32, error
 		return r.cfg.EmbedQuery(ctx, text)
 	}
 	if strings.TrimSpace(r.cfg.EmbeddingModel) != "" {
-		return r.provider.Embed(ctx, r.cfg.EmbeddingModel, text)
+		if emb, ok := r.provider.(provider.Embedder); ok {
+			return emb.Embed(ctx, r.cfg.EmbeddingModel, text)
+		}
+		return nil, fmt.Errorf("provider %q does not support embedding", r.provider.Name())
 	}
 	return nil, fmt.Errorf("no embedding path configured")
 }
@@ -293,24 +297,22 @@ func NewRunner(
 		sessionID:     sessionID,
 		channelID:     cfg.ChannelID,
 		workspaceDir:  workspaceDir,
-		hardware:      &system.HardwareReport{},
-		palaceRouter:  memory.NewHeuristicPalaceRouter(),
+		palaceRouter:  palaceRouterOrDefault(cfg.PalaceRouter),
 		commands:      make(map[string]func(ctx context.Context, replyFn channels.StreamingReplyFunc) error),
 	}
+}
+
+func palaceRouterOrDefault(r memory.PalaceRouter) memory.PalaceRouter {
+	if r != nil {
+		return r
+	}
+	return memory.NewHeuristicPalaceRouter()
 }
 
 // WithCatalog sets the graph-based tool catalog on an existing runner.
 // Call this after NewRunner to enable per-request tool filtering.
 func (r *Runner) WithCatalog(c ToolCatalog) *Runner {
 	r.catalog = c
-	return r
-}
-
-// WithHardware sets the hardware report on an existing runner.
-func (r *Runner) WithHardware(h *system.HardwareReport) *Runner {
-	if h != nil {
-		r.hardware = h
-	}
 	return r
 }
 
@@ -414,7 +416,6 @@ func (r *Runner) WithSession(sessionID string) *Runner {
 		memory:                r.memory,
 		working:               r.memory.GetWorking(sessionID),
 		mediaFn:               r.mediaFn,
-		hardware:              r.hardware,
 		guardrail:             r.guardrail,
 		auditLog:              r.auditLog,
 		commands:              r.commands,
@@ -731,8 +732,8 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		// If no tool calls, we're done (do not use FinishReasonStop alone — models may emit
 		// stop while only pseudo-XML tool blocks were parsed above).
 		if len(toolCalls) == 0 {
-			// Compact working memory if over budget.
-			r.working.Compact(r.working.TotalTokens())
+			// Compact working memory to 70% of budget, preserving system + recent messages.
+			r.working.Compact(int(float64(r.working.MaxTokens()) * 0.7))
 
 			r.emitTraceTaskDone(ctx, iterations, "stop", "")
 			return &RunResult{
@@ -783,10 +784,12 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 				lessonText := extractTag(critique, "lesson_learned")
 				if lessonText != "" {
 					if emb, err := r.embedForRAG(ctx, userMessage); err == nil && len(emb) > 0 {
-						_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
+						if saveErr := r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
 							ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
 							Success: success, Embedding: emb, CreatedAt: time.Now(),
-						})
+						}); saveErr != nil {
+							r.log.Warn("semantic lesson save failed", zap.Error(saveErr))
+						}
 					}
 				}
 			}
@@ -1248,22 +1251,6 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 	today := time.Now().Format("2006-01-02")
 	ws := r.workspaceDir
 
-	// ── Hardware Environment ────────────────────────────────────────────────
-	hwStr := ""
-	if r.hardware != nil {
-		hw := r.hardware
-		hwStr += "\n## Hardware Environment\n"
-		if len(hw.Cameras) > 0 {
-			hwStr += fmt.Sprintf("- Cameras: %s\n", strings.Join(hw.Cameras, ", "))
-		}
-		if len(hw.AudioDevices) > 0 {
-			hwStr += fmt.Sprintf("- Audio: %s\n", strings.Join(hw.AudioDevices, ", "))
-		}
-		if len(hw.InputDevices) > 0 {
-			hwStr += fmt.Sprintf("- Input Devices: %s\n", strings.Join(hw.InputDevices, ", "))
-		}
-	}
-
 	// ── Workspace Identity (markdown persona files) ─────────────────────────
 	// SOUL.md is the source of truth for core behavior/capabilities.
 	readWS := func(name string) (string, bool) {
@@ -1321,8 +1308,6 @@ func (r *Runner) buildSystemPrompt(ctx context.Context, query string) string {
 	}
 
 	base := identityBlock + `
-
-` + hwStr + `
 
 ## Available tools
 
@@ -1446,13 +1431,29 @@ When the user asks for a **dashboard**, **status page**, or **live monitor**:
 					}
 				}
 				if len(docs) > 0 {
+					// Budget for RAG: 10% of the working-memory token budget, expressed
+					// in chars (×4). Shared equally across all returned documents.
+					// Floor of 400 chars and ceiling of 2000 chars per doc keeps it
+					// useful on tiny contexts (Groq 8B) and not bloated on large ones.
+					budget := r.working.MaxTokens()
+					if budget <= 0 {
+						budget = 100_000
+					}
+					ragChars := (budget / 10) * 4 // 10% of token budget → chars
+					perDoc := ragChars / len(docs)
+					if perDoc < 400 {
+						perDoc = 400
+					}
+					if perDoc > 2000 {
+						perDoc = 2000
+					}
 					var sb strings.Builder
 					sb.WriteString("\n## Grounding Context (Retrieved Knowledge)\n")
 					sb.WriteString("Base your response on the evidence below and on tool outputs. " +
 						"Use `fact_check` for any specific claim not covered here.\n\n")
 					for i, d := range docs {
 						sb.WriteString(fmt.Sprintf("**[%d]** score=%.2f source=%s\n%s\n\n",
-							i+1, d.Score, d.Source, truncateUTF8(d.Content, 800)))
+							i+1, d.Score, d.Source, truncateUTF8(d.Content, perDoc)))
 					}
 					parts = append(parts, sb.String())
 				}
@@ -1780,7 +1781,9 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 			Tokens: totalUsage.CompletionTokens, CreatedAt: time.Now(),
 		}
 		r.working.Append(assistantMsg)
-		_ = r.memory.Episodic.Save(ctx, assistantMsg)
+		if err := r.memory.Episodic.Save(ctx, assistantMsg); err != nil {
+			r.log.Warn("episodic save failed", zap.Error(err))
+		}
 
 		if len(toolCalls) == 0 {
 			r.emitTraceTaskDone(ctx, iterations, "stop", "")
@@ -1810,7 +1813,9 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 				CreatedAt: time.Now(),
 			}
 			r.working.Append(toolMsg)
-			_ = r.memory.Episodic.Save(ctx, toolMsg)
+			if err := r.memory.Episodic.Save(ctx, toolMsg); err != nil {
+				r.log.Warn("episodic save failed", zap.Error(err))
+			}
 		}
 	}
 
@@ -1830,10 +1835,12 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 				lessonText := extractTag(critique, "lesson_learned")
 				if lessonText != "" {
 					if emb, err := r.embedForRAG(ctx, userMessage); err == nil && len(emb) > 0 {
-						_ = r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
+						if saveErr := r.memory.Semantic.SaveLesson(ctx, memory.Lesson{
 							ID: uuid.New().String(), Query: userMessage, Insights: lessonText,
 							Success: success, Embedding: emb, CreatedAt: time.Now(),
-						})
+						}); saveErr != nil {
+							r.log.Warn("semantic lesson save failed", zap.Error(saveErr))
+						}
 					}
 				}
 			}

@@ -11,8 +11,6 @@
   <img src="https://img.shields.io/badge/Posture-read--only%20by%20default-6f42c1?style=for-the-badge" alt="Read-only by default">
 </p>
 
----
-
 ## The short version
 
 | You bring | It handles |
@@ -23,7 +21,13 @@
 
 **One line:** an autonomous agent for **in-house DevOps** — not a generic chatbot, not an auto-deploy bot. It connects to the systems you already run, respects guardrails, and escalates with evidence when something is wrong.
 
----
+## Architecture
+
+Single-page runtime view (parallel ingress → `agent.Runner` → provider, memory, datastore, and tool execution). Edit in draw.io: [`doc/architecture/opsintelligence-architecture.drawio`](doc/architecture/opsintelligence-architecture.drawio). Exports (SVG/PDF with embedded diagram) live in the same folder. For tabbed flows and extra detail, see [`architecture-overview.drawio`](architecture-overview.drawio) at the repo root.
+
+<p align="center">
+  <img src="doc/architecture/opsintelligence-architecture.png" alt="OpsIntelligence runtime architecture: Gateway, channels, and webhooks into Runner; Orchestrator; provider and LLM; ToolGraph, Catalog, ToolRegistry; devops, MCP, bash, subagents" width="920">
+</p>
 
 ## What this is
 
@@ -47,8 +51,6 @@ When you enable **`repo_intel`** in config (GitHub PAT, memory dir, optional emb
 
 The dashboard exposes **Scan**, **Index memory**, **Call graph**, and **Ask repo** (natural language / keyword search over that index). Very large GitHub trees may return `truncated: true`; the UI and API surface a warning so you know search may be partial.
 
----
-
 ## What this is not
 
 - **Not a deploy robot.** Default posture is **read-only** on GitHub, GitLab, Jenkins, Sonar, and MCP-backed tools. Writes need explicit human confirmation in-turn. Posting a **PR comment** is available when `devops.github` is configured with a PAT that allows it.
@@ -56,13 +58,9 @@ The dashboard exposes **Scan**, **Index memory**, **Call graph**, and **Ask repo
 
 **Channels:** production docs and defaults center on **Slack** plus the **REST/WebSocket gateway** (apps, internal tools, dashboard). The example config still shows **commented stubs** for other adapters; enable only what your security team approves.
 
----
-
 ## Relationship to AssistClaw
 
 OpsIntelligence is a hard fork of [AssistClaw](https://github.com/hridesh-net/AssistClaw). It keeps the agent loop, tiered memory, lazy skill graph, tools, MCP, cron, webhooks, guardrails, and extensions — and replaces consumer-centric defaults with a first-class **`devops.*`** surface and **team-aware** Markdown rules.
-
----
 
 ## Built-in integrations
 
@@ -76,8 +74,6 @@ OpsIntelligence is a hard fork of [AssistClaw](https://github.com/hridesh-net/As
 | **Everything else** (PagerDuty, Datadog, Sentry, Jira, …) | via **MCP** | plug in any MCP server |
 
 Every integration stays **off** until you add a token. Tokens live in **environment variables** referenced from YAML (`token_env:`) — never committed in config files.
-
----
 
 ## Install
 
@@ -141,8 +137,6 @@ bash uninstall.sh --purge --keep-datastore  # wipe state but preserve users/RBAC
 
 `--keep-datastore` helps when moving hosts: users, roles, API keys, and audit data stay for the next install.
 
----
-
 ## Quick start
 
 ```bash
@@ -166,8 +160,6 @@ Onboarding collects: one LLM provider key, optional Slack tokens, optional GitHu
 
 See [`.opsintelligence.yaml.example`](.opsintelligence.yaml.example) for the full commented reference.
 
----
-
 ## Dashboard
 
 With the gateway up:
@@ -189,8 +181,6 @@ For remote access: set `gateway.bind` to `lan` or `0.0.0.0`, add TLS certs, opti
 
 CLI mirror for repos: `opsintelligence repos list | add | sync | status | users | tui`.
 
----
-
 ## Configuring a team
 
 A **team** is a folder of Markdown files merged into the agent’s system prompt on startup:
@@ -207,8 +197,6 @@ A **team** is a folder of Markdown files merged into the agent’s system prompt
 
 Start from [`teams/example-team/`](teams/example-team/), copy, rename, edit. The agent should cite which policy drove a recommendation.
 
----
-
 ## DevOps skill graph
 
 Shipped under [`skills/devops/`](skills/devops/) — lazy-loaded when needed:
@@ -219,8 +207,6 @@ Shipped under [`skills/devops/`](skills/devops/) — lazy-loaded when needed:
 Copy to `~/.opsintelligence/skills/devops/` or point `agent.skills_dir` at the repo during dev. Invoke nodes with `read_skill_node("devops", "<node>")`.
 
 There is also [`gh-pr-review`](skills/gh-pr-review/SKILL.md) for a strict GitHub review flow (checkout, local lint/test, line comments, suggestions).
-
----
 
 ## Smart prompts & chains
 
@@ -234,16 +220,12 @@ opsintelligence prompts run pr-review --input pr_url=https://…
 
 Shipped chains include `pr-review`, `sonar-triage`, `cicd-regression`, `incident-scribe`. Override any prompt file under `~/.opsintelligence/prompts/<id>.md`.
 
----
-
 ## Safety posture
 
 - **Read-first** integrations; writes need explicit human confirmation in the same conversation turn where relevant.
 - **Operator-owned policy files** on disk (`POLICIES.md`, `RULES.md`, `policies/`) cannot be edited by the agent through file tools.
 - **Secrets in env vars**, not YAML; `doctor` checks referenced vars before start.
 - **PII-aware summaries** — minimize verbatim quoting from CI logs or diffs; never echo secrets seen in content.
-
----
 
 ## Commands
 
@@ -261,8 +243,6 @@ opsintelligence prompts ls | run <chain> --input key=value
 
 Run `opsintelligence <cmd> --help` for flags.
 
----
-
 ## Development
 
 ```bash
@@ -273,8 +253,6 @@ make lint     # gofmt + go vet
 ```
 
 `go test ./internal/devops/...` hits GitHub, GitLab, Jenkins, and Sonar clients against `httptest` fixtures (no live APIs).
-
----
 
 ## License
 

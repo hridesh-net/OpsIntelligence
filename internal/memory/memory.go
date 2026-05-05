@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -17,6 +18,16 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
+
+// estimateTokens returns a fast approximation of token count for a string.
+// Uses the 4-chars-per-token heuristic which is accurate to ±15% for English.
+func estimateTokens(s string) int {
+	n := len(s) / 4
+	if n < 1 && len(s) > 0 {
+		return 1
+	}
+	return n
+}
 
 func init() {
 	AutoRegisterVec()
@@ -103,9 +114,15 @@ func (w *WorkingMemory) MaxTokens() int {
 }
 
 // Append adds a message to the working memory.
+// When msg.Tokens is zero (e.g. user or tool messages where the model
+// did not report usage), the token count is estimated from content length
+// so that Compact and shouldFlush have accurate budget data.
 func (w *WorkingMemory) Append(msg Message) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if msg.Tokens == 0 {
+		msg.Tokens = estimateTokens(msg.Content)
+	}
 	w.messages = append(w.messages, msg)
 }
 
@@ -129,22 +146,40 @@ func (w *WorkingMemory) TotalTokens() int {
 	return total
 }
 
-// Compact removes oldest messages until the token count is within budget.
-// System messages are always preserved.
+// minRecentPinned is the minimum number of trailing messages always preserved
+// during compaction to maintain conversation continuity.
+const minRecentPinned = 6
+
+// Compact removes oldest evictable messages until the token count is within
+// budget. Eviction rules (in priority order):
+//  1. The leading system/context message (role=system at index 0) is never evicted.
+//  2. The last minRecentPinned messages are never evicted — they keep the
+//     immediate conversation coherent across LLM turns.
+//  3. Oldest messages in the evictable middle window are dropped first.
+//
+// Returns the dropped messages so callers can persist them to episodic memory.
 func (w *WorkingMemory) Compact(budget int) []Message {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if budget <= 0 {
+		return nil
+	}
+
 	var dropped []Message
-	for w.tokenCount() > budget && len(w.messages) > 1 {
-		// Skip system message at index 0 — always keep it.
-		dropIdx := 0
-		if len(w.messages) > 0 && w.messages[0].Role == RoleSystem {
-			dropIdx = 1
+	for w.tokenCount() > budget {
+		n := len(w.messages)
+		// Determine the evictable window: skip pinned head and pinned tail.
+		headPin := 0
+		if n > 0 && w.messages[0].Role == RoleSystem {
+			headPin = 1
 		}
-		if dropIdx >= len(w.messages) {
-			break
+		tailPin := minRecentPinned
+		// evictable range: [headPin, n-tailPin)
+		if headPin >= n-tailPin {
+			break // nothing left to evict
 		}
+		dropIdx := headPin
 		dropped = append(dropped, w.messages[dropIdx])
 		w.messages = append(w.messages[:dropIdx], w.messages[dropIdx+1:]...)
 	}
@@ -477,7 +512,7 @@ func (m *SemanticMemory) Search(ctx context.Context, queryVec []float32, limit i
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tagsJSON), &doc.Tags)
-		doc.Score = 1 - dist // convert distance to similarity
+		doc.Score = float32(math.Max(0, float64(1-dist))) // L2 distance → clamped similarity
 		docs = append(docs, doc)
 	}
 	return docs, rows.Err()

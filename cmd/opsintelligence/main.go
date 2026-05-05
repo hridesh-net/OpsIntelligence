@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
+	"github.com/opsintelligence/opsintelligence/internal/agents"
 	"github.com/opsintelligence/opsintelligence/internal/automation"
 	"github.com/opsintelligence/opsintelligence/internal/autotool"
 	chanregistry "github.com/opsintelligence/opsintelligence/internal/channels/registry"
@@ -56,9 +57,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
-	"github.com/opsintelligence/opsintelligence/internal/system"
 	"github.com/opsintelligence/opsintelligence/internal/tools"
-	"github.com/opsintelligence/opsintelligence/internal/voice"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	ghadapter "github.com/opsintelligence/opsintelligence/internal/webhookadapter/github"
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
@@ -944,8 +943,7 @@ Extend behavior via skills, MCP, channels, or prompt_files as needed.`,
 			fmt.Println(prim.Render("\nSkills"))
 			fmt.Printf("  enabled in config: %d\n", len(cfg.Agent.EnabledSkills))
 
-			fmt.Println(prim.Render("\nVoice / browser / memory"))
-			fmt.Println(dim.Render("  voice: STT/TTS via internal/voice (yaml voice:)"))
+			fmt.Println(prim.Render("\nBrowser / memory"))
 			fmt.Println(dim.Render("  browser: browser_navigate, browser_screenshot (chromedp)"))
 			fmt.Println(dim.Render("  memory: working + episodic.db + semantic (embeddings); optional MemPalace via mcp / memory.mempalace (managed_venv automates pip + init)"))
 
@@ -1084,10 +1082,6 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 			if cfg.Gmail.Enabled {
 				srv.Gmail = automation.NewGmailWatcher(cfg.Gmail, log)
 			}
-			if cfg.Voice.Enabled {
-				srv.Voice = voice.NewDaemon(cfg.Voice)
-			}
-
 			webHost := cfg.Gateway.Host
 			if webHost == "" {
 				webHost = "localhost"
@@ -1640,7 +1634,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 	}
 
-	hw, _ := system.Detect(ctx)
 	extPrompt := ""
 	if cfg.Extensions.Enabled && len(cfg.Extensions.PromptFiles) > 0 {
 		extPrompt = extensions.PromptAppendix(cfg.StateDir, cfg.Extensions.PromptFiles)
@@ -1703,7 +1696,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			LogDecisions:        cfg.Agent.Palace.LogDecisions,
 		},
 		EmbedQuery: embedQueryFn,
-	}, p, toolReg, memMgr, log, cfg.StateDir).WithCatalog(catalog).WithHardware(hw)
+	}, p, toolReg, memMgr, log, cfg.StateDir).WithCatalog(catalog)
 
 	// ── Security: Guardrail + Audit Log ────────────────────────────────
 	guardrailMode := security.GuardrailMode(cfg.Security.Mode)
@@ -1753,7 +1746,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		DefaultToolsProfile:     cfg.Security.Profile,
 		Guardrail:               guardrail,
 		AuditLog:                auditLog,
-		Hardware:                hw,
 		RunTraceMode:            cfg.Agent.RunTraceMode,
 		LocalIntel: agent.LocalIntelRunnerConfig{
 			Enabled:               cfg.Agent.LocalIntel.Enabled,
@@ -1799,6 +1791,72 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	toolReg.Register(tools.SubAgentReadContextTool{S: subSvc})
 	catalog = tools.NewCatalog(toolReg, toolGraph)
 	runner = runner.WithCatalog(catalog).WithModelRegistry(reg)
+
+	// ── Multi-agent orchestrator ──────────────────────────────────────────
+	// spawnSpecialist creates an isolated runner for a named domain agent.
+	// The specialist inherits the parent's provider + memory but gets a
+	// filtered tool set (def.BlockedTools removed) and a domain-focused
+	// system prompt extension. Wired to the TaskManager for full supervisor
+	// oversight (intervene, stream, share_context, dashboard).
+	spawnSpecialist := func(_ context.Context, def agents.AgentDef) (*agent.Runner, error) {
+		blocked := append(tools.SubAgentBlocklist(), def.BlockedTools...)
+		specialistReg := toolReg.CloneWithout(blocked...)
+		if len(def.AllowedTools) > 0 {
+			allowSet := make(map[string]bool, len(def.AllowedTools))
+			for _, t := range def.AllowedTools {
+				allowSet[t] = true
+			}
+			for _, d := range specialistReg.Definitions() {
+				if !allowSet[d.Name] {
+					specialistReg = specialistReg.CloneWithout(d.Name)
+				}
+			}
+		}
+		specialistCatalog := tools.NewCatalog(specialistReg, toolGraph)
+		focus := def.SystemPromptFocus
+		if extPrompt != "" {
+			focus = extPrompt + "\n\n" + focus
+		}
+		r := agent.NewRunner(agent.Config{
+			MaxIterations:         32,
+			Model:                 modelInfo.ID,
+			ActiveSkillsContext:   skillsCtx,
+			EnabledSkillNames:     activeSkillNames,
+			RunTracePath:          childRunTrace,
+			RunnerRole:            "specialist:" + def.Name,
+			RunTraceMode:          cfg.Agent.RunTraceMode,
+			ProviderName:          providerNameForCaps,
+			ToolsProfile:          cfg.Security.Profile,
+			GatewayPublicBaseURL:  effectiveGatewayOrigin(cfg),
+			ExtensionPromptAppend: focus,
+			StateDir:              cfg.StateDir,
+			LocalIntel: agent.LocalIntelRunnerConfig{
+				Enabled:               cfg.Agent.LocalIntel.Enabled,
+				GGUFPath:              cfg.Agent.LocalIntel.GGUFPath,
+				MaxTokens:             cfg.Agent.LocalIntel.MaxTokens,
+				SystemPrompt:          cfg.Agent.LocalIntel.SystemPrompt,
+				CacheDir:              localIntelCache,
+				SmartRouting:          cfg.Agent.LocalIntel.SmartRouting,
+				SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
+			},
+			EmbedQuery: embedQueryFn,
+		}, p, specialistReg, memMgr, log, cfg.StateDir).
+			WithCatalog(specialistCatalog).
+			WithSecurity(guardrail, auditLog)
+		return r, nil
+	}
+	orch := agents.NewOrchestrator(tasks, spawnSpecialist, log)
+	// Inject the orchestrator routing hint into the master's system prompt
+	// so the LLM knows which specialists exist and when to delegate.
+	if hint := orch.RoutingHint(); hint != "" {
+		existingExt := extPrompt
+		if existingExt != "" {
+			extPrompt = existingExt + "\n\n" + hint
+		} else {
+			extPrompt = hint
+		}
+	}
+	_ = orch // available for future tool registration
 
 	// Install the supervisor dashboard as a per-turn system-prompt
 	// augmentor on the MASTER runner. The master sees a compact
@@ -1998,11 +2056,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return <-done
 	}
 
-	var voiceClient *voice.Client
-	if cfg.Voice.Enabled {
-		voiceClient = voice.NewClient(cfg.Voice)
-	}
-
 	// Start Messaging Channels
 	activeChannels := 0
 	reliabilityCfg := chadapter.ReliabilityConfig{
@@ -2021,7 +2074,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	deps := &channelStartDeps{
 		reliabilityCfg: reliabilityCfg,
 		channelSenders: channelSenders,
-		voiceClient:    voiceClient,
 		stateDir:       cfg.StateDir,
 		logLevel:       gf.logLevel,
 	}

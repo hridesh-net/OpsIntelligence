@@ -229,8 +229,16 @@ func (m *ModelInfo) HasCapability(c Capability) bool {
 // Provider interface
 // ─────────────────────────────────────────────
 
+// Embedder is implemented by providers that support text embedding.
+// Chat-only providers (e.g. Anthropic, Groq) do not need to implement this.
+type Embedder interface {
+	// Embed generates a vector representation of the given text.
+	Embed(ctx context.Context, model string, text string) ([]float32, error)
+}
+
 // Provider is the unified interface that every LLM backend must implement.
 // Each provider package returns an implementation of this interface.
+// Embedding is optional — implement Embedder in addition to Provider to support it.
 type Provider interface {
 	// Name returns the canonical provider identifier (e.g. "openai", "anthropic").
 	Name() string
@@ -248,9 +256,6 @@ type Provider interface {
 
 	// HealthCheck verifies the provider is reachable and credentials are valid.
 	HealthCheck(ctx context.Context) error
-
-	// Embed generates a vector representation of the given text.
-	Embed(ctx context.Context, model string, text string) ([]float32, error)
 
 	// ValidateModel verifies if a model ID is valid for this provider.
 	ValidateModel(ctx context.Context, modelID string) error
