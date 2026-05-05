@@ -20,6 +20,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/devops/sandbox"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sonar"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
+	toolcloud "github.com/opsintelligence/opsintelligence/internal/tools/cloud"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
 )
 
@@ -178,6 +179,9 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 			&githubSubmitReviewTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubWorkflowRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubCombinedStatusTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubGetFileTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubListReviewsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
+			&githubCheckRunsTool{c: gh, defaultOrg: cfg.GitHub.DefaultOrg},
 			&githubReviewPRTool{
 				c:                gh,
 				defaultOrg:       cfg.GitHub.DefaultOrg,
@@ -215,6 +219,7 @@ func DevOpsTools(cfg config.DevOpsConfig, prov provider.Provider, model string) 
 			&sonarSearchIssuesTool{c: sn},
 		)
 	}
+	out = append(out, toolcloud.Tools(cfg.Cloud)...)
 	return out
 }
 
@@ -729,6 +734,182 @@ func (t *githubCombinedStatusTool) Execute(ctx context.Context, input json.RawMe
 		fmt.Fprintf(&b, "  [%s] %s — %s (%s)\n", s.State, s.Context, s.Description, s.TargetURL)
 	}
 	return b.String(), nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// GitHub extended read tools
+// ─────────────────────────────────────────────────────────────────────────
+
+type githubGetFileTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubGetFileTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.github.get_file",
+		Description: "Fetch the full content of a specific file from a GitHub repository at a given ref " +
+			"(branch name, tag, or commit SHA). Use this during PR review to read the full context " +
+			"around a changed line — the diff alone only shows the hunk, not the surrounding code.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner": map[string]any{"type": "string", "description": "Repo owner (org or user). Uses default org if omitted."},
+				"repo":  map[string]any{"type": "string", "description": "Repository name."},
+				"path":  map[string]any{"type": "string", "description": "File path relative to repo root, e.g. src/main.go."},
+				"ref":   map[string]any{"type": "string", "description": "Branch, tag, or commit SHA. Defaults to the repo default branch."},
+			},
+			Required: []string{"repo", "path"},
+		},
+	}
+}
+
+func (t *githubGetFileTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner string `json:"owner"`
+		Repo  string `json:"repo"`
+		Path  string `json:"path"`
+		Ref   string `json:"ref"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", err
+	}
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
+	}
+	if a.Path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	fc, err := t.c.GetFileContent(ctx, a.Owner, a.Repo, a.Path, a.Ref)
+	if err != nil {
+		return "", err
+	}
+	// Truncate very large files to avoid flooding the context.
+	const maxBytes = 60_000
+	content := fc.Content
+	truncated := ""
+	if len(content) > maxBytes {
+		content = content[:maxBytes]
+		truncated = fmt.Sprintf("\n[truncated — file is %d bytes, showing first %d]", fc.Size, maxBytes)
+	}
+	return fmt.Sprintf("// %s @ %s (sha: %s)\n%s%s", fc.Path, a.Ref, fc.SHA, content, truncated), nil
+}
+
+type githubListReviewsTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubListReviewsTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.github.list_reviews",
+		Description: "List all reviews already submitted on a pull request. " +
+			"Use this before posting a new review to avoid duplicating comments that have already been raised.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner":  map[string]any{"type": "string"},
+				"repo":   map[string]any{"type": "string"},
+				"pr_number": map[string]any{"type": "integer", "description": "Pull request number."},
+			},
+			Required: []string{"repo", "pr_number"},
+		},
+	}
+}
+
+func (t *githubListReviewsTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner    string `json:"owner"`
+		Repo     string `json:"repo"`
+		PRNumber int    `json:"pr_number"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", err
+	}
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
+	}
+	reviews, err := t.c.ListPullRequestReviews(ctx, a.Owner, a.Repo, a.PRNumber)
+	if err != nil {
+		return "", err
+	}
+	if len(reviews) == 0 {
+		return fmt.Sprintf("No reviews yet on %s/%s#%d.", a.Owner, a.Repo, a.PRNumber), nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d review(s) on %s/%s#%d:\n\n", len(reviews), a.Owner, a.Repo, a.PRNumber)
+	for _, r := range reviews {
+		body := short(r.Body, 120)
+		fmt.Fprintf(&b, "[%s] @%s at %s\n  %s\n  %s\n\n", r.State, r.User, r.SubmittedAt, body, r.HTMLURL)
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+type githubCheckRunsTool struct {
+	c          *github.Client
+	defaultOrg string
+}
+
+func (t *githubCheckRunsTool) Definition() provider.ToolDef {
+	return provider.ToolDef{
+		Name: "devops.github.check_runs",
+		Description: "Fetch individual check run details for a commit SHA or branch head, including " +
+			"annotation counts from linters and test suites. More granular than devops.github.commit_status — " +
+			"use this to find the specific check that failed and how many annotations it produced.",
+		InputSchema: provider.ToolParameter{
+			Type: "object",
+			Properties: map[string]any{
+				"owner": map[string]any{"type": "string"},
+				"repo":  map[string]any{"type": "string"},
+				"ref":   map[string]any{"type": "string", "description": "Commit SHA or branch name."},
+			},
+			Required: []string{"repo", "ref"},
+		},
+	}
+}
+
+func (t *githubCheckRunsTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var a struct {
+		Owner string `json:"owner"`
+		Repo  string `json:"repo"`
+		Ref   string `json:"ref"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return "", err
+	}
+	var err error
+	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	if err != nil {
+		return "", err
+	}
+	runs, err := t.c.GetCheckRuns(ctx, a.Owner, a.Repo, a.Ref)
+	if err != nil {
+		return "", err
+	}
+	if len(runs) == 0 {
+		return fmt.Sprintf("No check runs found for %s/%s@%s.", a.Owner, a.Repo, a.Ref), nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d check run(s) for %s/%s@%s:\n\n", len(runs), a.Owner, a.Repo, a.Ref)
+	for _, r := range runs {
+		conclusion := r.Conclusion
+		if conclusion == "" {
+			conclusion = r.Status
+		}
+		fmt.Fprintf(&b, "[%s] %s", conclusion, r.Name)
+		if r.Output.AnnotationsCount > 0 {
+			fmt.Fprintf(&b, " — %d annotation(s)", r.Output.AnnotationsCount)
+		}
+		if r.Output.Summary != "" {
+			fmt.Fprintf(&b, "\n  %s", short(r.Output.Summary, 120))
+		}
+		fmt.Fprintf(&b, "\n  %s\n\n", r.HTMLURL)
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────

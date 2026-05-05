@@ -1,0 +1,79 @@
+id: pr_review
+name: PR Review Pipeline
+stages:
+  - id: linter
+    name: Linter & Style Check
+    description: |
+      Scan the diff for linting violations, code style issues, and formatting problems.
+      Flag unused imports, dead code, and obvious style divergences from the codebase.
+      Check for typos in identifiers, comments, and string literals.
+    condition: always
+    tool_hints:
+      - devops.sonar.issues
+      - bash
+      - grep
+
+  - id: logic
+    name: Logic & Bottleneck Review
+    description: |
+      Analyse the diff for correctness issues, algorithmic inefficiencies, and performance
+      bottlenecks. Check error handling paths, edge cases, and data-flow correctness.
+      Identify N+1 queries, unnecessary allocations, or blocking calls on hot paths.
+    condition: always
+    tool_hints:
+      - devops.github.pr_diff
+      - memory_search
+      - devops.sonar.quality_gate
+
+  - id: acceptance_criteria
+    name: Acceptance Criteria Verification
+    description: |
+      Verify the PR fulfils the linked Jira ticket's acceptance criteria (ACs).
+      Extract the ticket number from the branch name or PR title (e.g. PROJ-123).
+      For each AC, confirm it is addressed by the diff. Flag any unmet criteria.
+    condition: jira_linked
+    tool_hints:
+      - web_search
+      - fact_check
+      - memory_search
+
+  - id: security
+    name: CVE & Security Scan
+    description: |
+      Scan for CVEs in new or updated dependencies. Check for OWASP Top 10 vulnerabilities:
+      injection, XSS, broken access control, insecure design, hardcoded secrets,
+      missing auth checks, and insecure direct object references introduced in this diff.
+      Also flag unsafe use of crypto, deprecated APIs, and exposed PII.
+    condition: always
+    tool_hints:
+      - devops.sonar.issues
+      - bash
+      - grep
+      - web_search
+
+  - id: ci_check
+    name: CI / Build Status
+    description: |
+      Verify CI is green. Check workflow run conclusions and required commit status checks.
+      Flag any failing required checks that block merge. Note flaky tests if runs are inconsistent.
+    condition: github_enabled
+    tool_hints:
+      - devops.github.workflow_runs
+      - devops.github.commit_status
+
+  - id: verdict
+    name: Final Verdict & Post
+    description: |
+      Aggregate findings from all previous stages. Apply the review methodology if configured.
+      Assign the review decision:
+        critical/high findings → REQUEST_CHANGES
+        medium findings only   → COMMENT
+        no findings            → APPROVE
+      Post inline comments grouped by severity, then the top-level verdict.
+      Use devops.github.review_pr for a one-call atomic post, or
+      devops.github.submit_review for manual control.
+    condition: always
+    tool_hints:
+      - devops.github.submit_review
+      - devops.github.review_pr
+      - pr_review_tasks

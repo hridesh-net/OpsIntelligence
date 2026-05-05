@@ -3,10 +3,17 @@ name: Pull Request Review
 purpose: End-to-end PR/MR review (gather → analyze → critique → render → post).
 inputs:
   - pr_url
+# Optional inputs (pass when available — injected into every step's template context):
+#   methodology    — PR review ruleset from pr_review.methodology.get
+#   repo_context   — Repo intelligence summary from repointel / memory_search
+#   github_pr_json — Raw PR metadata JSON from devops.github.pull_request
+#   github_diff    — Unified diff from devops.github.pr_diff
+#   github_ci_hint — CI/check notes from devops.github.workflow_runs
 tags:
   - devops
   - github
   - gitlab
+  - pr_review
 steps:
   - pr-review/gather
   - pr-review/analyze

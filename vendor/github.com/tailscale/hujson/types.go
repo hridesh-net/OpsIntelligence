@@ -12,7 +12,8 @@
 //
 // See https://nigeltao.github.io/blog/2021/json-with-commas-comments.html
 //
-// # Functionality
+//
+// Functionality
 //
 // The Parse function parses HuJSON input as a Value,
 // which is a syntax tree exactly representing the input.
@@ -31,7 +32,8 @@
 // but instead for the HuJSON and standard JSON format.
 // The Patch method applies a JSON Patch (RFC 6902) to the receiving value.
 //
-// # Grammar
+//
+// Grammar
 //
 // The changes to the JSON grammar are:
 //
@@ -70,7 +72,8 @@
 //	 	'000A' ws
 //	 	'000D' ws
 //
-// # Use with the Standard Library
+//
+// Use with the Standard Library
 //
 // This package operates with HuJSON as an AST. In order to parse HuJSON
 // into arbitrary Go types, use this package to parse HuJSON input as an AST,

@@ -72,6 +72,37 @@ devops:
     token_env: "OPSINTEL_SONAR_TOKEN"
     project_key_prefix: "acme_" # prepended to short project keys
 
+  # Multi-cloud read tools (devops.cloud.*). See doc/cloud-devops-iam.md for least-privilege IAM.
+  cloud:
+    aws:
+      enabled: false
+      inventory: true
+      cost: false
+      audit: false
+      default_region: "us-east-1"
+      # regions: ["us-east-1", "eu-west-1"]
+      # tag_filters: [{ key: "Application", values: ["payments"] }]
+      # role_arn: "arn:aws:iam::123456789012:role/OpsIntelligenceRead"
+      # access_key_id_env: "AWS_ACCESS_KEY_ID"
+      # secret_access_key_env: "AWS_SECRET_ACCESS_KEY"
+    azure:
+      enabled: false
+      inventory: true
+      cost: false
+      audit: false
+      subscription_id: ""
+      tenant_id: ""
+      client_id: ""
+      client_secret_env: "OPSINTEL_AZURE_CLIENT_SECRET"
+      # resource_group: "my-app-rg"
+    gcp:
+      enabled: false
+      inventory: true
+      cost: false
+      audit: false
+      project_id: ""
+      # credentials_path_env: "GOOGLE_APPLICATION_CREDENTIALS"
+
 # ─────────────────────────────────────────────
 # Teams (company / squad-specific rules)
 # ─────────────────────────────────────────────

@@ -97,7 +97,7 @@ func AppendFieldsFunc(dst []RO, m RO, f func(rune) bool) []RO {
 
 	// Last field might end at EOF.
 	if wasField {
-		dst = append(dst, RO{m: unsafeString(s[fromIndex:])})
+		dst = append(dst, RO{m: unsafeString(s[fromIndex:len(s)])})
 	}
 	return dst
 }

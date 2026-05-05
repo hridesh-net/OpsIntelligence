@@ -69,10 +69,14 @@ type Layout struct {
 	Channels string
 
 	// Config — supplementary configuration overlays.
-	Config  string
-	Teams   string
-	Tools   string
-	Prompts string
+	Config       string
+	Teams        string
+	Tools        string
+	Prompts      string
+	PRReview     string
+	DevOps       string
+	Agents       string // agent flow definitions per agent
+	CustomAgents string // user-created agent definitions
 
 	// Identity — agent persona and policy documents.
 	Identity string
@@ -120,6 +124,10 @@ func New(root string) *Layout {
 		Teams:           j("config", "teams"),
 		Tools:           j("config", "tools"),
 		Prompts:         j("config", "prompts"),
+		PRReview:        j("config", "pr_review"),
+		DevOps:          j("config", "devops"),
+		Agents:          j("config", "agents"),
+		CustomAgents:    j("config", "agents", "custom"),
 		Identity:        j("identity"),
 		Models:          j("models"),
 		Skills:          j("skills"),
@@ -133,6 +141,11 @@ func New(root string) *Layout {
 }
 
 // ── File paths ────────────────────────────────────────────────────────────────
+
+func (l *Layout) PRReviewMethodology() string           { return filepath.Join(l.PRReview, "methodology.md") }
+func (l *Layout) DevOpsWorkflow() string                { return filepath.Join(l.DevOps, "workflow.md") }
+func (l *Layout) AgentFlowYAML(name string) string      { return filepath.Join(l.Agents, name, "flow.yaml") }
+func (l *Layout) CustomAgentDefPath(name string) string { return filepath.Join(l.CustomAgents, name, "agent.yaml") }
 
 func (l *Layout) OpsDB() string           { return filepath.Join(l.Data, "ops.db") }
 func (l *Layout) EpisodicDB() string      { return filepath.Join(l.Memory, "episodic.db") }
@@ -190,6 +203,10 @@ func (l *Layout) AllDirs() []string {
 		l.Teams,
 		l.Tools,
 		l.Prompts,
+		l.PRReview,
+		l.DevOps,
+		l.Agents,
+		l.CustomAgents,
 		l.Identity,
 		l.Models,
 		l.Skills,

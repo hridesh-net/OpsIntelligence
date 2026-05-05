@@ -46,6 +46,7 @@ const (
 	IntentCICD          // "pipeline failed", "ci broken", "regression on main"
 	IntentIncident      // "incident", "outage", "on-call", "page fired"
 	IntentDevOpsGeneric // any other devops.* signal (git, gh, runbook)
+	IntentCloud         // AWS / Azure / GCP inventory, cost, audit
 )
 
 // intentKeywords maps each intent to trigger words.
@@ -63,6 +64,7 @@ var intentKeywords = map[Intent][]string{
 	IntentCICD:          {"pipeline", "workflow", "ci/cd", "ci failed", "ci broken", "regression", "failing build", "red build", "flaky test", "rerun", "workflow_run", "github actions", "jenkins", "gitlab pipeline"},
 	IntentIncident:      {"incident", "outage", "prod is down", "on call", "on-call", "pager", "page fired", "rollback", "postmortem", "post-mortem", "sev1", "sev 1", "sev2"},
 	IntentDevOpsGeneric: {"devops", "deploy", "deployment", "runbook", "health check", "healthcheck", "uptime", "slo", "sla", "rollback", "release", "gh ", "git "},
+	IntentCloud:         {"aws", "azure", "gcp", "cloudtrail", "cloud trail", "activity log", "cost explorer", "cloud asset", "multi-cloud", "cloud inventory", "billing", "audit log"},
 }
 
 // intentSeeds maps each intent to the tool names that seed BFS traversal.
@@ -80,6 +82,7 @@ var intentSeeds = map[Intent][]string{
 	IntentCICD:          {"chain_run", "devops.github.workflow_runs", "devops.github.commit_status", "devops.gitlab.pipelines", "devops.jenkins.job_status", "bash"},
 	IntentIncident:      {"chain_run", "devops.github.workflow_runs", "message", "memory_search", "bash"},
 	IntentDevOpsGeneric: {"chain_run", "chain_list", "bash", "devops.github.list_prs"},
+	IntentCloud:         {"devops.cloud.inventory", "devops.cloud.cost_summary", "devops.cloud.audit_events", "devops.diagnose", "chain_run"},
 }
 
 // toolEdge is a directed weighted edge between two tools.
@@ -185,6 +188,12 @@ func NewToolGraph() *ToolGraph {
 		// Incident cluster: chain_run + message + memory_search + workflow_runs
 		{from: "chain_run", to: "message", typ: EdgeCompanion},
 		{from: "message", to: "memory_search", typ: EdgeDomain},
+
+		// Multi-cloud read cluster
+		{from: "devops.cloud.inventory", to: "devops.cloud.cost_summary", typ: EdgeCompanion},
+		{from: "devops.cloud.inventory", to: "devops.cloud.audit_events", typ: EdgeCompanion},
+		{from: "devops.cloud.cost_summary", to: "devops.cloud.audit_events", typ: EdgeDomain},
+		{from: "chain_run", to: "devops.cloud.inventory", typ: EdgeCompanion},
 	}
 
 	// Set base weights from edge type
@@ -326,6 +335,8 @@ func (g *ToolGraph) ClassifyIntents(msg string) []string {
 					label = "INCIDENT"
 				case IntentDevOpsGeneric:
 					label = "DEVOPS"
+				case IntentCloud:
+					label = "CLOUD"
 				}
 				if label != "" {
 					seen[label] = struct{}{}

@@ -1793,6 +1793,72 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	runner = runner.WithCatalog(catalog).WithModelRegistry(reg)
 
 	// ── Multi-agent orchestrator ──────────────────────────────────────────
+	// repoMgr is declared here (zero value = nil) so the PR review agent's
+	// ContextLoader closure can capture it by reference. The live value is
+	// assigned below once repo intelligence is configured.
+	var repoMgr *repointel.Manager
+
+	// repoSummaryFn is shared by the repointel and pr_review agents. It captures
+	// repoMgr by reference so it always reflects the live post-init state.
+	repoSummaryFn := func() string {
+		if repoMgr == nil {
+			return ""
+		}
+		var sb strings.Builder
+		for _, entry := range repoMgr.ListRepos() {
+			if s := repoMgr.MemoryForReview(entry.ID); s != "" {
+				sb.WriteString(s)
+				sb.WriteByte('\n')
+			}
+		}
+		return sb.String()
+	}
+
+	// FlowEvalCtx carries integration flags for stage condition evaluation.
+	// Stages gated on jira_linked / sonar_enabled / github_enabled / gitlab_enabled
+	// are shown as SKIP in the agent's system prompt when the integration is off.
+	flowEvalCtx := agents.FlowEvalContext{
+		GitHubEnabled: cfg.DevOps.GitHub.Enabled && cfg.DevOps.GitHub.Token != "",
+		GitLabEnabled: cfg.DevOps.GitLab.Enabled,
+		SonarEnabled:  cfg.DevOps.Sonar.Enabled,
+		JiraLinked:    false, // wire when Jira config is added
+	}
+
+	// Build the specialist agent registry. RegistryOpts wires context loaders
+	// for all built-in agents so each specialist gets its dynamic context at
+	// spawn time — no race because spawning only happens after full startup.
+	agentReg := agents.NewRegistry(agents.RegistryOpts{
+		DevOpsWorkflowPath: layout.DevOpsWorkflow(),
+		SecurityPolicyFn:   func() string { return security.LoadPolicyBundle(cfg.StateDir) },
+		RepoSummaryFn:      repoSummaryFn,
+		AgentsConfigDir:    layout.Agents,
+		FlowEvalCtx:        flowEvalCtx,
+	})
+	agentReg.Register(agents.NewPRReviewAgent(agents.PRReviewOpts{
+		MethodologyPath: layout.PRReviewMethodology(),
+		RepoSummaryFn:   repoSummaryFn,
+		AgentsConfigDir: layout.Agents,
+		FlowEvalCtx:     flowEvalCtx,
+	}))
+
+	// Load custom agent definitions from disk and register them.
+	// Context loaders for custom agents reuse the same flow infrastructure.
+	if customDefs, customErrs := agents.LoadCustomAgents(layout.CustomAgents); len(customErrs) > 0 {
+		for _, e := range customErrs {
+			log.Warn("custom agent load error", zap.Error(e))
+		}
+	} else {
+		for _, def := range customDefs {
+			// Wire flow context loader for custom agents too.
+			name := def.Name
+			def.ContextLoader = func() string {
+				return agents.LoadFlowContextFn(name, layout.Agents, flowEvalCtx)
+			}
+			agentReg.Register(def)
+			log.Info("registered custom agent", zap.String("name", name))
+		}
+	}
+
 	// spawnSpecialist creates an isolated runner for a named domain agent.
 	// The specialist inherits the parent's provider + memory but gets a
 	// filtered tool set (def.BlockedTools removed) and a domain-focused
@@ -1814,6 +1880,12 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 		specialistCatalog := tools.NewCatalog(specialistReg, toolGraph)
 		focus := def.SystemPromptFocus
+		// Prepend dynamic context (methodology, repo memory, scan state) when available.
+		if def.ContextLoader != nil {
+			if dynamicCtx := def.ContextLoader(); dynamicCtx != "" {
+				focus = dynamicCtx + focus
+			}
+		}
 		if extPrompt != "" {
 			focus = extPrompt + "\n\n" + focus
 		}
@@ -1845,7 +1917,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			WithSecurity(guardrail, auditLog)
 		return r, nil
 	}
-	orch := agents.NewOrchestrator(tasks, spawnSpecialist, log)
+	orch := agents.NewOrchestratorWithRegistry(agentReg, tasks, spawnSpecialist, log)
 	// Inject the orchestrator routing hint into the master's system prompt
 	// so the LLM knows which specialists exist and when to delegate.
 	if hint := orch.RoutingHint(); hint != "" {
@@ -1873,7 +1945,6 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	})
 
 	// ── Repo Intelligence manager (optional) ──────────────────────────
-	var repoMgr *repointel.Manager
 	if cfg.RepoIntel.Enabled {
 		riCfg := cfg.RepoIntel
 		registryFile := riCfg.RegistryFile
@@ -1970,6 +2041,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		toolReg.Register(tools.PRReviewTasksTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewCancelTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewEventsTool{H: prReviewHandler})
+		toolReg.Register(tools.PRReviewMethodologyGetTool{Path: layout.PRReviewMethodology()})
+		toolReg.Register(tools.PRReviewMethodologySetTool{Path: layout.PRReviewMethodology()})
 		catalog = tools.NewCatalog(toolReg, toolGraph)
 		runner = runner.WithCatalog(catalog)
 		runner = runner.WithSystemPromptAugmentor(func(_ context.Context) string {
@@ -1979,6 +2052,41 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			zap.Int("max_workers", workers),
 		)
 	}
+
+	// ── Specialist agent context tools ───────────────────────────────
+	// Registered unconditionally — available regardless of which platform
+	// integrations (GitHub, SonarQube, etc.) are configured.
+	toolReg.Register(tools.DevOpsWorkflowGetTool{Path: layout.DevOpsWorkflow()})
+	toolReg.Register(tools.DevOpsWorkflowSetTool{Path: layout.DevOpsWorkflow()})
+	toolReg.Register(tools.SecurityPolicyGetTool{PolicyFn: func() string {
+		return security.LoadPolicyBundle(cfg.StateDir)
+	}})
+
+	// ── Agent flow and lifecycle tools ────────────────────────────────
+	builtinAgentNames := map[string]bool{
+		"devops": true, "security": true, "repointel": true, "pr_review": true,
+	}
+	toolReg.Register(tools.AgentFlowGetTool{AgentsConfigDir: layout.Agents})
+	toolReg.Register(tools.AgentFlowSetTool{AgentsConfigDir: layout.Agents})
+	toolReg.Register(tools.AgentCreateTool{
+		CustomAgentsDir: layout.CustomAgents,
+		RegisterFn: func(def agents.AgentDef) {
+			name := def.Name
+			def.ContextLoader = func() string {
+				return agents.LoadFlowContextFn(name, layout.Agents, flowEvalCtx)
+			}
+			agentReg.Register(def)
+		},
+	})
+	toolReg.Register(tools.AgentListTool{
+		AllFn:        agentReg.All,
+		BuiltinNames: builtinAgentNames,
+	})
+	toolReg.Register(tools.AgentRemoveTool{
+		CustomAgentsDir: layout.CustomAgents,
+		BuiltinNames:    builtinAgentNames,
+		UnregisterFn:    agentReg.Unregister,
+	})
 
 	// ── Cron Daemon ───────────────────────────────────────────────────
 	var cronJobs []cron.Job

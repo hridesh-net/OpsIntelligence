@@ -8,6 +8,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -270,6 +271,134 @@ func (c *Client) CreateIssueComment(ctx context.Context, owner, repo string, iss
 	return string(b), nil
 }
 
+// FileContent is the decoded response from the contents API.
+type FileContent struct {
+	Path    string `json:"path"`
+	SHA     string `json:"sha"`
+	Size    int    `json:"size"`
+	Content string `json:"content"` // decoded (not base64)
+}
+
+// GetFileContent fetches the content of a single file at the given ref (branch, tag, or SHA).
+// Returns an error if the path points to a directory or the file exceeds 1 MB.
+func (c *Client) GetFileContent(ctx context.Context, owner, repo, path, ref string) (*FileContent, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.cfg.BaseURL, owner, repo, url.PathEscape(path))
+	if ref != "" {
+		u += "?ref=" + url.QueryEscape(ref)
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Path     string `json:"path"`
+		SHA      string `json:"sha"`
+		Size     int    `json:"size"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+		Type     string `json:"type"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		return nil, fmt.Errorf("github: decode file content: %w", err)
+	}
+	if raw.Type == "dir" {
+		return nil, fmt.Errorf("github: %s is a directory, not a file", path)
+	}
+	// GitHub returns base64 with newlines; strip them before decoding.
+	decoded := strings.ReplaceAll(raw.Content, "\n", "")
+	content, err := decodeBase64(decoded)
+	if err != nil {
+		return nil, fmt.Errorf("github: decode base64 content: %w", err)
+	}
+	return &FileContent{Path: raw.Path, SHA: raw.SHA, Size: raw.Size, Content: content}, nil
+}
+
+// PRReview is a pull-request review as returned by the GitHub API.
+type PRReview struct {
+	ID          int64  `json:"id"`
+	User        string `json:"-"` // populated from raw.User.Login
+	State       string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED
+	Body        string `json:"body"`
+	SubmittedAt string `json:"submitted_at"`
+	HTMLURL     string `json:"html_url"`
+}
+
+// ListPullRequestReviews returns all reviews submitted on a PR.
+func (c *Client) ListPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]PRReview, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews?per_page=100", c.cfg.BaseURL, owner, repo, number)
+	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID          int64  `json:"id"`
+		User        struct{ Login string `json:"login"` } `json:"user"`
+		State       string `json:"state"`
+		Body        string `json:"body"`
+		SubmittedAt string `json:"submitted_at"`
+		HTMLURL     string `json:"html_url"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		return nil, fmt.Errorf("github: decode pr reviews: %w", err)
+	}
+	out := make([]PRReview, len(raw))
+	for i, r := range raw {
+		out[i] = PRReview{ID: r.ID, User: r.User.Login, State: r.State,
+			Body: r.Body, SubmittedAt: r.SubmittedAt, HTMLURL: r.HTMLURL}
+	}
+	return out, nil
+}
+
+// CheckRun is one entry from the check-runs API.
+type CheckRun struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`     // queued, in_progress, completed
+	Conclusion  string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, ...
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	HTMLURL     string `json:"html_url"`
+	// Output contains the summary and any annotations from the check run.
+	Output struct {
+		Title            string `json:"title"`
+		Summary          string `json:"summary"`
+		AnnotationsCount int    `json:"annotations_count"`
+		AnnotationsURL   string `json:"annotations_url"`
+	} `json:"output"`
+}
+
+// GetCheckRuns returns all check runs for the given ref (commit SHA or branch).
+func (c *Client) GetCheckRuns(ctx context.Context, owner, repo, ref string) ([]CheckRun, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs?per_page=100",
+		c.cfg.BaseURL, owner, repo, url.PathEscape(ref))
+	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		CheckRuns []CheckRun `json:"check_runs"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &envelope); err != nil {
+		return nil, fmt.Errorf("github: decode check runs: %w", err)
+	}
+	return envelope.CheckRuns, nil
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	u := c.cfg.BaseURL + "/rate_limit"
 	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
@@ -416,4 +545,12 @@ func (c *Client) CreateReview(ctx context.Context, owner, repo string, number in
 		return nil, fmt.Errorf("github: decode review: %w", err)
 	}
 	return &out, nil
+}
+
+func decodeBase64(s string) (string, error) {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

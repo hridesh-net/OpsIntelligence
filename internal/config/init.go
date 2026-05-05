@@ -17,6 +17,9 @@ var embeddedTeamSeed embed.FS
 //go:embed all:seed/prompts
 var embeddedPromptsFS embed.FS
 
+//go:embed all:seed/agents
+var embeddedAgentsFS embed.FS
+
 // EmbeddedPromptsFS returns the embedded smart-prompt library rooted at
 // the repo's `prompts/` tree. Callers should pass the result to
 // prompts.Loader{Embedded: ..., EmbeddedRoot: "."} to hydrate the library
@@ -91,6 +94,14 @@ func InitializeWorkspace(configPath string) error {
 	promptsRoot := filepath.Join(dir, "prompts")
 	if err := seedFromEmbeddedFS(embeddedPromptsFS, "seed/prompts", promptsRoot); err != nil {
 		return fmt.Errorf("seed prompts: %w", err)
+	}
+
+	// Seed agent execution pipelines (flow.yaml per agent). Stored under
+	// <state_dir>/config/agents/. Operators can edit these files to customise
+	// stage order, conditions, and tool hints; existing files are never overwritten.
+	agentsRoot := filepath.Join(dir, "config", "agents")
+	if err := seedFromEmbeddedFS(embeddedAgentsFS, "seed/agents", agentsRoot); err != nil {
+		return fmt.Errorf("seed agent flows: %w", err)
 	}
 
 	// We no longer write a default config.yaml here; the new interactive onboard wizard

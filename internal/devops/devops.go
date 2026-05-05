@@ -1,5 +1,6 @@
 // Package devops provides first-class DevOps platform clients used by
-// OpsIntelligence agent tools: GitHub, GitLab, Jenkins, and SonarQube.
+// OpsIntelligence agent tools: GitHub, GitLab, Jenkins, SonarQube, and
+// read-only multi-cloud helpers under the cloud subpackage (aws, azure, gcp).
 //
 // Each subpackage exposes a thin HTTP client with narrow methods that cover
 // the read-mostly workflow the agent needs (list PRs / MRs, read pipeline

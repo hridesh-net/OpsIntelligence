@@ -8,7 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+
 	"github.com/opsintelligence/opsintelligence/internal/config"
+	"github.com/opsintelligence/opsintelligence/internal/devops/cloud"
 	"github.com/opsintelligence/opsintelligence/internal/devops/github"
 	"github.com/opsintelligence/opsintelligence/internal/devops/gitlab"
 	"github.com/opsintelligence/opsintelligence/internal/devops/jenkins"
@@ -23,7 +27,7 @@ type diagnoseTool struct {
 func (t *diagnoseTool) Definition() provider.ToolDef {
 	return provider.ToolDef{
 		Name:        "devops.diagnose",
-		Description: "Diagnose the health of all DevOps integrations (GitHub, GitLab, Jenkins, Sonar). Returns connectivity status, credential validity, and fix suggestions if something is broken.",
+		Description: "Diagnose the health of all DevOps integrations (GitHub, GitLab, Jenkins, Sonar, optional multi-cloud). Returns connectivity status, credential validity, and fix suggestions if something is broken.",
 		InputSchema: provider.ToolParameter{
 			Type: "object",
 			Properties: map[string]any{
@@ -111,6 +115,51 @@ func (t *diagnoseTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		}
 	} else {
 		sb.WriteString("- Status: [CONFIGURED]\n")
+	}
+
+	// Multi-cloud (read-only tools)
+	sb.WriteString("\n### Cloud — AWS\n")
+	caws := t.cfg.Cloud.AWS
+	switch {
+	case !caws.Enabled:
+		sb.WriteString("- Status: [DISABLED]\n")
+	case a.CheckNetwork:
+		awsCfg, err := cloud.LoadAWSConfigForDiagnose(ctx, caws)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("- Status: [BROKEN]\n- Error: %v\n", err))
+		} else {
+			st := sts.NewFromConfig(awsCfg)
+			out, err := st.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("- Status: [UNREACHABLE]\n- Error: %v\n", err))
+			} else {
+				sb.WriteString(fmt.Sprintf("- Status: [OK]\n- Account: %s\n", aws.ToString(out.Account)))
+			}
+		}
+	default:
+		sb.WriteString("- Status: [CONFIGURED]\n")
+	}
+
+	sb.WriteString("\n### Cloud — Azure\n")
+	caz := t.cfg.Cloud.Azure
+	switch {
+	case !caz.Enabled:
+		sb.WriteString("- Status: [DISABLED]\n")
+	case caz.SubscriptionID == "" || caz.TenantID == "" || caz.ClientID == "" || caz.ClientSecret == "":
+		sb.WriteString("- Status: [BROKEN]\n- Reason: missing subscription_id, tenant_id, client_id, or client_secret.\n")
+	default:
+		sb.WriteString("- Status: [CONFIGURED]\n- Hint: run devops.cloud.inventory with provider azure to validate ARM.\n")
+	}
+
+	sb.WriteString("\n### Cloud — GCP\n")
+	cg := t.cfg.Cloud.GCP
+	switch {
+	case !cg.Enabled:
+		sb.WriteString("- Status: [DISABLED]\n")
+	case cg.ProjectID == "":
+		sb.WriteString("- Status: [BROKEN]\n- Reason: project_id is empty.\n")
+	default:
+		sb.WriteString("- Status: [CONFIGURED]\n- Hint: set GOOGLE_APPLICATION_CREDENTIALS or devops.cloud.gcp.credentials_path.\n")
 	}
 
 	return sb.String(), nil

@@ -14,7 +14,8 @@ system: |
   Critical: this step runs in an **isolated LLM call with no tools** — you
   cannot invoke devops.*, gh, or the network. Use only:
   - The PR URL and any **injected evidence blocks** in the user message below
-    (`github_pr_json`, `github_diff`, `github_ci_hint`) from the outer agent.
+    (`github_pr_json`, `github_diff`, `github_ci_hint`, `methodology`,
+    `repo_context`) from the outer agent.
   - If a field cannot be grounded in that evidence, set it to "unknown" or
     empty arrays — never invent SHAs, CI conclusions, or Sonar metrics.
 
@@ -30,6 +31,14 @@ Collect the evidence needed to review this pull/merge request.
 **Target PR**: {{.pr_url}}
 {{if .team}}**Active team**: {{.team}}{{end}}
 
+{{if .methodology}}
+**Configured review methodology (from pr_review.methodology.get — apply strictly in the analyze step):**
+{{.methodology}}
+{{end}}
+{{if .repo_context}}
+**Repository intelligence (from repointel / memory_search — use for architecture context and known patterns):**
+{{.repo_context}}
+{{end}}
 {{if .github_pr_json}}
 **GitHub PR snapshot (from devops.github.pull_request — authoritative for title, author, refs, draft):**
 {{.github_pr_json}}
@@ -56,8 +65,12 @@ Emit a single JSON object (no prose, no markdown fences) with these keys:
   "diff_summary": "one-paragraph plain-English summary of the change",
   "ci_status": { "state": "success|failure|pending|unknown", "runs": [ { "name": "...", "conclusion": "...", "url": "..." } ] },
   "sonar_status": { "quality_gate": "OK|ERROR|unknown", "new_issues": 0, "new_coverage": null },
-  "risks": [ "short flagged risk (e.g. secret in diff, migration, public API change)" ]
+  "risks": [ "short flagged risk (e.g. secret in diff, migration, public API change)" ],
+  "methodology_present": true,
+  "repo_context_present": true
 }
 ```
+
+Set `methodology_present` to `false` if no `{{.methodology}}` block was injected above; same for `repo_context_present`. The analyze step will use this to know whether to apply the custom methodology or fall back to defaults.
 
 If no `github_pr_json` / `github_diff` was injected, emit the same JSON shape but set unknowns honestly (do not fabricate API-backed fields).

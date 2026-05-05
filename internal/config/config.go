@@ -319,6 +319,87 @@ type DevOpsConfig struct {
 	Jenkins  JenkinsConfig  `yaml:"jenkins"`
 	Sonar    SonarConfig    `yaml:"sonar"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
+	// Cloud configures read-only AWS / Azure / GCP integrations for inventory,
+	// cost summaries, and audit-style activity (see doc/cloud-devops-iam.md).
+	Cloud CloudConfig `yaml:"cloud"`
+}
+
+// CloudConfig groups optional multi-cloud read integrations used by devops.cloud.* tools.
+type CloudConfig struct {
+	AWS   CloudAWSConfig   `yaml:"aws"`
+	Azure CloudAzureConfig `yaml:"azure"`
+	GCP   CloudGCPConfig   `yaml:"gcp"`
+}
+
+// CloudTagFilter restricts inventory (and post-filters other APIs) to resources
+// carrying this tag key with one of the given values (AND across filters).
+type CloudTagFilter struct {
+	Key    string   `yaml:"key"`
+	Values []string `yaml:"values"`
+}
+
+// CloudAWSConfig configures read-only AWS access (default credential chain unless static keys are set).
+type CloudAWSConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Inventory enables Resource Groups Tagging + related list APIs.
+	Inventory bool `yaml:"inventory"`
+	// Cost enables Cost Explorer reads (separate IAM; see doc).
+	Cost bool `yaml:"cost"`
+	// Audit enables CloudTrail LookupEvents reads.
+	Audit bool `yaml:"audit"`
+	// DefaultRegion is used for global AWS API clients (e.g. Cost Explorer us-east-1).
+	DefaultRegion string `yaml:"default_region"`
+	// Regions limits inventory results to these regions (empty = all; still post-filtered on ARN).
+	Regions []string `yaml:"regions"`
+	// RoleARN optionally assumes this role via STS (after base credentials).
+	RoleARN    string `yaml:"role_arn"`
+	ExternalID string `yaml:"external_id"`
+	// Static credentials (prefer env-backed fields in production).
+	AccessKeyID          string `yaml:"access_key_id"`
+	SecretAccessKey      string `yaml:"secret_access_key"`
+	AccessKeyIDEnv       string `yaml:"access_key_id_env"`
+	SecretAccessKeyEnv   string `yaml:"secret_access_key_env"`
+	SessionTokenEnv      string `yaml:"session_token_env"`
+	SessionToken         string `yaml:"session_token"`
+	TagFilters           []CloudTagFilter `yaml:"tag_filters"`
+	MaxResources         int              `yaml:"max_resources"`
+	MaxAuditEvents       int              `yaml:"max_audit_events"`
+	MaxCostPoints        int              `yaml:"max_cost_points"`
+}
+
+// CloudAzureConfig configures read-only Azure Resource Manager + Cost Management + Activity Log.
+type CloudAzureConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Inventory        bool   `yaml:"inventory"`
+	Cost             bool   `yaml:"cost"`
+	Audit            bool   `yaml:"audit"`
+	SubscriptionID   string `yaml:"subscription_id"`
+	TenantID         string `yaml:"tenant_id"`
+	ClientID         string `yaml:"client_id"`
+	ClientSecret     string `yaml:"client_secret"`
+	ClientSecretEnv  string `yaml:"client_secret_env"`
+	Regions          []string `yaml:"regions"`
+	TagFilters       []CloudTagFilter `yaml:"tag_filters"`
+	ResourceGroup    string   `yaml:"resource_group"` // optional scope
+	MaxResources     int      `yaml:"max_resources"`
+	MaxAuditEvents   int      `yaml:"max_audit_events"`
+	MaxCostPoints    int      `yaml:"max_cost_points"`
+}
+
+// CloudGCPConfig configures read-only Cloud Asset, Billing info, and Audit Logs reads.
+type CloudGCPConfig struct {
+	Enabled             bool   `yaml:"enabled"`
+	Inventory           bool   `yaml:"inventory"`
+	Cost                bool   `yaml:"cost"`
+	Audit               bool   `yaml:"audit"`
+	ProjectID           string `yaml:"project_id"`
+	CredentialsPath     string `yaml:"credentials_path"`
+	CredentialsPathEnv  string `yaml:"credentials_path_env"`
+	Regions             []string `yaml:"regions"`
+	TagFilters          []CloudTagFilter `yaml:"tag_filters"`
+	MaxResources        int      `yaml:"max_resources"`
+	MaxAuditEvents      int      `yaml:"max_audit_events"`
+	MaxCostPoints       int      `yaml:"max_cost_points"`
 }
 
 // GitHubConfig configures GitHub access for PR review and Actions monitoring.
@@ -1266,6 +1347,7 @@ func applyDefaults(cfg *Config) {
 		cfg.DevOps.Pipeline.ActRunnerImage = "catthehacker/ubuntu:act-latest"
 	}
 	resolveDevOpsTokens(&cfg.DevOps)
+	normalizeCloudDefaults(&cfg.DevOps.Cloud)
 	applyTeamPromptFiles(cfg)
 	if strings.TrimSpace(cfg.Agent.LocalIntel.CacheDir) == "" {
 		cfg.Agent.LocalIntel.CacheDir = layout.LocalIntel
@@ -1692,5 +1774,76 @@ func resolveDevOpsTokens(d *DevOpsConfig) {
 	}
 	if d.Sonar.Token == "" && d.Sonar.TokenEnv != "" {
 		d.Sonar.Token = os.Getenv(d.Sonar.TokenEnv)
+	}
+	resolveCloudSecrets(&d.Cloud)
+}
+
+// resolveCloudSecrets loads cloud credentials from env-backed fields when inline values are empty.
+func resolveCloudSecrets(c *CloudConfig) {
+	if c == nil {
+		return
+	}
+	if c.AWS.AccessKeyID == "" && c.AWS.AccessKeyIDEnv != "" {
+		c.AWS.AccessKeyID = os.Getenv(c.AWS.AccessKeyIDEnv)
+	}
+	if c.AWS.SecretAccessKey == "" && c.AWS.SecretAccessKeyEnv != "" {
+		c.AWS.SecretAccessKey = os.Getenv(c.AWS.SecretAccessKeyEnv)
+	}
+	if c.AWS.SessionToken == "" && c.AWS.SessionTokenEnv != "" {
+		c.AWS.SessionToken = os.Getenv(c.AWS.SessionTokenEnv)
+	}
+	if c.Azure.ClientSecret == "" && c.Azure.ClientSecretEnv != "" {
+		c.Azure.ClientSecret = os.Getenv(c.Azure.ClientSecretEnv)
+	}
+	if c.GCP.CredentialsPath == "" && c.GCP.CredentialsPathEnv != "" {
+		c.GCP.CredentialsPath = os.Getenv(c.GCP.CredentialsPathEnv)
+	}
+}
+
+// normalizeCloudDefaults applies safe defaults for devops.cloud.* tools.
+func normalizeCloudDefaults(c *CloudConfig) {
+	if c == nil {
+		return
+	}
+	clamp := func(res, aud, cost *int) {
+		if *res <= 0 {
+			*res = 500
+		}
+		if *res > 5000 {
+			*res = 5000
+		}
+		if *aud <= 0 {
+			*aud = 50
+		}
+		if *aud > 200 {
+			*aud = 200
+		}
+		if *cost <= 0 {
+			*cost = 62
+		}
+		if *cost > 366 {
+			*cost = 366
+		}
+	}
+	if c.AWS.Enabled {
+		if !c.AWS.Inventory && !c.AWS.Cost && !c.AWS.Audit {
+			c.AWS.Inventory = true
+		}
+		if c.AWS.DefaultRegion == "" {
+			c.AWS.DefaultRegion = "us-east-1"
+		}
+		clamp(&c.AWS.MaxResources, &c.AWS.MaxAuditEvents, &c.AWS.MaxCostPoints)
+	}
+	if c.Azure.Enabled {
+		if !c.Azure.Inventory && !c.Azure.Cost && !c.Azure.Audit {
+			c.Azure.Inventory = true
+		}
+		clamp(&c.Azure.MaxResources, &c.Azure.MaxAuditEvents, &c.Azure.MaxCostPoints)
+	}
+	if c.GCP.Enabled {
+		if !c.GCP.Inventory && !c.GCP.Cost && !c.GCP.Audit {
+			c.GCP.Inventory = true
+		}
+		clamp(&c.GCP.MaxResources, &c.GCP.MaxAuditEvents, &c.GCP.MaxCostPoints)
 	}
 }
