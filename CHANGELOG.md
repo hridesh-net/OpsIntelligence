@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-05-06
+
 ### Fixed
 
 - **Run trace dashboard** (`internal/webui/dashboard/assets/app.js`, `style.css`): treat zap-style JSON lines (`msg` + `level` / `caller`) as **`log`** with readable summaries instead of **`?`**; widen stream filter **`subagent`** to match **`specialist:`** child roles.
