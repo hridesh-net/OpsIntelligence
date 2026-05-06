@@ -76,6 +76,11 @@ type ReposTUIConfig struct {
 	// Manager is optional. When provided the TUI subscribes to its Progress
 	// channel to show live step/percentage and failure details.
 	Manager *repointel.Manager
+	// OnSyncRequest is called after the registry is marked pending so the
+	// caller can immediately notify the running manager (gateway HTTP or
+	// direct Manager.SyncRepo). If nil, only the registry flag is written
+	// and the manager picks it up on the next poll cycle.
+	OnSyncRequest func(id string)
 }
 
 // ReposTUIRun launches the full-screen Repo Intelligence dashboard.
@@ -429,11 +434,18 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "s":
-			// Queue selected repo for re-sync via registry (agent picks it up).
+			// Mark the selected repo pending and notify the running manager.
 			if len(m.entries) > 0 && m.selectedRepo < len(m.entries) {
 				e := m.entries[m.selectedRepo]
 				_ = m.cfg.Registry.UpdateIndexStatus(e.ID, repointel.IndexPending, "", "")
 				_ = m.cfg.Registry.UpdateScanStatus(e.ID, repointel.ScanPending, "", "")
+				if m.cfg.Manager != nil {
+					// Live mode: enqueue directly without waiting for the poll cycle.
+					_ = m.cfg.Manager.SyncRepo(e.ID)
+				} else if m.cfg.OnSyncRequest != nil {
+					// File-backed mode: notify via gateway HTTP.
+					go m.cfg.OnSyncRequest(e.ID)
+				}
 				m.entries = m.cfg.Registry.List()
 				m = resyncReposSelectionAndContent(m)
 				m.refreshViewport()

@@ -521,7 +521,7 @@ func runReposTUI(gf *globalFlags) error {
 
 	memDir := cfg.RepoIntel.MemoryDir
 	if memDir == "" {
-		memDir = "repointel/memory"
+		memDir = "data/repointel/memory"
 	}
 	if !filepath.IsAbs(memDir) {
 		memDir = filepath.Join(cfg.StateDir, memDir)
@@ -535,6 +535,9 @@ func runReposTUI(gf *globalFlags) error {
 	return tui.ReposTUIRun(tui.ReposTUIConfig{
 		Registry:  reg,
 		MemoryDir: memDir,
+		OnSyncRequest: func(id string) {
+			_, _ = notifyRepoSyncViaGateway(cfg, id)
+		},
 	})
 }
 

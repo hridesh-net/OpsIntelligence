@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] — 2026-05-06
+
+### Changed
+
+- **Repo Intelligence TUI** (`cmd/opsintelligence/tui/repos_tui.go`, `cmd/opsintelligence/repos_cmd.go`): pressing **`s`** now **syncs immediately** — calls **`Manager.SyncRepo`** when the manager is embedded in the TUI, otherwise **`notifyRepoSyncViaGateway`** via optional **`OnSyncRequest`**. Default memory dir for the standalone repos TUI defaults to **`data/repointel/memory`** under **`state_dir`**.
+
 ## [1.0.9] — 2026-05-06
 
 ### Added
