@@ -2285,6 +2285,9 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				}
 			}()
 		}
+		if srv.AuthService != nil {
+			srv.AuthService.Tasks = tasks
+		}
 
 		// Determine public-facing address for the web UI
 		webHost := cfg.Gateway.Host

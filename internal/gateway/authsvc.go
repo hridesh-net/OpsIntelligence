@@ -16,6 +16,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
+	"github.com/opsintelligence/opsintelligence/internal/subagents"
 )
 
 // AuthService is the HTTP surface that exposes the phase-2 auth layer
@@ -60,6 +61,10 @@ type AuthService struct {
 	// resolved config (empty when tracing is disabled for that stream).
 	RunTraceMaster   string
 	RunTraceSubagent string
+
+	// Tasks is the shared sub-agent async task tracker (optional). Set from
+	// cmd/opsintelligence after BuildAuthService when the full agent stack runs.
+	Tasks *subagents.TaskManager
 
 	Log *zap.Logger
 }
@@ -177,6 +182,8 @@ func (s *AuthService) Mount(mux *http.ServeMux) {
 
 	// NDJSON run trace tail (dashboard + API clients with run_trace.read).
 	mux.Handle("/api/v1/runtrace", s.Protect(http.HandlerFunc(s.handleRunTrace)))
+	// Live async sub-agent tasks (same permission as run trace).
+	mux.Handle("/api/v1/agent-tasks", s.Protect(http.HandlerFunc(s.handleAgentTasks)))
 }
 
 // usersRouter dispatches between Protect (for GET) and ProtectCSRF

@@ -78,6 +78,177 @@ code {
   word-break: break-word;
 }
 
+.runtrace-toolbar-spacer {
+  flex: 1 1 12px;
+  min-width: 8px;
+}
+
+.log-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.log-viewport {
+  max-height: min(72vh, 780px);
+  overflow: auto;
+  padding: 0;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.log-entry {
+  border-bottom: 1px solid var(--border);
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-summary {
+  display: grid;
+  grid-template-columns: 10.5rem 9rem 7.5rem 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--fg-dim);
+}
+
+.log-summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-summary:hover {
+  background: rgba(122, 167, 255, 0.06);
+}
+
+.log-ts {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-stream {
+  color: var(--ok);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-msg {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-kind {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: lowercase;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+
+.log-kind-tool {
+  border-color: #3d5a80;
+  color: #9ec5ff;
+}
+
+.log-kind-model {
+  border-color: #4a4a6b;
+  color: #c4b5fd;
+}
+
+.log-kind-chain {
+  border-color: #4a5f4a;
+  color: #b8e0b8;
+}
+
+.log-kind-task {
+  border-color: #6b5a3d;
+  color: #ffd89c;
+}
+
+.log-kind-error {
+  border-color: #804040;
+  color: var(--danger);
+}
+
+.log-json {
+  margin: 0 12px 10px;
+  padding: 10px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.log-empty,
+.log-loading,
+.log-error {
+  padding: 16px;
+  color: var(--fg-dim);
+}
+
+.log-error {
+  color: var(--danger);
+}
+
+.tasks-body {
+  margin-top: 8px;
+}
+
+.tasks-table-wrap {
+  overflow-x: auto;
+}
+
+.log-ish {
+  font-size: 12px;
+}
+
+.task-status {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.task-status-running {
+  color: var(--ok);
+}
+
+.task-status-pending {
+  color: var(--fg-muted);
+}
+
+.task-status-completed {
+  color: #9be79b;
+}
+
+.task-status-failed,
+.task-status-cancelled {
+  color: var(--danger);
+}
+
+.task-preview {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─────────────────────── auth page ─────────────────────── */
 
 .auth-page {

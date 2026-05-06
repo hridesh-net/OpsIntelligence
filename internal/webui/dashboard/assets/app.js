@@ -163,12 +163,23 @@
   // whether to attempt secrets.read / settings.write.
   let ME = null;
   let runTracePollId = null;
+  let tasksPollId = null;
   let reposPollId = null;
+
+  let runTraceLineCache = [];
+  let runTraceWhichCache = "all";
 
   function clearRunTracePoll() {
     if (runTracePollId != null) {
       clearInterval(runTracePollId);
       runTracePollId = null;
+    }
+  }
+
+  function clearTasksPoll() {
+    if (tasksPollId != null) {
+      clearInterval(tasksPollId);
+      tasksPollId = null;
     }
   }
 
@@ -233,6 +244,7 @@
 
   function route() {
     clearRunTracePoll();
+    clearTasksPoll();
     clearReposPoll();
     const { view, sub } = parseHash();
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
@@ -259,7 +271,9 @@
         break;
       case "tasks":
         titleEl.textContent = "Tasks";
-        subEl.textContent = "Background runs supervised by the master agent.";
+        subEl.textContent =
+          "Live async sub-agent runs (TaskManager): status, last progress event, and errors.";
+        renderTasksView(actionsEl);
         break;
       case "users":
         titleEl.textContent = "Users & Roles";
@@ -274,7 +288,7 @@
       case "runtrace":
         titleEl.textContent = "Run trace";
         subEl.textContent =
-          "NDJSON execution events (task_start, model_iteration, tools, chain_run, task_done).";
+          "Cloud-style execution log: merge master + sub-agent NDJSON, filter by stream, expand for full JSON.";
         renderRunTraceView(actionsEl);
         break;
       case "repos":
@@ -299,38 +313,19 @@
     }
   }
 
-  function renderRunTraceView(actionsEl) {
-    const tb = document.getElementById("runtrace-toolbar");
-    const body = document.getElementById("runtrace-body");
-    if (!tb || !body) return;
-    actionsEl.innerHTML = "";
-    tb.innerHTML = `
-      <label class="inline">Stream
-        <select id="runtrace-which">
-          <option value="master">Master agent</option>
-          <option value="subagent">Sub-agents</option>
-        </select>
-      </label>
-      <button type="button" class="primary" id="runtrace-refresh">Refresh</button>
-      <label class="inline"><input type="checkbox" id="runtrace-live" checked /> Auto-refresh (10s)</label>
-    `;
-    body.textContent = "Loading…";
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
 
-    const whichSel = document.getElementById("runtrace-which");
-    const liveCb = document.getElementById("runtrace-live");
-    const refresh = () => loadRunTraceInto(body, whichSel.value);
-    document.getElementById("runtrace-refresh").addEventListener("click", refresh);
-    whichSel.addEventListener("change", refresh);
-    liveCb.addEventListener("change", (ev) => {
-      clearRunTracePoll();
-      if (ev.target.checked) {
-        runTracePollId = setInterval(refresh, 10000);
-      }
-    });
-    refresh();
-    if (liveCb.checked) {
-      runTracePollId = setInterval(refresh, 10000);
-    }
+  function formatRunTraceTime(t) {
+    if (!t) return "—";
+    const d = new Date(t);
+    if (Number.isNaN(d.getTime())) return escapeHtml(String(t));
+    return escapeHtml(d.toLocaleString());
   }
 
   function summarizeRunTraceEvent(o) {
@@ -367,45 +362,232 @@
       const e = String(o.error);
       parts.push(`error=${e.length > 120 ? e.slice(0, 120) + "…" : e}`);
     }
-    return "▶ " + parts.join("  ·  ");
+    return parts.join(" · ");
   }
 
-  async function loadRunTraceInto(bodyEl, which) {
-    bodyEl.textContent = "Loading…";
+  function runTraceKindClass(kind) {
+    const k = String(kind || "").toLowerCase();
+    if (k.includes("error") || k === "chain_run_error") return "log-kind log-kind-error";
+    if (k.includes("tool")) return "log-kind log-kind-tool";
+    if (k.includes("task")) return "log-kind log-kind-task";
+    if (k.includes("model") || k.includes("iteration")) return "log-kind log-kind-model";
+    if (k.includes("chain")) return "log-kind log-kind-chain";
+    return "log-kind";
+  }
+
+  function renderRunTraceLogTable(bodyEl, metaEl, lines, metaText) {
+    if (metaEl) {
+      metaEl.className = "log-meta";
+      metaEl.textContent = metaText;
+    }
+    bodyEl.innerHTML = "";
+    if (!lines.length) {
+      bodyEl.innerHTML = `<div class="log-empty">${escapeHtml(metaText)} — no lines match.</div>`;
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (let idx = 0; idx < lines.length; idx++) {
+      const row = lines[idx];
+      let obj = row;
+      if (typeof row === "string") {
+        try {
+          obj = JSON.parse(row);
+        } catch {
+          obj = { kind: "raw", _raw: row };
+        }
+      }
+      const kind = (obj && obj.kind) || "event";
+      const ts = (obj && obj.t) || "";
+      const stream = (obj && obj._stream) || (obj && obj.runner_role) || "—";
+      const summary = obj && typeof obj === "object" ? summarizeRunTraceEvent(obj) : "";
+      const det = document.createElement("details");
+      det.className = "log-entry";
+      det.open = idx >= lines.length - 3;
+      const sum = document.createElement("summary");
+      sum.className = "log-summary";
+      sum.innerHTML = `<span class="log-ts">${formatRunTraceTime(ts)}</span><span class="log-stream" title="stream / role">${escapeHtml(String(stream))}</span><span class="${runTraceKindClass(kind)}">${escapeHtml(String(kind))}</span><span class="log-msg">${escapeHtml(summary || JSON.stringify(obj).slice(0, 200))}</span>`;
+      const pre = document.createElement("pre");
+      pre.className = "log-json";
+      pre.textContent = JSON.stringify(obj, null, 2);
+      det.appendChild(sum);
+      det.appendChild(pre);
+      frag.appendChild(det);
+    }
+    bodyEl.appendChild(frag);
+  }
+
+  function applyRunTraceFilters() {
+    const body = document.getElementById("runtrace-body");
+    const meta = document.getElementById("runtrace-meta");
+    if (!body) return;
+    const streamNeedle = (document.getElementById("runtrace-filter-stream")?.value || "")
+      .trim()
+      .toLowerCase();
+    const kindNeedle = (document.getElementById("runtrace-filter-kind")?.value || "").trim().toLowerCase();
+    const textNeedle = (document.getElementById("runtrace-filter-text")?.value || "").trim().toLowerCase();
+    const filtered = runTraceLineCache.filter((row) => {
+      let obj = row;
+      if (typeof row === "string") {
+        try {
+          obj = JSON.parse(row);
+        } catch {
+          obj = {};
+        }
+      }
+      if (!obj || typeof obj !== "object") return true;
+      const stream = String(obj._stream || obj.runner_role || "").toLowerCase();
+      if (streamNeedle && !stream.includes(streamNeedle)) return false;
+      const kind = String(obj.kind || "").toLowerCase();
+      if (kindNeedle && !kind.includes(kindNeedle)) return false;
+      if (textNeedle) {
+        try {
+          if (!JSON.stringify(obj).toLowerCase().includes(textNeedle)) return false;
+        } catch {
+          return false;
+        }
+      }
+      return true;
+    });
+    const base = window.__rtPathNote || "";
+    const pathNote = `${base} · showing ${filtered.length} of ${runTraceLineCache.length} (source=${runTraceWhichCache})`;
+    renderRunTraceLogTable(body, meta, filtered, pathNote);
+  }
+
+  async function loadRunTraceFetch(which) {
+    const body = document.getElementById("runtrace-body");
+    const meta = document.getElementById("runtrace-meta");
+    if (body) body.innerHTML = `<div class="log-loading">Loading…</div>`;
     try {
       const data = await fetchJSON(
-        `${API}/runtrace?which=${encodeURIComponent(which || "master")}&max_lines=500`,
+        `${API}/runtrace?which=${encodeURIComponent(which || "all")}&max_lines=800`,
       );
       const lines = Array.isArray(data.lines) ? data.lines : [];
-      const meta = `path: ${data.path || "—"}${data.truncated ? " (tail truncated)" : ""}\n\n`;
-      const text =
-        meta +
-        lines
-          .map((row) => {
-            let obj = row;
-            if (typeof row === "string") {
-              try {
-                obj = JSON.parse(row);
-              } catch {
-                return row;
-              }
-            }
-            if (obj && typeof obj === "object") {
-              const head = summarizeRunTraceEvent(obj);
-              const body = JSON.stringify(obj, null, 2);
-              return head ? `${head}\n${body}` : body;
-            }
-            return JSON.stringify(obj, null, 2);
-          })
-          .join("\n\n");
-      bodyEl.textContent = text || meta + "(no lines yet)";
+      runTraceLineCache = lines;
+      runTraceWhichCache = which || "all";
+      const paths = Array.isArray(data.paths) && data.paths.length ? data.paths.join(" · ") : data.path || "—";
+      window.__rtPathNote = `Sources: ${paths}${data.truncated ? " · tail truncated" : ""}`;
+      applyRunTraceFilters();
     } catch (err) {
       const m = String(err.message || err);
-      bodyEl.textContent =
+      const msg =
         m.includes("403") || m.toLowerCase().includes("permission")
           ? "Permission denied (needs run_trace.read on your role — owner/admin/operator/developer/auditor include it by default)."
           : m;
+      if (body) body.innerHTML = `<div class="log-error">${escapeHtml(msg)}</div>`;
+      if (meta) meta.textContent = "";
     }
+  }
+
+  function renderRunTraceView(actionsEl) {
+    const tb = document.getElementById("runtrace-toolbar");
+    const body = document.getElementById("runtrace-body");
+    const meta = document.getElementById("runtrace-meta");
+    if (!tb || !body) return;
+    actionsEl.innerHTML = "";
+    tb.innerHTML = `
+      <label class="inline">NDJSON source
+        <select id="runtrace-which">
+          <option value="all">All streams (merged)</option>
+          <option value="master">Master file only</option>
+          <option value="subagent">Sub-agent file only</option>
+        </select>
+      </label>
+      <button type="button" class="primary" id="runtrace-refresh">Refresh</button>
+      <label class="inline"><input type="checkbox" id="runtrace-live" checked /> Auto-refresh (10s)</label>
+      <span class="runtrace-toolbar-spacer"></span>
+      <label class="inline">Filter stream / role <input type="search" id="runtrace-filter-stream" placeholder="e.g. master, subagent, specialist" /></label>
+      <label class="inline">Kind <input type="search" id="runtrace-filter-kind" placeholder="task_start, tool…" /></label>
+      <label class="inline">Contains <input type="search" id="runtrace-filter-text" placeholder="substring in JSON" /></label>
+    `;
+    if (meta) {
+      meta.className = "log-meta";
+      meta.textContent = "";
+    }
+
+    const whichSel = document.getElementById("runtrace-which");
+    const liveCb = document.getElementById("runtrace-live");
+    const refresh = () => loadRunTraceFetch(whichSel.value);
+    document.getElementById("runtrace-refresh").addEventListener("click", refresh);
+    whichSel.addEventListener("change", () => {
+      runTraceLineCache = [];
+      refresh();
+    });
+    ["runtrace-filter-stream", "runtrace-filter-kind", "runtrace-filter-text"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el)
+        el.addEventListener("input", () => {
+          if (runTraceLineCache.length) applyRunTraceFilters();
+        });
+    });
+    liveCb.addEventListener("change", (ev) => {
+      clearRunTracePoll();
+      if (ev.target.checked) {
+        runTracePollId = setInterval(refresh, 10000);
+      }
+    });
+    refresh();
+    if (liveCb.checked) {
+      runTracePollId = setInterval(refresh, 10000);
+    }
+  }
+
+  function renderTasksView(actionsEl) {
+    const tb = document.getElementById("tasks-toolbar");
+    const body = document.getElementById("tasks-body");
+    if (!tb || !body) return;
+    actionsEl.innerHTML = "";
+    tb.innerHTML = `
+      <button type="button" class="primary" id="tasks-refresh">Refresh</button>
+      <label class="inline"><input type="checkbox" id="tasks-live" checked /> Auto-refresh (5s)</label>
+    `;
+    body.innerHTML = `<div class="log-loading">Loading…</div>`;
+
+    const liveCb = document.getElementById("tasks-live");
+    const refresh = async () => {
+      try {
+        const data = await fetchJSON(`${API}/agent-tasks`);
+        const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        if (!tasks.length) {
+          body.innerHTML =
+            '<p class="note">No async tasks in memory yet. Sub-agent runs appear here after <code>subagent_run_async</code> (or orchestrator delegations).</p>';
+          return;
+        }
+        const rows = tasks
+          .map((t) => {
+            const last = t.last_event
+              ? `${t.last_event.kind || ""}: ${escapeHtml(String(t.last_event.message || "").slice(0, 120))}`
+              : "—";
+            return `<tr>
+              <td><code>${escapeHtml(t.id || "")}</code></td>
+              <td>${escapeHtml(t.sub_agent_name || t.sub_agent_id || "—")}</td>
+              <td><span class="task-status task-status-${escapeHtml(String(t.status || ""))}">${escapeHtml(t.status || "")}</span></td>
+              <td>${t.started_at ? escapeHtml(t.started_at) : "—"}</td>
+              <td>${typeof t.elapsed_ms === "number" ? `${Math.round(t.elapsed_ms / 1000)}s` : "—"}</td>
+              <td class="task-preview">${escapeHtml(String(t.task_preview || "").slice(0, 80))}</td>
+              <td class="task-preview">${last}</td>
+              <td>${t.event_count != null ? t.event_count : 0}</td>
+            </tr>`;
+          })
+          .join("");
+        body.innerHTML = `<div class="tasks-table-wrap"><table class="admin-table log-ish">
+          <thead><tr><th>Task ID</th><th>Agent</th><th>Status</th><th>Started</th><th>Elapsed</th><th>Prompt</th><th>Last event</th><th>#Evts</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`;
+      } catch (err) {
+        const m = String(err.message || err);
+        body.innerHTML =
+          m.includes("403") || m.toLowerCase().includes("permission")
+            ? '<p class="note">Permission denied (needs run_trace.read).</p>'
+            : `<p class="note">${escapeHtml(m)}</p>`;
+      }
+    };
+
+    document.getElementById("tasks-refresh").addEventListener("click", refresh);
+    liveCb.addEventListener("change", (ev) => {
+      clearTasksPoll();
+      if (ev.target.checked) tasksPollId = setInterval(refresh, 5000);
+    });
+    refresh();
+    if (liveCb.checked) tasksPollId = setInterval(refresh, 5000);
   }
 
   function renderSettingsSubnav(active) {

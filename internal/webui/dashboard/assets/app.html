@@ -71,20 +71,26 @@
         <div class="card">
           <h2>Execution trace</h2>
           <p class="note">
-            Last lines from the agent NDJSON trace (<code>agent.run_trace_file</code> / sub-agent file).
-            For remote access over Tailscale, set <strong>Gateway → Bind mode</strong> to
-            <code>lan</code> so the gateway listens on <code>0.0.0.0</code>, then open
-            <code>http://&lt;tailscale-ip&gt;:port/dashboard/</code> in a browser.
+            Merged NDJSON from <code>agent.run_trace_file</code> and <code>agent.run_trace_subagent_file</code>
+            (use <strong>All streams</strong> to interleave by timestamp). Expand a row for full JSON.
+            Remote access: set <strong>Gateway → Bind mode</strong> to <code>lan</code>, then open
+            <code>http://&lt;tailscale-ip&gt;:port/dashboard/</code>.
           </p>
           <div id="runtrace-toolbar" class="runtrace-toolbar"></div>
-          <div id="runtrace-body" class="runtrace-scroll" aria-live="polite">Loading…</div>
+          <div id="runtrace-meta" class="log-meta" aria-live="polite"></div>
+          <div id="runtrace-body" class="log-viewport" aria-live="polite">Loading…</div>
         </div>
       </section>
 
       <section class="view hidden" id="view-tasks">
-        <div class="placeholder">
+        <div class="card">
           <h2>Live tasks</h2>
-          <p>Coming soon — this will stream <code>subagents.TaskManager</code> events.</p>
+          <p class="note">
+            In-memory async runs from <code>subagents.TaskManager</code> (e.g. <code>subagent_run_async</code>,
+            orchestrator specialists). Clears on process restart; use <strong>Run trace</strong> for durable NDJSON.
+          </p>
+          <div id="tasks-toolbar" class="runtrace-toolbar"></div>
+          <div id="tasks-body" class="tasks-body" aria-live="polite"></div>
         </div>
       </section>
 
