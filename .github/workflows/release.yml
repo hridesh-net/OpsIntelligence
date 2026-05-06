@@ -64,34 +64,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsqlite3-dev
 
-      - name: Install Zig (retry on network/cache flake)
+      # Prefer mlugg/setup-zig over a single ziglang.org curl: official docs warn that
+      # ziglang.org has no uptime SLA; this action shuffles community mirrors, verifies
+      # minisign signatures, caches the toolchain, and falls back to ziglang.org last.
+      - name: Setup Zig (mirrors + signature verify)
         if: matrix.target == 'linux-arm64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          ZIG_VERSION="0.13.0"
-          ZIG_DIR="zig-linux-x86_64-${ZIG_VERSION}"
-          ZIG_ARCHIVE="${ZIG_DIR}.tar.xz"
-          ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_ARCHIVE}"
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+          cache-key: release-${{ matrix.target }}
 
-          rm -f "${ZIG_ARCHIVE}"
-          for attempt in 1 2 3; do
-            echo "Downloading Zig (${attempt}/3): ${ZIG_URL}"
-            if curl -fL --retry 5 --retry-all-errors --retry-delay 4 \
-              -o "${ZIG_ARCHIVE}" "${ZIG_URL}"; then
-              break
-            fi
-            if [ "${attempt}" -eq 3 ]; then
-              echo "Failed to download Zig after 3 attempts."
-              exit 1
-            fi
-            sleep $((attempt * 10))
-          done
-
-          tar -xf "${ZIG_ARCHIVE}"
-          echo "${PWD}/${ZIG_DIR}" >> "${GITHUB_PATH}"
-          zig version
-          
       - name: Build Binary (Native)
         if: matrix.target != 'linux-arm64'
         env:

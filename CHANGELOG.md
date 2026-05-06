@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] — 2026-05-06
+
+### Fixed
+
+- **Release workflow Zig setup flakiness** (`.github/workflows/release.yml`): install Zig via **`mlugg/setup-zig`** (community mirrors, minisign verify, Actions cache) instead of a single-host **`curl`** from ziglang.org, which can reset mid-download.
+
 ## [1.0.4] — 2026-05-06
 
 ### Fixed
