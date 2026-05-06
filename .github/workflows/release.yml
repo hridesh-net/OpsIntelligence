@@ -44,7 +44,7 @@ jobs:
             goarch: amd64
             ext: ".exe"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - uses: actions/setup-go@v5
         with:
@@ -64,11 +64,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsqlite3-dev
 
-      - name: Setup Zig
+      - name: Install Zig (retry on network/cache flake)
         if: matrix.target == 'linux-arm64'
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIG_VERSION="0.13.0"
+          ZIG_DIR="zig-linux-x86_64-${ZIG_VERSION}"
+          ZIG_ARCHIVE="${ZIG_DIR}.tar.xz"
+          ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_ARCHIVE}"
+
+          rm -f "${ZIG_ARCHIVE}"
+          for attempt in 1 2 3; do
+            echo "Downloading Zig (${attempt}/3): ${ZIG_URL}"
+            if curl -fL --retry 5 --retry-all-errors --retry-delay 4 \
+              -o "${ZIG_ARCHIVE}" "${ZIG_URL}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "Failed to download Zig after 3 attempts."
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          tar -xf "${ZIG_ARCHIVE}"
+          echo "${PWD}/${ZIG_DIR}" >> "${GITHUB_PATH}"
+          zig version
           
       - name: Build Binary (Native)
         if: matrix.target != 'linux-arm64'
@@ -106,7 +128,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Download all artifacts
         uses: actions/download-artifact@v4

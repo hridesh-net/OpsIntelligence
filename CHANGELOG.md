@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-05-06
+
+### Fixed
+
+- **Agent REPL TUI log pollution + flicker** (`cmd/opsintelligence/main.go`, `internal/cron/cron.go`): route interactive agent/cron logs to file-backed run trace during Bubble Tea REPL mode so structured JSON lines no longer bleed into the alternate-screen terminal UI.
+- **Release workflow Zig setup flakiness** (`.github/workflows/release.yml`): replace action-cache Zig setup with retrying direct download/install and upgrade `actions/checkout` to `@v5` to avoid Node 20 deprecation warnings.
+
 ## [1.0.3] — 2026-05-05
 
 ### Added
