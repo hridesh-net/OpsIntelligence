@@ -1662,6 +1662,17 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			return embedReg.EmbedQuery(c, text)
 		}
 	}
+
+	// Bubbletea uses the alternate screen; zap JSON on stderr corrupts the layout and
+	// causes flicker. When we're headed for REPL-only mode, send agent-loop logs to the
+	// run trace file (same path as structured run_trace) instead of the terminal.
+	replMode := message == "" && !serve && !auto
+	runnerLog := log
+	if replMode {
+		runnerLog = buildLogger(gf.logLevel, layout.AgentRunTrace())
+		defer func() { _ = runnerLog.Sync() }() //nolint:errcheck
+	}
+
 	runner := agent.NewRunner(agent.Config{
 		MaxIterations:           cfg.Agent.MaxIterations,
 		MaxToolCallsPerUserTurn: cfg.Agent.Autonomy.MaxToolCallsPerTurn,
@@ -1699,7 +1710,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			LogDecisions:        cfg.Agent.Palace.LogDecisions,
 		},
 		EmbedQuery: embedQueryFn,
-	}, p, toolReg, memMgr, log, cfg.StateDir).WithCatalog(catalog)
+	}, p, toolReg, memMgr, runnerLog, cfg.StateDir).WithCatalog(catalog)
 
 	// ── Security: Guardrail + Audit Log ────────────────────────────────
 	guardrailMode := security.GuardrailMode(cfg.Security.Mode)
@@ -1738,7 +1749,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		ParentRegistry:          toolReg,
 		ToolGraph:               toolGraph,
 		Mem:                     memMgr,
-		Log:                     log,
+		Log:                     runnerLog,
 		Model:                   modelInfo.ID,
 		ActiveSkillsContext:     skillsCtx,
 		EnabledSkillNames:       activeSkillNames,
@@ -1893,12 +1904,20 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		if extPrompt != "" {
 			focus = extPrompt + "\n\n" + focus
 		}
+		// Give each specialist its own trace file so the dashboard can filter
+		// events by agent name (logs/subagents/<name>/runtrace.ndjson).
+		agentTraceDir := filepath.Join(layout.LogsSubagents, def.Name)
+		agentTracePath := childRunTrace // fallback to shared subagent trace
+		if err := os.MkdirAll(agentTraceDir, 0o755); err == nil {
+			agentTracePath = filepath.Join(agentTraceDir, "runtrace.ndjson")
+		}
+
 		r := agent.NewRunner(agent.Config{
 			MaxIterations:         32,
 			Model:                 modelInfo.ID,
 			ActiveSkillsContext:   skillsCtx,
 			EnabledSkillNames:     activeSkillNames,
-			RunTracePath:          childRunTrace,
+			RunTracePath:          agentTracePath,
 			RunnerRole:            "specialist:" + def.Name,
 			RunTraceMode:          cfg.Agent.RunTraceMode,
 			ProviderName:          providerNameForCaps,
@@ -1916,12 +1935,12 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 			},
 			EmbedQuery: embedQueryFn,
-		}, p, specialistReg, memMgr, log, cfg.StateDir).
+		}, p, specialistReg, memMgr, runnerLog, cfg.StateDir).
 			WithCatalog(specialistCatalog).
 			WithSecurity(guardrail, auditLog)
 		return r, nil
 	}
-	orch := agents.NewOrchestratorWithRegistry(agentReg, tasks, spawnSpecialist, log)
+	orch := agents.NewOrchestratorWithRegistry(agentReg, tasks, spawnSpecialist, runnerLog)
 	// Inject the orchestrator routing hint into the master's system prompt
 	// so the LLM knows which specialists exist and when to delegate.
 	if hint := orch.RoutingHint(); hint != "" {
@@ -1971,7 +1990,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			PrimaryRPM:   cfg.DevOps.GitHub.PrimaryRPM,
 			BurstMult:    cfg.DevOps.GitHub.BurstMultiplier,
 			SecondaryRPM: cfg.DevOps.GitHub.SecondaryRPM,
-		}, log)
+		}, runnerLog)
 		if riErr != nil {
 			log.Warn("repo intelligence LLM router init failed", zap.Error(riErr))
 		} else {
@@ -1989,8 +2008,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				FullIndexMaxFileBytes: fullMaxBlob,
 				FullIndexChunkRunes:   riCfg.FullIndexChunkRunes,
 				FullIndexConcurrency:  riCfg.FullIndexConcurrency,
-			}, riRouter, log)
-			scnr := repointel.NewScanner(riRouter, log)
+			}, riRouter, runnerLog)
+			scnr := repointel.NewScanner(riRouter, runnerLog)
 
 			riMgrCfg := repointel.ManagerConfig{
 				RegistryPath:    registryFile,
@@ -2005,7 +2024,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				riMgrCfg.EmbeddingDimensions = dims
 			}
 
-			mgr, mgrErr := repointel.NewManager(riMgrCfg, idxr, scnr, log)
+			mgr, mgrErr := repointel.NewManager(riMgrCfg, idxr, scnr, runnerLog)
 			if mgrErr != nil {
 				log.Warn("repo intelligence manager init failed", zap.Error(mgrErr))
 			} else {
@@ -2028,7 +2047,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	var prReviewHandler *tools.PRReviewCmdHandler
 	if reviewFn := tools.NewReviewFn(ctx, cfg.DevOps, p, modelInfo.ID, tools.ReviewFnOptions{
 		StateDir:    cfg.StateDir,
-		Log:         log,
+		Log:         runnerLog,
 		RepoManager: repoMgr,
 	}); reviewFn != nil {
 		workers := cfg.DevOps.GitHub.PRReviewWorkers
@@ -2039,7 +2058,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			reviewFn,
 			channelSenders,
 			workers,
-			log,
+			runnerLog,
 		)
 		runner = runner.WithPRReview(prReviewHandler)
 		toolReg.Register(tools.PRReviewTasksTool{H: prReviewHandler})
@@ -2105,7 +2124,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	cronDaemon := cron.NewDaemon(
 		cronJobs,
 		runner,
-		log,
+		runnerLog,
 		cfg.Dirs().CronJobs(),
 	)
 	if err := cronDaemon.Start(); err != nil {
@@ -2227,7 +2246,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			sid = "opsintelligence:heartbeat"
 		}
 		prompt := strings.TrimSpace(hb.Prompt)
-		go runHeartbeatLoop(ctx, runner, dur, sid, prompt, log)
+		go runHeartbeatLoop(ctx, runner, dur, sid, prompt, runnerLog)
 	}
 
 	// If --serve is active, start the Gateway (+ embedded web UI) and wait
@@ -2316,10 +2335,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return nil
 	}
 
-	// Interactive REPL mode — rebuild logger to write to file only so that
-	// structured JSON log lines never bleed into the terminal display.
-	tuiLog := buildLogger(gf.logLevel, dirs.New(cfg.StateDir).AgentRunTrace())
-	return runREPL(ctx, runner, modelInfo.ID, tuiLog, cfg, gf, tasks)
+	return runREPL(ctx, runner, modelInfo.ID, cfg, gf, tasks, orch)
 }
 
 // extractBundledSkills copies the repo's skills/ directory into destDir (bundled dir).
@@ -2779,7 +2795,7 @@ func (h *cliStreamHandler) OnError(err error) { h.done <- err }
 
 // runREPL launches the interactive agent REPL.
 // It now uses the futuristic bubbletea TUI from cmd/opsintelligence/tui.
-func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger, cfg *config.Config, gf *globalFlags, tasks *subagents.TaskManager) error {
+func runREPL(ctx context.Context, r *agent.Runner, modelID string, cfg *config.Config, gf *globalFlags, tasks *subagents.TaskManager, orch *agents.Orchestrator) error {
 	// Count providers and skills for the banner
 	providerCount := 1 // at least one is configured or we wouldn't be here
 	skillCount := 0
@@ -2808,7 +2824,7 @@ func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logg
 	}
 	dash := buildDashboardInfo(cfg, gf.configPath, os.Getpid(), version, skillSummary, channels, mcpTransport, gwBind, tasks)
 
-	a := &agentRunnerAdapter{runner: r}
+	a := &orchestratingAdapter{runner: r, orch: orch, tasks: tasks}
 	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID, dash)
 }
 
@@ -2829,6 +2845,85 @@ func (a *agentRunnerAdapter) RunStream(ctx context.Context, msg string, handler 
 		Content:   msg,
 		CreatedAt: time.Now(),
 	}, &runnerStreamBridge{h: handler})
+}
+
+// orchestratingAdapter extends agentRunnerAdapter with auto-routing: before
+// dispatching to the master runner it checks whether the message matches a
+// specialist agent. If it does, the specialist handles the turn entirely and
+// its progress events are streamed back to the TUI. This makes specialist
+// invocation transparent — the user sees the specialist running, not the master.
+type orchestratingAdapter struct {
+	runner *agent.Runner
+	orch   *agents.Orchestrator
+	tasks  *subagents.TaskManager
+}
+
+func (a *orchestratingAdapter) SessionID() string { return a.runner.SessionID() }
+
+func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handler tui.AgentStreamHandler) {
+	// Try to route to a specialist agent first.
+	result, err := a.orch.Route(ctx, msg)
+	if err != nil || !result.Delegated {
+		// No specialist matched — master runner handles it.
+		a.runner.RunStream(ctx, memory.Message{
+			ID:        uuid.New().String(),
+			SessionID: a.runner.SessionID(),
+			Role:      memory.RoleUser,
+			Content:   msg,
+			CreatedAt: time.Now(),
+		}, &runnerStreamBridge{h: handler})
+		return
+	}
+
+	// Specialist matched — announce it and stream its progress.
+	handler.OnToolCall("agent.route → "+result.AgentName, json.RawMessage(`{}`))
+
+	cursor := 0
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			handler.OnError(ctx.Err())
+			return
+		case <-ticker.C:
+			// Drain new progress events from the specialist.
+			events := a.tasks.Events(result.TaskID, cursor)
+			for _, ev := range events {
+				if ev.Message != "" {
+					phase := string(ev.Kind)
+					if ev.Phase != "" {
+						phase = ev.Phase
+					}
+					handler.OnToken("[" + result.AgentName + " · " + phase + "] " + ev.Message + "\n")
+				}
+			}
+			cursor += len(events)
+
+			// Check task terminal state.
+			tk, ok := a.tasks.Get(result.TaskID)
+			if !ok {
+				handler.OnDone(&tui.RunResult{})
+				return
+			}
+			switch tk.Status {
+			case subagents.StatusCompleted:
+				if tk.Result != "" {
+					handler.OnToken("\n" + tk.Result)
+				}
+				handler.OnToolResult("agent.route", result.AgentName+" completed")
+				handler.OnDone(&tui.RunResult{Iterations: tk.Iterations})
+				return
+			case subagents.StatusFailed:
+				handler.OnError(fmt.Errorf("%s specialist failed: %s", result.AgentName, tk.Error))
+				return
+			case subagents.StatusCancelled:
+				handler.OnError(fmt.Errorf("%s specialist cancelled", result.AgentName))
+				return
+			}
+		}
+	}
 }
 
 // runnerStreamBridge adapts agent.StreamHandler → tui.AgentStreamHandler.

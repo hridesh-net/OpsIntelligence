@@ -33,7 +33,7 @@ import (
 // When `embedded` is non-nil it is consulted first, then the disk layout
 // at `dir` is overlaid (disk wins per-ID). This lets the binary ship
 // sensible defaults while letting operators customise anything on disk
-// under ~/.opsintelligence/prompts/.
+// under <state_dir>/config/prompts/ (see dirs.Layout).
 type Loader struct {
 	// Embedded is an optional read-only filesystem (typically a
 	// go:embed FS) scanned before Dir. Tests can pass fs.FS fixtures.
@@ -43,7 +43,7 @@ type Loader struct {
 	EmbeddedRoot string
 	// ExtraDirs are optional prompt roots merged after Embedded but before
 	// Dir. Later directories override earlier ones for the same prompt ID.
-	// Dir (<state_dir>/prompts) is always merged last and wins.
+	// Dir (<state_dir>/config/prompts) is always merged last and wins.
 	ExtraDirs []string
 	// Dir is the on-disk directory that overrides embedded defaults.
 	// Missing directories are not an error.

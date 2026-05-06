@@ -3,7 +3,6 @@ package cron
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"sync"
 	"time"
@@ -72,7 +71,7 @@ func (d *Daemon) Start() error {
 	for _, j := range allJobs {
 		job := j // Capture variable for closure
 		_, err := d.cron.AddFunc(job.Schedule, func() {
-			log.Printf("cron: executing job %q", job.ID)
+			d.log.Info("cron: executing job", zap.String("id", job.ID))
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 

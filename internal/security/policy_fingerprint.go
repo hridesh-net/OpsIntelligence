@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 )
 
 // LoadPolicyBundle reads POLICIES.md (if present) and all *.md files under
-// teams/ from stateDir, concatenated in stable sorted order. Returns an empty
-// string when no policy files exist so callers can skip injection cleanly.
+// config/teams/ (canonical) and legacy teams/ from stateDir, concatenated in
+// stable sorted order. Returns an empty string when no policy files exist so
+// callers can skip injection cleanly.
 func LoadPolicyBundle(stateDir string) string {
 	stateDir = strings.TrimSpace(stateDir)
 	if stateDir == "" {
@@ -28,26 +31,37 @@ func LoadPolicyBundle(stateDir string) string {
 		files = append(files, fileEntry{rel: "POLICIES.md", data: b})
 	}
 
-	teamsDir := filepath.Join(stateDir, "teams")
-	_ = filepath.WalkDir(teamsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	seenTeamRel := map[string]struct{}{}
+	layout := dirs.New(stateDir)
+	for _, teamsDir := range []string{layout.Teams, filepath.Join(stateDir, "teams")} {
+		st, err := os.Stat(teamsDir)
+		if err != nil || !st.IsDir() {
+			continue
+		}
+		_ = filepath.WalkDir(teamsDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !strings.EqualFold(filepath.Ext(path), ".md") {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			rel, err := filepath.Rel(stateDir, path)
+			if err != nil {
+				rel = path
+			}
+			rel = filepath.ToSlash(rel)
+			if _, dup := seenTeamRel[rel]; dup {
+				return nil
+			}
+			seenTeamRel[rel] = struct{}{}
+			files = append(files, fileEntry{rel: rel, data: b})
 			return nil
-		}
-		if !strings.EqualFold(filepath.Ext(path), ".md") {
-			return nil
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		rel, err := filepath.Rel(stateDir, path)
-		if err != nil {
-			rel = path
-		}
-		rel = filepath.ToSlash(rel)
-		files = append(files, fileEntry{rel: rel, data: b})
-		return nil
-	})
+		})
+	}
 
 	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
 	if len(files) == 0 {
@@ -67,8 +81,8 @@ func LoadPolicyBundle(stateDir string) string {
 }
 
 // PolicyBundleFingerprint returns a stable sha256: digest of owner policy inputs
-// under stateDir: POLICIES.md (if present) and all *.md files under teams/, sorted
-// by path relative to stateDir. Empty string if nothing contributes.
+// under stateDir: POLICIES.md (if present) and all *.md files under config/teams/
+// and legacy teams/, sorted by path relative to stateDir. Empty string if nothing contributes.
 func PolicyBundleFingerprint(stateDir string) string {
 	stateDir = strings.TrimSpace(stateDir)
 	if stateDir == "" {
@@ -84,26 +98,37 @@ func PolicyBundleFingerprint(stateDir string) string {
 		files = append(files, fileEntry{rel: "POLICIES.md", data: b})
 	}
 
-	teamsDir := filepath.Join(stateDir, "teams")
-	_ = filepath.WalkDir(teamsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	seenTeamRel := map[string]struct{}{}
+	layout := dirs.New(stateDir)
+	for _, teamsDir := range []string{layout.Teams, filepath.Join(stateDir, "teams")} {
+		st, err := os.Stat(teamsDir)
+		if err != nil || !st.IsDir() {
+			continue
+		}
+		_ = filepath.WalkDir(teamsDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !strings.EqualFold(filepath.Ext(path), ".md") {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			rel, err := filepath.Rel(stateDir, path)
+			if err != nil {
+				rel = path
+			}
+			rel = filepath.ToSlash(rel)
+			if _, dup := seenTeamRel[rel]; dup {
+				return nil
+			}
+			seenTeamRel[rel] = struct{}{}
+			files = append(files, fileEntry{rel: rel, data: b})
 			return nil
-		}
-		if !strings.EqualFold(filepath.Ext(path), ".md") {
-			return nil
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		rel, err := filepath.Rel(stateDir, path)
-		if err != nil {
-			rel = path
-		}
-		rel = filepath.ToSlash(rel)
-		files = append(files, fileEntry{rel: rel, data: b})
-		return nil
-	})
+		})
+	}
 
 	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
 

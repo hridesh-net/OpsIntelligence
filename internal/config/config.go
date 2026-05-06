@@ -1454,6 +1454,11 @@ func applyAgentRunTrace(cfg *Config) {
 	if strings.TrimSpace(cfg.Agent.RunTraceFile) == "" {
 		cfg.Agent.RunTraceFile = "logs/agent/runtrace.ndjson"
 	}
+	// Sub-agent trace defaults to a separate file so the dashboard can filter
+	// specialist events independently from the master agent stream.
+	if strings.TrimSpace(cfg.Agent.RunTraceSubagentFile) == "" {
+		cfg.Agent.RunTraceSubagentFile = "logs/subagents/runtrace.ndjson"
+	}
 	if e := strings.TrimSpace(os.Getenv("OPSINTELLIGENCE_RUN_TRACE_FILE")); e != "" {
 		cfg.Agent.RunTraceFile = e
 	}

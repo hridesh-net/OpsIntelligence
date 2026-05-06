@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 )
 
 //go:embed templates/*.md
@@ -28,38 +30,25 @@ func EmbeddedPromptsFS() (fs.FS, error) {
 	return fs.Sub(embeddedPromptsFS, "seed/prompts")
 }
 
-// InitializeWorkspace creates the base directories (~/.opsintelligence, tools, skills)
-// and drops default opsintelligence.yaml and workspace markdown templates if they don't already exist.
+// InitializeWorkspace creates canonical state directories (via dirs.Layout),
+// seeds prompts/agents/teams under config/, skills, workspace templates, etc.
+// It does not recreate legacy flat paths (memory/, tools/ at root); those are
+// migrated by dirs.Migrate + dirs.Layout.EnsureAll in the agent entrypoint.
 func InitializeWorkspace(configPath string) error {
-	dir := filepath.Dir(configPath)
-
-	// Create core directories
-	dirs := []string{
-		dir,
-		filepath.Join(dir, "memory"),
-		filepath.Join(dir, "skills"),
-		filepath.Join(dir, "tools"),
-		filepath.Join(dir, "policies"),
-		filepath.Join(dir, "teams", "example-team"),
-		filepath.Join(dir, "prompts"),
-		filepath.Join(dir, "prompts", "chains"),
-		filepath.Join(dir, "workspace", "public"),
+	root := filepath.Dir(configPath)
+	layout := dirs.New(root)
+	if err := layout.EnsureAll(); err != nil {
+		return fmt.Errorf("ensure state dirs: %w", err)
 	}
 
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", d, err)
-		}
-	}
-
-	// Dump embedded markdown templates into the workspace (SOUL.md, IDENTITY.md, etc.)
+	// Dump embedded markdown templates into the workspace root (SOUL.md, IDENTITY.md, etc.)
 	entries, err := embeddedTemplates.ReadDir("templates")
 	if err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-			destPath := filepath.Join(dir, entry.Name())
+			destPath := filepath.Join(layout.Root, entry.Name())
 			if _, statErr := os.Stat(destPath); os.IsNotExist(statErr) {
 				if data, readErr := embeddedTemplates.ReadFile(filepath.Join("templates", entry.Name())); readErr == nil {
 					_ = os.WriteFile(destPath, data, 0o644)
@@ -68,10 +57,11 @@ func InitializeWorkspace(configPath string) error {
 		}
 	}
 
-	// Seed the example team directory with the shipped DevOps policy templates
-	// (pr-review, sonar, cicd, secrets-and-safety, README). Existing files are
-	// never overwritten — once a team has edited them, they own the content.
-	teamDst := filepath.Join(dir, "teams", "example-team")
+	// Seed the example team directory (config/teams/example-team/)
+	teamDst := filepath.Join(layout.Teams, "example-team")
+	if err := os.MkdirAll(teamDst, 0o755); err != nil {
+		return fmt.Errorf("teams dir: %w", err)
+	}
 	teamEntries, err := embeddedTeamSeed.ReadDir("seed/teams/example-team")
 	if err == nil {
 		for _, entry := range teamEntries {
@@ -87,25 +77,15 @@ func InitializeWorkspace(configPath string) error {
 		}
 	}
 
-	// Seed the smart-prompt library (pr-review, sonar-triage, cicd-regression,
-	// incident-scribe, and the meta/* helpers). Operators can edit files under
-	// <state_dir>/prompts/ to override any shipped prompt; existing files are
-	// never overwritten.
-	promptsRoot := filepath.Join(dir, "prompts")
-	if err := seedFromEmbeddedFS(embeddedPromptsFS, "seed/prompts", promptsRoot); err != nil {
+	// Smart-prompt library under config/prompts/
+	if err := seedFromEmbeddedFS(embeddedPromptsFS, "seed/prompts", layout.Prompts); err != nil {
 		return fmt.Errorf("seed prompts: %w", err)
 	}
 
-	// Seed agent execution pipelines (flow.yaml per agent). Stored under
-	// <state_dir>/config/agents/. Operators can edit these files to customise
-	// stage order, conditions, and tool hints; existing files are never overwritten.
-	agentsRoot := filepath.Join(dir, "config", "agents")
-	if err := seedFromEmbeddedFS(embeddedAgentsFS, "seed/agents", agentsRoot); err != nil {
+	// Agent execution pipelines under config/agents/
+	if err := seedFromEmbeddedFS(embeddedAgentsFS, "seed/agents", layout.Agents); err != nil {
 		return fmt.Errorf("seed agent flows: %w", err)
 	}
-
-	// We no longer write a default config.yaml here; the new interactive onboard wizard
-	// will generate the custom config once the user inputs their preferences.
 
 	return nil
 }

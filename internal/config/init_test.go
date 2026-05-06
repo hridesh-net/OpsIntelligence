@@ -40,9 +40,9 @@ func TestInitializeWorkspace_SeedsPrompts(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	for _, rel := range []string{
-		"prompts/pr-review/gather.md",
-		"prompts/chains/pr-review.yaml",
-		"prompts/meta/self-critique.md",
+		"config/prompts/pr-review/gather.md",
+		"config/prompts/chains/pr-review.yaml",
+		"config/prompts/meta/self-critique.md",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("seeded %s missing: %v", rel, err)
@@ -50,7 +50,7 @@ func TestInitializeWorkspace_SeedsPrompts(t *testing.T) {
 	}
 
 	// Operator edit must survive a re-init.
-	edited := filepath.Join(dir, "prompts/meta/self-critique.md")
+	edited := filepath.Join(dir, "config/prompts/meta/self-critique.md")
 	if err := os.WriteFile(edited, []byte("my custom critique"), 0o644); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
