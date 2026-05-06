@@ -150,6 +150,87 @@ func newReposTUIModel(cfg ReposTUIConfig) reposTUIModel {
 	return m
 }
 
+// reloadReposFromDisk re-reads repos.yaml so the TUI reflects updates written by
+// a concurrent gateway/agent process; then re-clamps selection + tab content.
+func reloadReposFromDisk(m reposTUIModel) reposTUIModel {
+	_ = m.cfg.Registry.Reload()
+	m.entries = m.cfg.Registry.List()
+	return resyncReposSelectionAndContent(m)
+}
+
+func reposSearchQuery(m reposTUIModel) string {
+	return strings.ToLower(strings.TrimSpace(m.search.Value()))
+}
+
+// clampReposSelection ensures the highlighted repo is visible under the active search filter.
+func clampReposSelection(m reposTUIModel) reposTUIModel {
+	filtered := m.filteredEntries(reposSearchQuery(m))
+	if len(m.entries) == 0 {
+		m.selectedRepo = 0
+		return m
+	}
+	if len(filtered) == 0 {
+		return m
+	}
+	selID := ""
+	if m.selectedRepo >= 0 && m.selectedRepo < len(m.entries) {
+		selID = m.entries[m.selectedRepo].ID
+	}
+	for _, e := range filtered {
+		if e.ID == selID {
+			return m
+		}
+	}
+	first := filtered[0]
+	for i, e := range m.entries {
+		if e.ID == first.ID {
+			m.selectedRepo = i
+			break
+		}
+	}
+	return m
+}
+
+func resyncReposSelectionAndContent(m reposTUIModel) reposTUIModel {
+	m = clampReposSelection(m)
+	m.loadSelectedContent()
+	return m
+}
+
+func stepReposSelectionFiltered(m reposTUIModel, delta int) reposTUIModel {
+	filtered := m.filteredEntries(reposSearchQuery(m))
+	if len(filtered) == 0 {
+		return m
+	}
+	selID := ""
+	if m.selectedRepo >= 0 && m.selectedRepo < len(m.entries) {
+		selID = m.entries[m.selectedRepo].ID
+	}
+	idx := 0
+	for i, e := range filtered {
+		if e.ID == selID {
+			idx = i
+			break
+		}
+	}
+	idx += delta
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(filtered) {
+		idx = len(filtered) - 1
+	}
+	target := filtered[idx].ID
+	for i, e := range m.entries {
+		if e.ID == target {
+			m.selectedRepo = i
+			break
+		}
+	}
+	m.loadSelectedContent()
+	return m
+}
+
 // progressListenCmd returns a Cmd that reads one event from Manager.Progress
 // and wraps it in a repoProgressMsg. Re-schedules itself after each event.
 // Safe to call when Manager is nil.
@@ -189,8 +270,7 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 
 	case repoAutoRefreshMsg:
-		m.entries = m.cfg.Registry.List()
-		m.loadSelectedContent()
+		m = reloadReposFromDisk(m)
 		m.loadProgressFile()
 		m.refreshViewport()
 		cmds = append(cmds, repoRefreshCmd())
@@ -252,10 +332,12 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "enter":
 				m.searchActive = false
 				m.search.Blur()
+				m = resyncReposSelectionAndContent(m)
 			default:
 				var sc tea.Cmd
 				m.search, sc = m.search.Update(msg)
 				cmds = append(cmds, sc)
+				m = resyncReposSelectionAndContent(m)
 			}
 			m.refreshViewport()
 			return m, tea.Batch(cmds...)
@@ -276,9 +358,8 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 
 		case "up", "k":
-			if m.activeTab == reposTabRepos && m.selectedRepo > 0 {
-				m.selectedRepo--
-				m.loadSelectedContent()
+			if m.activeTab == reposTabRepos && len(m.entries) > 0 {
+				m = stepReposSelectionFiltered(m, -1)
 				m.refreshViewport()
 			} else if m.activeTab == reposTabGraph && m.callGraph != nil && m.graphSelected > 0 {
 				m.graphSelected--
@@ -290,9 +371,8 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "down", "j":
-			if m.activeTab == reposTabRepos && m.selectedRepo < len(m.entries)-1 {
-				m.selectedRepo++
-				m.loadSelectedContent()
+			if m.activeTab == reposTabRepos && len(m.entries) > 0 {
+				m = stepReposSelectionFiltered(m, +1)
 				m.refreshViewport()
 			} else if m.activeTab == reposTabGraph && m.callGraph != nil && m.graphSelected < len(m.callGraph.Nodes)-1 {
 				m.graphSelected++
@@ -318,8 +398,7 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.Focus()
 
 		case "r":
-			m.entries = m.cfg.Registry.List()
-			m.loadSelectedContent()
+			m = reloadReposFromDisk(m)
 			m.refreshViewport()
 
 		case "e":
@@ -356,7 +435,7 @@ func (m reposTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.cfg.Registry.UpdateIndexStatus(e.ID, repointel.IndexPending, "", "")
 				_ = m.cfg.Registry.UpdateScanStatus(e.ID, repointel.ScanPending, "", "")
 				m.entries = m.cfg.Registry.List()
-				m.loadSelectedContent()
+				m = resyncReposSelectionAndContent(m)
 				m.refreshViewport()
 			}
 
@@ -516,6 +595,8 @@ func (m reposTUIModel) renderReposTab(query string) string {
 	if len(entries) == 0 {
 		return Muted.Render("No repos match. Add one: opsintelligence repos add <owner/name>")
 	}
+	sel := m.selectedEntry()
+	selID := sel.ID
 
 	// Fixed column widths must match between header and rows. Use lipgloss (not fmt)
 	// so ANSI sequences do not break alignment — same pattern as monitor.go.
@@ -545,7 +626,7 @@ func (m reposTUIModel) renderReposTab(query string) string {
 	var lines []string
 	lines = append(lines, header, div)
 
-	for i, e := range entries {
+	for _, e := range entries {
 		risk := nzStr(e.RiskLevel, "—")
 		lang := nzStr(e.Language, "—")
 		indexSt := string(e.IndexStatus)
@@ -559,7 +640,7 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		gutter := lipgloss.NewStyle().Width(colGutter)
 		gutterMark := "  "
 		nameStyle := lipgloss.NewStyle().Foreground(ColorOnSurface)
-		if i == m.selectedRepo {
+		if selID != "" && e.ID == selID {
 			// Orange ▶ is the single selection indicator; row name uses emphasis
 			// white so the accent stays purposeful (not repeated on every column).
 			gutter = lipgloss.NewStyle().Foreground(ColorBrandAccent).Bold(true).Width(colGutter)

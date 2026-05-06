@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-05-06
+
+### Fixed
+
+- **Repo Intelligence TUI empty / stale list** (`cmd/opsintelligence/tui/repos_tui.go`): reload **`repos.yaml` from disk** on auto-refresh and manual **`r`** so rows match the gateway/agent; fix **selection vs search filter** (highlight used filtered-row index as full-list index).
+- **`loadConfig` with nil logger** (`cmd/opsintelligence/main.go`): use **`zap.NewNop()`** when `log == nil` so paths like `repos tui` never panic if the YAML file is missing before onboarding.
+
 ## [1.0.6] — 2026-05-06
 
 ### Fixed

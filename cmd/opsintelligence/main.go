@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.6" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.7" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1267,6 +1267,9 @@ func mcpClientConfigsFromYAML(in []config.MCPClientConfig) []mcp.ClientConfig {
 }
 
 func loadConfig(path string, log *zap.Logger) (*config.Config, error) {
+	if log == nil {
+		log = zap.NewNop()
+	}
 	if path == "" {
 		path = config.DefaultConfigPath()
 	}
