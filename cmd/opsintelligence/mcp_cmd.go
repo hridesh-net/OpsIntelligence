@@ -48,7 +48,7 @@ func mcpServeCmd(gf *globalFlags) *cobra.Command {
   # For HTTP clients:
   opsintelligence mcp serve --transport http --port 5173`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			defer log.Sync() //nolint:errcheck
 
 			cfg, err := loadConfig(gf.configPath, log)
@@ -85,7 +85,7 @@ func mcpStatusCmd(gf *globalFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Show MCP server status and connected external servers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -165,7 +165,7 @@ func mcpListToolsCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list-tools",
 		Short: "Show the compact tool index exposed by the MCP server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -245,7 +245,7 @@ func mcpAddCmd(gf *globalFlags) *cobra.Command {
 				return fmt.Errorf("--name is required")
 			}
 
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -324,7 +324,7 @@ func mcpTestCmd(gf *globalFlags) *cobra.Command {
 				toolName = args[0]
 			}
 
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

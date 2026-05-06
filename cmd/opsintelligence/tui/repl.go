@@ -467,7 +467,7 @@ func (m *REPLModel) buildContent() string {
 
 	// In-flight agent text (streaming)
 	if m.tokenBuf != "" {
-		sb.WriteString(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf))
+		sb.WriteString(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf, m.viewport.Width-2))
 	}
 
 	// Active tool events (pending result)
@@ -490,7 +490,7 @@ func (m *REPLModel) appendHistory(line string) { m.history = append(m.history, l
 
 func (m *REPLModel) flushToken() {
 	if m.tokenBuf != "" {
-		m.appendHistory(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf))
+		m.appendHistory(ChromePrompt.Render("›") + " " + renderMarkdown(m.tokenBuf, m.viewport.Width-2))
 		m.tokenBuf = ""
 	}
 }
@@ -553,21 +553,34 @@ func renderToolPending(name, input, spin string) string {
 	return label + " " + spin
 }
 
+// isErrorResult returns true when the tool result text looks like a failure.
+func isErrorResult(s string) bool {
+	if s == "" {
+		return false
+	}
+	lo := strings.ToLower(s)
+	return strings.HasPrefix(lo, "error:") ||
+		strings.HasPrefix(lo, "failed:") ||
+		strings.Contains(lo, "cannot unmarshal") ||
+		(strings.Contains(lo, "not found") && strings.HasPrefix(lo, "unknown"))
+}
+
 // renderToolBlock shows a completed tool call with result.
+// Errors are rendered with a red ✗; successes with a cyan ✓.
 func renderToolBlock(te toolEvent) string {
 	top := Muted.Render("  › ") + ToolBadge.Render(te.name)
 	if te.input != "" {
 		top += Muted.Render(" " + te.input)
 	}
 	if te.result == "" {
-		return top + "\n" + Muted.Render("  › ") + ToolBadge.Render("done")
+		return top
 	}
-	result := te.result
-	if len(result) > 120 {
-		result = result[:120] + "…"
+	if isErrorResult(te.result) {
+		mark := ErrorStyle.Render("✗")
+		return top + "\n" + Muted.Render("  › ") + mark + " " + ErrorStyle.Render(te.result)
 	}
-	checkmark := lipgloss.NewStyle().Foreground(ColorCyan).Render("✓")
-	return top + "\n" + Muted.Render("  › ") + checkmark + " " + Muted.Render(result)
+	mark := lipgloss.NewStyle().Foreground(ColorCyan).Render("✓")
+	return top + "\n" + Muted.Render("  › ") + mark + " " + Muted.Render(te.result)
 }
 
 // ─────────────────────────────────────────────
@@ -586,9 +599,57 @@ var (
 	boldRe       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 )
 
+// wrapPlainLine word-wraps a single plain-text line to maxW runes per line.
+// Preserves leading whitespace on the first segment. Subsequent segments are
+// not indented so they align naturally with prose text in the viewport.
+func wrapPlainLine(line string, maxW int) []string {
+	if maxW <= 0 {
+		return []string{line}
+	}
+	// Preserve leading indent so numbered lists / bullet indentation survives.
+	indent := ""
+	rest := line
+	for i, r := range line {
+		if r != ' ' && r != '\t' {
+			indent = line[:i]
+			rest = line[i:]
+			break
+		}
+	}
+	effectiveW := maxW - len([]rune(indent))
+	if effectiveW < 10 {
+		effectiveW = maxW
+		indent = ""
+	}
+
+	words := strings.Fields(rest)
+	if len(words) == 0 {
+		return []string{line}
+	}
+	var result []string
+	cur := ""
+	for _, word := range words {
+		wordRunes := len([]rune(word))
+		if cur == "" {
+			cur = word
+		} else if len([]rune(cur))+1+wordRunes <= effectiveW {
+			cur += " " + word
+		} else {
+			result = append(result, indent+cur)
+			cur = word
+			indent = "" // only first line keeps the indent
+		}
+	}
+	if cur != "" {
+		result = append(result, indent+cur)
+	}
+	return result
+}
+
 // renderMarkdown converts a small subset of markdown to lipgloss-styled ANSI.
 // Handles: fenced code blocks, inline code, **bold**, # headers.
-func renderMarkdown(text string) string {
+// maxW constrains the output width (word-wraps prose lines); 0 = no constraint.
+func renderMarkdown(text string, maxW int) string {
 	lines := strings.Split(text, "\n")
 	var out []string
 	inCode := false
@@ -627,17 +688,23 @@ func renderMarkdown(text string) string {
 			continue
 		}
 
-		// Inline transforms (bold, inline code)
-		line = boldRe.ReplaceAllStringFunc(line, func(m string) string {
-			inner := boldRe.FindStringSubmatch(m)[1]
-			return lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(inner)
-		})
-		line = inlineCodeRe.ReplaceAllStringFunc(line, func(m string) string {
-			inner := inlineCodeRe.FindStringSubmatch(m)[1]
-			return codeBlockStyle.Render(inner)
-		})
-
-		out = append(out, line)
+		// Word-wrap long prose lines on PLAIN text before applying ANSI styling.
+		// Wrapping after ANSI escapes are embedded causes miscounting of visible width.
+		prose := []string{line}
+		if maxW > 8 && len([]rune(line)) > maxW {
+			prose = wrapPlainLine(line, maxW)
+		}
+		for _, wl := range prose {
+			wl = boldRe.ReplaceAllStringFunc(wl, func(m string) string {
+				inner := boldRe.FindStringSubmatch(m)[1]
+				return lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(inner)
+			})
+			wl = inlineCodeRe.ReplaceAllStringFunc(wl, func(m string) string {
+				inner := inlineCodeRe.FindStringSubmatch(m)[1]
+				return codeBlockStyle.Render(inner)
+			})
+			out = append(out, wl)
+		}
 	}
 	return strings.Join(out, "\n")
 }
@@ -660,8 +727,7 @@ func (b *tuiStreamBridge) OnToolCall(name string, input json.RawMessage) {
 }
 
 func (b *tuiStreamBridge) OnToolResult(name, result string) {
-	snippet := firstLine(result, 120)
-	b.prog.Send(agentToolResultMsg{name: name, snippet: snippet})
+	b.prog.Send(agentToolResultMsg{name: name, snippet: resultSnippet(result)})
 }
 
 func (b *tuiStreamBridge) OnDone(r *RunResult) {
@@ -723,6 +789,35 @@ func firstLine(s string, max int) string {
 	return ""
 }
 
+// resultSnippet produces a one-line human-readable summary of a tool result.
+// For JSON objects it probes for known summary fields (verdict, title, state…)
+// before falling back to a field-count hint. Non-JSON uses firstLine.
+func resultSnippet(result string) string {
+	result = strings.TrimSpace(result)
+	if strings.HasPrefix(result, "{") {
+		var m map[string]json.RawMessage
+		if json.Unmarshal([]byte(result), &m) == nil {
+			for _, key := range []string{
+				"verdict", "title", "message", "reason", "state",
+				"conclusion", "status", "name", "error",
+			} {
+				if raw, ok := m[key]; ok {
+					var s string
+					if json.Unmarshal(raw, &s) == nil && s != "" {
+						rs := []rune(s)
+						if len(rs) > 100 {
+							return string(rs[:100]) + "…"
+						}
+						return s
+					}
+				}
+			}
+			return fmt.Sprintf("(%d fields)", len(m))
+		}
+	}
+	return firstLine(result, 120)
+}
+
 // ─────────────────────────────────────────────
 // RunREPL — entry point
 // ─────────────────────────────────────────────
@@ -744,7 +839,9 @@ func RunREPL(ctx context.Context, runner AgentRunner, ver string, providerCount,
 	p = tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		// Mouse cell-motion tracking is intentionally disabled: enabling it
+		// intercepts click-drag events and prevents the terminal's native
+		// text selection / copy. Keyboard scrolling (↑↓ PgUp PgDn) remains.
 		tea.WithContext(ctx),
 	)
 	_, err := p.Run()

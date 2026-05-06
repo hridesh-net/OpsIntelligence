@@ -259,7 +259,7 @@ func runDoctorProviderChecks(ctx context.Context, cfg *config.Config, skipNetwor
 		}}
 	}
 
-	log := buildLogger(logLevel)
+	log := buildLogger(logLevel, "")
 	reg := provider.NewRegistry()
 	_ = registerProviders(ctx, cfg, reg, log)
 

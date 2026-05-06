@@ -59,7 +59,7 @@ existing owner and exit 0 without changes. Password is read from
 stdin when not supplied via --password; never type it inline on
 shared hosts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -157,7 +157,7 @@ func adminUserAddCmd(gf *globalFlags) *cobra.Command {
 		Use:   "add",
 		Short: "Create a new user with one initial role",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -228,7 +228,7 @@ func adminUserListCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List users",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -297,7 +297,7 @@ func adminUserDeleteCmd(gf *globalFlags) *cobra.Command {
 					return nil
 				}
 			}
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -329,7 +329,7 @@ func adminUserPasswordCmd(gf *globalFlags) *cobra.Command {
 		Short: "Set a user's password (reads from stdin prompt)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -384,7 +384,7 @@ func adminRoleListCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List all roles (built-in + custom) with their permissions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -421,7 +421,7 @@ func adminRoleGrantCmd(gf *globalFlags) *cobra.Command {
 		Use:   "grant",
 		Short: "Grant a role to a user",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -459,7 +459,7 @@ func adminRoleRevokeCmd(gf *globalFlags) *cobra.Command {
 		Use:   "revoke",
 		Short: "Revoke a role from a user",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -514,7 +514,7 @@ func adminAPIKeyCreateCmd(gf *globalFlags) *cobra.Command {
 		Use:   "create",
 		Short: "Mint a new API key for a user (token shown ONCE)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -581,7 +581,7 @@ func adminAPIKeyListCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List API keys (all by default; --user to scope)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -640,7 +640,7 @@ func adminAPIKeyRevokeCmd(gf *globalFlags) *cobra.Command {
 		Short: "Revoke an API key by its public key_id",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -687,7 +687,7 @@ func assignRoleByName(ctx context.Context, store datastore.Store, userID, name s
 }
 
 func setUserStatusCLI(cmd *cobra.Command, gf *globalFlags, username string, status datastore.UserStatus) error {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	cfg, err := loadConfig(gf.configPath, log)
 	if err != nil {
 		return err

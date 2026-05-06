@@ -60,7 +60,7 @@ func cronListCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List all scheduled cron jobs",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -116,7 +116,7 @@ func cronAddCmd(gf *globalFlags) *cobra.Command {
   opsintelligence cron add "0 9 * * *" "Generate daily report"`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -155,7 +155,7 @@ func cronRemoveCmd(gf *globalFlags) *cobra.Command {
 		Short: "Remove a cron job by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

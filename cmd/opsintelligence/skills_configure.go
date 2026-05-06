@@ -34,7 +34,7 @@ func skillsConfigureCmd(gf *globalFlags) *cobra.Command {
 		Long: `Open an interactive multi-select TUI to choose which skills your agent should use.
 You can also add custom skills from a local path or URL.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

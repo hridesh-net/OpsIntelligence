@@ -35,7 +35,7 @@ func securityCmd(flags *globalFlags) *cobra.Command {
 
 // securityLogPath returns the configured or default audit log path.
 func securityLogPath(flags *globalFlags) (string, error) {
-	log := buildLogger(flags.logLevel)
+	log := buildLogger(flags.logLevel, "")
 	cfg, err := loadConfig(flags.configPath, log)
 	if err != nil {
 		return "", err
@@ -55,7 +55,7 @@ func securityStatusCmd(flags *globalFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Show current guardrail mode, audit log size, and last event",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(flags.logLevel)
+			log := buildLogger(flags.logLevel, "")
 			cfg, err := loadConfig(flags.configPath, log)
 			if err != nil {
 				return err

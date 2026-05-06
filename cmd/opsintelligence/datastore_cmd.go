@@ -60,7 +60,7 @@ func datastoreMigrateCmd(gf *globalFlags) *cobra.Command {
 		Use:   "migrate",
 		Short: "Apply all pending schema migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -100,7 +100,7 @@ func datastoreStatusCmd(gf *globalFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Show applied and latest schema versions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -140,7 +140,7 @@ func datastorePingCmd(gf *globalFlags) *cobra.Command {
 		Use:   "ping",
 		Short: "Verify the datastore connection is healthy",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

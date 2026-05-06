@@ -76,7 +76,7 @@ func runPreflight(ctx context.Context, gf *globalFlags, opts preflightOpts, log 
 
 // execStart runs doctor preflight then starts the daemon (foreground or detached).
 func execStart(gf *globalFlags, daemon bool, skipPreflight, preflightFull bool, cmd *cobra.Command) error {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	defer log.Sync() //nolint:errcheck
 
 	pctx, cancel := context.WithTimeout(context.Background(), preflightDefaultTimeout)

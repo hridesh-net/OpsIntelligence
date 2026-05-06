@@ -24,7 +24,7 @@ func graphBridgingTestCmd(gf *globalFlags) *cobra.Command {
 		Use:   "graph-bridging",
 		Short: "Verify skill graph bridging and wikilink extraction",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

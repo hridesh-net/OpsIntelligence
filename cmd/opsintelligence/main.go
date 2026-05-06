@@ -63,7 +63,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.0" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.1" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -313,7 +313,7 @@ func stopCmd(gf *globalFlags) *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the background OpsIntelligence process",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -410,7 +410,7 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Check status, CPU, and RAM usage of OpsIntelligence",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -498,7 +498,7 @@ func providersCmd(gf *globalFlags) *cobra.Command {
 		Short: "List all configured LLM providers and their models",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -528,7 +528,7 @@ func providersCmd(gf *globalFlags) *cobra.Command {
 		Short: "Check connectivity to all configured providers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -563,7 +563,7 @@ func embeddingsCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -593,7 +593,7 @@ func memoryCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -626,7 +626,7 @@ func memoryCmd(gf *globalFlags) *cobra.Command {
 
 	runMine := func(forceMode string) (*memory.MiningReport, error) {
 		ctx := context.Background()
-		log := buildLogger(gf.logLevel)
+		log := buildLogger(gf.logLevel, "")
 		cfg, err := loadConfig(gf.configPath, log)
 		if err != nil {
 			return nil, err
@@ -712,7 +712,7 @@ func memoryCmd(gf *globalFlags) *cobra.Command {
 		Use:   "status",
 		Short: "Show last mining run status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -734,7 +734,7 @@ func memoryCmd(gf *globalFlags) *cobra.Command {
 		Use:   "validate",
 		Short: "Validate mining config and embedder readiness",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -767,7 +767,7 @@ func toolsCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List all tools: built-in, skill, and auto-generated",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			path := gf.configPath
 			if path == "" {
 				path = config.DefaultConfigPath()
@@ -910,7 +910,7 @@ Extend behavior via skills, MCP, channels, or prompt_files as needed.`,
 		Use:   "list",
 		Short: "Summarize extension-equivalent features and extensions.* config",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -995,7 +995,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 		Use:   "start",
 		Short: "Start OpsIntelligence daemon in background (web UI + agent + channels)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			defer log.Sync() //nolint:errcheck
 			pctx, cancel := context.WithTimeout(context.Background(), preflightDefaultTimeout)
 			defer cancel()
@@ -1032,7 +1032,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 		Use:   "serve",
 		Short: "Run the gateway in the foreground (blocks terminal)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			defer log.Sync() //nolint:errcheck
 
 			pctx, cancel := context.WithTimeout(context.Background(), preflightDefaultTimeout)
@@ -1280,7 +1280,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	defer log.Sync() //nolint:errcheck
 
 	cfg, err := loadConfig(configPath, log)
@@ -2309,8 +2309,10 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return nil
 	}
 
-	// Interactive REPL mode
-	return runREPL(ctx, runner, modelInfo.ID, log, cfg, gf)
+	// Interactive REPL mode — rebuild logger to write to file only so that
+	// structured JSON log lines never bleed into the terminal display.
+	tuiLog := buildLogger(gf.logLevel, dirs.New(cfg.StateDir).AgentRunTrace())
+	return runREPL(ctx, runner, modelInfo.ID, tuiLog, cfg, gf)
 }
 
 // extractBundledSkills copies the repo's skills/ directory into destDir (bundled dir).
@@ -2400,7 +2402,10 @@ func loadSmartPrompts(cfg *config.Config, log *zap.Logger) (*prompts.Library, st
 	return lib, lib.Index()
 }
 
-func buildLogger(level string) *zap.Logger {
+// buildLogger builds a zap logger. When logFile is non-empty the logger writes
+// exclusively to that file (no stderr) — used by the interactive TUI so that
+// structured JSON log lines never bleed into the terminal display.
+func buildLogger(level, logFile string) *zap.Logger {
 	lvl := zap.WarnLevel
 	switch strings.ToLower(level) {
 	case "debug":
@@ -2412,10 +2417,20 @@ func buildLogger(level string) *zap.Logger {
 	case "error":
 		lvl = zap.ErrorLevel
 	}
+	encCfg := zap.NewProductionEncoderConfig()
+	encCfg.TimeKey = "t"
+	encCfg.EncodeTime = zapcore.RFC3339TimeEncoder
+	if logFile != "" {
+		f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			enc := zapcore.NewJSONEncoder(encCfg)
+			core := zapcore.NewCore(enc, zapcore.AddSync(f), zap.NewAtomicLevelAt(lvl))
+			return zap.New(core)
+		}
+	}
 	cfg := zap.NewProductionConfig()
 	cfg.Level = zap.NewAtomicLevelAt(lvl)
-	cfg.EncoderConfig.TimeKey = "t"
-	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
+	cfg.EncoderConfig = encCfg
 	log, _ := cfg.Build()
 	return log
 }

@@ -517,8 +517,29 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		return Muted.Render("No repos match. Add one: opsintelligence repos add <owner/name>")
 	}
 
-	header := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true).
-		Render(fmt.Sprintf("%-36s  %-10s  %-10s  %-8s  %s", "REPO", "INDEX", "SCAN", "RISK", "LANG"))
+	// Fixed column widths must match between header and rows. Use lipgloss (not fmt)
+	// so ANSI sequences do not break alignment — same pattern as monitor.go.
+	const (
+		colGutter = 2
+		colRepo   = 34
+		colStatus = 20
+		colRisk   = 18
+	)
+	colGap := "  "
+
+	hdr := lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
+	header := lipgloss.JoinHorizontal(lipgloss.Left,
+		hdr.Width(colGutter).Render("  "),
+		hdr.Width(colRepo).Render("REPO"),
+		colGap,
+		hdr.Width(colStatus).Render("INDEX"),
+		colGap,
+		hdr.Width(colStatus).Render("SCAN"),
+		colGap,
+		hdr.Width(colRisk).Render("RISK"),
+		colGap,
+		hdr.Render("LANG"),
+	)
 	div := Muted.Render(strings.Repeat("─", m.width-8))
 
 	var lines []string
@@ -533,20 +554,31 @@ func (m reposTUIModel) renderReposTab(query string) string {
 		// Colorize status fields.
 		indexStyled := m.colorizeStatus(indexSt)
 		scanStyled := m.colorizeStatus(scanSt)
-		riskStyled := riskColor(e.RiskLevel).Render(risk)
+		riskStyled := riskColor(e.RiskLevel).Width(colRisk).Render(risk)
 
-		prefix := "  "
+		gutter := lipgloss.NewStyle().Width(colGutter)
+		gutterMark := "  "
 		nameStyle := lipgloss.NewStyle().Foreground(ColorOnSurface)
 		if i == m.selectedRepo {
 			// Orange ▶ is the single selection indicator; row name uses emphasis
 			// white so the accent stays purposeful (not repeated on every column).
-			prefix = lipgloss.NewStyle().Foreground(ColorBrandAccent).Bold(true).Render("▶ ")
+			gutter = lipgloss.NewStyle().Foreground(ColorBrandAccent).Bold(true).Width(colGutter)
+			gutterMark = "▶ "
 			nameStyle = lipgloss.NewStyle().Foreground(ColorEmphasis).Bold(true)
 		}
 
-		name := nameStyle.Render(truncate36(e.FullName))
-		row := fmt.Sprintf("%s%-34s  %-20s  %-20s  %-18s  %s",
-			prefix, name, indexStyled, scanStyled, riskStyled, Muted.Render(lang))
+		row := lipgloss.JoinHorizontal(lipgloss.Left,
+			gutter.Render(gutterMark),
+			nameStyle.Width(colRepo).Render(truncate36(e.FullName)),
+			colGap,
+			lipgloss.NewStyle().Width(colStatus).Render(indexStyled),
+			colGap,
+			lipgloss.NewStyle().Width(colStatus).Render(scanStyled),
+			colGap,
+			riskStyled,
+			colGap,
+			Muted.Render(lang),
+		)
 		lines = append(lines, row)
 
 		// Progress bar / error detail line (indented under the repo row).

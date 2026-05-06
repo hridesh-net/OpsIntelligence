@@ -137,7 +137,7 @@ func promptsRunCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			id := args[0]
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -258,7 +258,7 @@ func promptsRunCmd(gf *globalFlags) *cobra.Command {
 // ─────────────────────────────────────────────────────────────────────
 
 func openLibrary(gf *globalFlags) (*prompts.Library, error) {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	cfg, err := loadConfig(gf.configPath, log)
 	if err != nil {
 		return nil, err

@@ -64,7 +64,7 @@ func prReviewsListCmd(gf *globalFlags) *cobra.Command {
 }
 
 func runPRReviewsList(gf *globalFlags) error {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	cfg, err := loadConfig(gf.configPath, log)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func prReviewsEventsCmd(gf *globalFlags) *cobra.Command {
 }
 
 func runPRReviewsEvents(gf *globalFlags, taskID string, since int) error {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	cfg, err := loadConfig(gf.configPath, log)
 	if err != nil {
 		return err
@@ -198,7 +198,7 @@ func prReviewsCancelCmd(gf *globalFlags) *cobra.Command {
 }
 
 func runPRReviewsCancel(gf *globalFlags, taskID string) error {
-	log := buildLogger(gf.logLevel)
+	log := buildLogger(gf.logLevel, "")
 	cfg, err := loadConfig(gf.configPath, log)
 	if err != nil {
 		return err

@@ -29,7 +29,7 @@ Skills live in two directories:
 Run 'opsintelligence skills configure' (or just 'opsintelligence skills') for the interactive TUI.`,
 		// Default: open the configure TUI when no subcommand is given
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -62,7 +62,7 @@ func skillsListCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List installed skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -142,7 +142,7 @@ func skillsAddCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -197,7 +197,7 @@ func skillsRemoveCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -275,7 +275,7 @@ func skillsInstallCmd(gf *globalFlags) *cobra.Command {
   opsintelligence skills install https://github.com/user/skill`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nameOrURL := args[0]
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -327,7 +327,7 @@ func skillsInfoCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err
@@ -395,7 +395,7 @@ func skillsMarketplaceCmd(gf *globalFlags) *cobra.Command {
 		Use:   "marketplace",
 		Short: "Browse available skills from the marketplace",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

@@ -17,7 +17,7 @@ func monitorCmd(gf *globalFlags) *cobra.Command {
 		Long: `Launches a Bubble Tea TUI that tails the runtrace.ndjson log file and 
 displays real-time system metrics (CPU/RAM).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := loadConfig(gf.configPath, log)
 			if err != nil {
 				return err

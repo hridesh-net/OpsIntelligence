@@ -29,7 +29,7 @@ func mempalaceLoadCfg(gf *globalFlags, stateDir string) (*config.Config, error) 
 	if strings.TrimSpace(stateDir) != "" {
 		return config.MemPalaceBootstrapConfig(stateDir), nil
 	}
-	return loadConfig(gf.configPath, buildLogger(gf.logLevel))
+	return loadConfig(gf.configPath, buildLogger(gf.logLevel, ""))
 }
 
 func mempalaceSetupCmd(gf *globalFlags, stateDir *string) *cobra.Command {
@@ -47,7 +47,7 @@ OPSINTELLIGENCE_MEMPALACE_BOOTSTRAP_PYTHON or memory.mempalace.bootstrap_python 
 Use --state-dir from install.sh when opsintelligence.yaml does not exist yet.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			log := buildLogger(gf.logLevel)
+			log := buildLogger(gf.logLevel, "")
 			cfg, err := mempalaceLoadCfg(gf, *stateDir)
 			if err != nil {
 				return err
