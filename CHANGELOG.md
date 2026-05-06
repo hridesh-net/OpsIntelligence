@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-05-06
+
+### Fixed
+
+- **`repos add` / `repos sync` live enqueue with Tailscale Funnel** (`cmd/opsintelligence/repos_cmd.go`): try **`http://127.0.0.1:<gateway.port>`** before the public **`https://…ts.net`** origin so the CLI notifies a locally running gateway even when Funnel is not accepting connections on **443**.
+
 ## [1.0.5] — 2026-05-06
 
 ### Fixed

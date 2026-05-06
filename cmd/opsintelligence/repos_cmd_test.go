@@ -79,3 +79,47 @@ func TestNotifyRepoSyncViaGateway_NotFoundFallsBack(t *testing.T) {
 		t.Fatalf("mode: got %q want fallback", mode)
 	}
 }
+
+func TestNotifyRepoSyncViaGateway_PrefersLoopbackUnderFunnelPublicURL(t *testing.T) {
+	repoID := "github:acme/service"
+	wantPath := "/api/v1/repos/github:acme/service/sync"
+	var gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if r.Method != http.MethodPost {
+			t.Fatalf("method: got %s want POST", r.Method)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portStr, ok := strings.Cut(u.Host, ":")
+	if !ok {
+		t.Fatalf("split host/port failed for %q", u.Host)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Gateway.Port = port
+	cfg.Gateway.Host = "machine.example.ts.net"
+	cfg.Gateway.Tailscale.Mode = "funnel"
+
+	mode, err := notifyRepoSyncViaGateway(cfg, repoID)
+	if err != nil {
+		t.Fatalf("notify error: %v", err)
+	}
+	if mode != "live" {
+		t.Fatalf("mode: got %q want live", mode)
+	}
+	if gotPath != wantPath {
+		t.Fatalf("path: got %q want %s", gotPath, wantPath)
+	}
+}

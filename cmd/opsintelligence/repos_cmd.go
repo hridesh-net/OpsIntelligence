@@ -16,12 +16,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
@@ -523,12 +526,92 @@ func notifyRepoSyncViaGateway(cfg *config.Config, repoID string) (string, error)
 	if cfg == nil {
 		return "fallback", fmt.Errorf("config not loaded")
 	}
-	base := strings.TrimSuffix(effectiveGatewayOrigin(cfg), "/")
+	origins := repoSyncNotifyOrigins(cfg)
+	if len(origins) == 0 {
+		return "fallback", fmt.Errorf("gateway base URL is empty")
+	}
+	var lastErr error
+	for i, base := range origins {
+		mode, err := postRepoSyncNotify(cfg, base, repoID)
+		if mode == "live" {
+			return "live", nil
+		}
+		if err == nil {
+			// e.g. HTTP 404 — do not try another origin.
+			return "fallback", nil
+		}
+		lastErr = err
+		if i+1 < len(origins) && isRetryableRepoSyncTransportErr(err) {
+			continue
+		}
+		return "fallback", err
+	}
+	return "fallback", lastErr
+}
+
+// repoSyncNotifyOrigins returns gateway origins to try for live repo sync.
+// Loopback is first so CLI enqueue works when gateway.tailscale.mode is funnel
+// (PublicGatewayBaseURL is https://*.ts.net:443) but the daemon still listens
+// on the local gateway.port — a common cause of "connection refused" on 443.
+func repoSyncNotifyOrigins(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	local := loopbackGatewayOrigin(cfg)
+	pub := strings.TrimSuffix(strings.TrimSpace(effectiveGatewayOrigin(cfg)), "/")
+	var out []string
+	if local != "" {
+		out = append(out, local)
+	}
+	if pub != "" && pub != local {
+		out = append(out, pub)
+	}
+	return out
+}
+
+func loopbackGatewayOrigin(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	p := cfg.Gateway.Port
+	if p == 0 {
+		p = 18790
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", p)
+}
+
+func isRetryableRepoSyncTransportErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch e := opErr.Err.(type) {
+		case syscall.Errno:
+			switch e {
+			case syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ETIMEDOUT:
+				return true
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func postRepoSyncNotify(cfg *config.Config, base, repoID string) (mode string, err error) {
+	base = strings.TrimSuffix(strings.TrimSpace(base), "/")
 	if base == "" {
 		return "fallback", fmt.Errorf("gateway base URL is empty")
 	}
-	url := fmt.Sprintf("%s/api/v1/repos/%s/sync", base, repoPathEscape(repoID))
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte("{}")))
+	syncURL := fmt.Sprintf("%s/api/v1/repos/%s/sync", base, repoPathEscape(repoID))
+	req, err := http.NewRequest(http.MethodPost, syncURL, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return "fallback", err
 	}
@@ -539,7 +622,7 @@ func notifyRepoSyncViaGateway(cfg *config.Config, repoID string) (string, error)
 	client := &http.Client{Timeout: 4 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "fallback", err
+		return "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
