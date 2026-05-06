@@ -58,6 +58,7 @@ func TestHandler_ServesSPABundle(t *testing.T) {
 		"openMintKeyModal",
 		"showMintedKey",
 		"openManageRolesModal",
+		"appendRunTraceComponentHints",
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(body, s) {

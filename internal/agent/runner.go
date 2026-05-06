@@ -556,12 +556,16 @@ func (r *Runner) traceModelIteration(ctx context.Context, iteration int, userMes
 	advisory := strings.TrimSpace(r.localIntelScratch) != ""
 	present := r.localIntelPresent()
 	r.emitTrace(ctx, "model_iteration", map[string]any{
-		"iteration":            iteration,
-		"model":                req.Model,
-		"llm_backend":          runtrace.InferBackend(r.cfg.ProviderName, req.Model, present, advisory),
-		"routing_intents":      r.routingIntentsForTrace(userMessage),
-		"skills_context_chars": len(strings.TrimSpace(r.cfg.ActiveSkillsContext)),
-		"tools_offered":        names,
+		"iteration":              iteration,
+		"model":                  req.Model,
+		"llm_backend":            runtrace.InferBackend(r.cfg.ProviderName, req.Model, present, advisory),
+		"routing_intents":        r.routingIntentsForTrace(userMessage),
+		"skills_context_chars":   len(strings.TrimSpace(r.cfg.ActiveSkillsContext)),
+		"skills_enabled":         append([]string(nil), r.cfg.EnabledSkillNames...),
+		"skills_enabled_count":   len(r.cfg.EnabledSkillNames),
+		"tools_offered":          names,
+		"local_intel_enabled":    present,
+		"local_advisory_applied": advisory,
 	})
 }
 

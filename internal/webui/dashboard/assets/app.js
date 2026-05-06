@@ -328,22 +328,97 @@
     return escapeHtml(d.toLocaleString());
   }
 
-  /** Trace events use `kind`; zap / application logs co-appended to the same NDJSON use `msg` + `level`. */
+  /** Human text field across zap / OTLP-ish / ad-hoc JSON lines. */
+  function traceTextMessage(o) {
+    if (!o || typeof o !== "object") return "";
+    const cand = o.msg ?? o.message ?? o.Message ?? o.text ?? o.body;
+    if (typeof cand === "string") return cand.replace(/\s+/g, " ").trim();
+    return "";
+  }
+
+  function traceLogLevel(o) {
+    if (!o || typeof o !== "object") return "";
+    if (typeof o.level === "string" && o.level) return o.level;
+    if (typeof o.severity === "string" && o.severity) return o.severity;
+    return "";
+  }
+
+  /** Trace events use `kind`; zap lines often use `msg` + `level` but some stacks use `message` only. */
+  function traceLooksLikeZapLog(o) {
+    const msg = traceTextMessage(o);
+    if (!msg) return false;
+    const lvl = traceLogLevel(o);
+    return !!(lvl || o.caller || o.logger || o.Logger);
+  }
+
   function runTraceEventKind(o) {
     if (!o || typeof o !== "object") return "event";
     if (o.kind) return String(o.kind);
-    if (typeof o.msg === "string" && o.msg !== "" && (typeof o.level === "string" || o.caller)) {
-      return "log";
-    }
+    if (traceLooksLikeZapLog(o)) return "log";
     return "event";
+  }
+
+  function appendRunTraceComponentHints(o, k, parts) {
+    if (o.runner_role) parts.push(`role=${o.runner_role}`);
+    if (o.iteration != null && o.iteration !== "") parts.push(`iter=${o.iteration}`);
+    if (o.tool) parts.push(`tool=${o.tool}`);
+    if (o.chain_id) parts.push(`chain=${o.chain_id}`);
+    if (o.run_kind) parts.push(`run=${o.run_kind}`);
+    if (o.parent_iteration != null && o.parent_iteration !== "") {
+      parts.push(`parent_iter=${o.parent_iteration}`);
+    }
+    if (o.finish) parts.push(`finish=${o.finish}`);
+
+    if (Array.isArray(o.tools_offered)) {
+      parts.push(`tools_offered=${o.tools_offered.length}`);
+    }
+    if (o.skills_enabled_count != null && o.skills_enabled_count !== "") {
+      parts.push(`skills_cnt=${o.skills_enabled_count}`);
+    } else if (Array.isArray(o.skills_enabled) && o.skills_enabled.length) {
+      parts.push(`skills_cnt=${o.skills_enabled.length}`);
+      const preview = o.skills_enabled.slice(0, 4).join(",");
+      if (preview.length > 90) parts.push(`skills=${preview.slice(0, 87)}…`);
+      else parts.push(`skills=${preview}`);
+    }
+    if (o.skills_context_chars != null && o.skills_context_chars !== "") {
+      parts.push(`skills_ctx=${o.skills_context_chars}c`);
+    }
+    if (o.local_intel_enabled === true) parts.push("local_intel=on");
+    else if (o.local_intel_enabled === false) parts.push("local_intel=off");
+    if (o.local_advisory_applied === true) parts.push("li_advisory=on");
+
+    if (o.llm_backend) parts.push(`backend=${o.llm_backend}`);
+    if (o.primary_model) parts.push(`primary=${o.primary_model}`);
+    if ((k === "model_iteration" || k === "task_start") && o.model) parts.push(`model=${o.model}`);
+
+    if (Array.isArray(o.routing_intents) && o.routing_intents.length) {
+      const ri = o.routing_intents.join(",");
+      parts.push(`route=${ri.length > 80 ? ri.slice(0, 77) + "…" : ri}`);
+    }
+
+    if (k === "chain_run_complete" && Array.isArray(o.step_prompts) && o.step_prompts.length) {
+      const st = o.step_prompts.join(" → ");
+      parts.push(`steps=${st.length > 100 ? st.slice(0, 100) + "…" : st}`);
+    }
+    if (k === "task_start" && o.query_preview) {
+      const q = String(o.query_preview);
+      parts.push(`query=${q.length > 100 ? q.slice(0, 100) + "…" : q}`);
+    }
+    if (k === "tool_done" && o.ok != null) parts.push(o.ok ? "ok" : "err");
+    if (k === "tool_done" && o.ms != null) parts.push(`${o.ms}ms`);
+    if (k === "tool_call" && o.input_bytes != null) parts.push(`in=${o.input_bytes}b`);
+    if ((k === "task_done" || k === "chain_run_error") && o.error) {
+      const e = String(o.error);
+      parts.push(`error=${e.length > 120 ? e.slice(0, 120) + "…" : e}`);
+    }
   }
 
   function summarizeRunTraceEvent(o) {
     if (!o || typeof o !== "object") return "";
-    if (typeof o.msg === "string" && o.msg !== "" && (typeof o.level === "string" || o.caller)) {
-      const lvl = o.level != null ? String(o.level) : "";
-      let msg = String(o.msg).replace(/\s+/g, " ").trim();
-      if (msg.length > 140) msg = msg.slice(0, 137) + "…";
+    if (traceLooksLikeZapLog(o)) {
+      const lvl = traceLogLevel(o);
+      let msg = traceTextMessage(o);
+      if (msg.length > 160) msg = msg.slice(0, 157) + "…";
       const caller = o.caller ? String(o.caller) : "";
       const tail = caller.includes("/") ? caller.split("/").pop() : caller;
       const parts = ["log"];
@@ -354,35 +429,14 @@
     }
     const k = o.kind || "event";
     const parts = [`${k}`];
-    if (o.runner_role) parts.push(`role=${o.runner_role}`);
-    if (o.iteration != null && o.iteration !== "") parts.push(`iter=${o.iteration}`);
-    if (o.tool) parts.push(`tool=${o.tool}`);
-    if (o.chain_id) parts.push(`chain=${o.chain_id}`);
-    if (o.run_kind) parts.push(`run=${o.run_kind}`);
-    if (k === "chain_run_complete" && Array.isArray(o.step_prompts) && o.step_prompts.length) {
-      const st = o.step_prompts.join(" → ");
-      parts.push(`steps=${st.length > 100 ? st.slice(0, 100) + "…" : st}`);
-    }
-    if (o.parent_iteration != null && o.parent_iteration !== "") {
-      parts.push(`parent_iter=${o.parent_iteration}`);
-    }
-    if (o.finish) parts.push(`finish=${o.finish}`);
-    if (k === "model_iteration" && o.model) parts.push(`model=${o.model}`);
-    if (k === "model_iteration" && Array.isArray(o.tools_offered)) {
-      parts.push(`tools_offered=${o.tools_offered.length}`);
-    }
-    if (Array.isArray(o.skills_enabled) && o.skills_enabled.length) {
-      const s = o.skills_enabled.join(",");
-      parts.push(`skills=${s.length > 120 ? s.slice(0, 120) + "…" : s}`);
-    }
-    if (k === "task_start" && o.query_preview) {
-      const q = String(o.query_preview);
-      parts.push(`query=${q.length > 100 ? q.slice(0, 100) + "…" : q}`);
-    }
-    if (k === "tool_done" && o.ok != null) parts.push(o.ok ? "ok" : "err");
-    if ((k === "task_done" || k === "chain_run_error") && o.error) {
-      const e = String(o.error);
-      parts.push(`error=${e.length > 120 ? e.slice(0, 120) + "…" : e}`);
+    appendRunTraceComponentHints(o, k, parts);
+    if (parts.length === 1) {
+      const fb = traceTextMessage(o);
+      if (fb) parts.push(fb.length > 140 ? fb.slice(0, 137) + "…" : fb);
+      else if (o.caller) {
+        const c = String(o.caller);
+        parts.push(c.length > 100 ? c.slice(0, 97) + "…" : c);
+      }
     }
     return parts.join(" · ");
   }
@@ -488,7 +542,7 @@
     if (body) body.innerHTML = `<div class="log-loading">Loading…</div>`;
     try {
       const data = await fetchJSON(
-        `${API}/runtrace?which=${encodeURIComponent(which || "all")}&max_lines=800`,
+        `${API}/runtrace?which=${encodeURIComponent(which || "all")}&max_lines=1200`,
       );
       const lines = Array.isArray(data.lines) ? data.lines : [];
       runTraceLineCache = lines;
