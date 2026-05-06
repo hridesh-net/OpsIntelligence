@@ -399,6 +399,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		Limits:            limits,
 		Tasks:             tasks,
 		RunTracePath:      cfg.Agent.RunTraceFile,
+		SubagentTracePath: cfg.Agent.RunTraceSubagentFile,
 		DatastoreKind:     cfg.Datastore.Driver,
 	}
 }
@@ -1975,14 +1976,14 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		riCfg := cfg.RepoIntel
 		registryFile := riCfg.RegistryFile
 		if registryFile == "" {
-			registryFile = "repointel/repos.yaml"
+			registryFile = filepath.Join(layout.RepoIntel, "repos.yaml")
 		}
 		if !filepath.IsAbs(registryFile) {
 			registryFile = filepath.Join(cfg.StateDir, registryFile)
 		}
 		memDir := riCfg.MemoryDir
 		if memDir == "" {
-			memDir = "repointel/memory"
+			memDir = filepath.Join(layout.RepoIntel, "memory")
 		}
 		if !filepath.IsAbs(memDir) {
 			memDir = filepath.Join(cfg.StateDir, memDir)
@@ -2002,6 +2003,12 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			if riCfg.FullIndexMaxFileKB > 0 {
 				fullMaxBlob = riCfg.FullIndexMaxFileKB * 1024
 			}
+			clonesDir := riCfg.ClonesDir
+			if clonesDir == "" {
+				clonesDir = layout.RepoClones
+			} else if !filepath.IsAbs(clonesDir) {
+				clonesDir = filepath.Join(cfg.StateDir, clonesDir)
+			}
 			idxr := repointel.NewIndexer(repointel.IndexerConfig{
 				GitHubToken:           cfg.DevOps.GitHub.Token,
 				MemoryDir:             memDir,
@@ -2011,6 +2018,8 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				FullIndexMaxFileBytes: fullMaxBlob,
 				FullIndexChunkRunes:   riCfg.FullIndexChunkRunes,
 				FullIndexConcurrency:  riCfg.FullIndexConcurrency,
+				ClonesDir:             clonesDir,
+				ForceClone:            riCfg.ForceClone,
 			}, riRouter, runnerLog)
 			scnr := repointel.NewScanner(riRouter, runnerLog)
 

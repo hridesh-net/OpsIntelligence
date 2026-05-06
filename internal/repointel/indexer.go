@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -48,6 +49,15 @@ type IndexerConfig struct {
 
 	// FullIndexConcurrency bounds parallel GitHub blob downloads (default 8).
 	FullIndexConcurrency int
+
+	// ClonesDir is the base directory where shallow git clones are stored.
+	// When empty, the indexer falls back to the GitHub API for all repos.
+	ClonesDir string
+
+	// ForceClone, when true, uses git clone for all repos rather than the
+	// GitHub REST API. Default: false — non-GitHub repos always use clone;
+	// GitHub repos use the API unless this flag is set or GitHubToken is empty.
+	ForceClone bool
 }
 
 func (c *IndexerConfig) applyDefaults() {
@@ -93,6 +103,45 @@ func NewIndexer(cfg IndexerConfig, router *pipeline.LLMRouter, log *zap.Logger) 
 	}
 }
 
+// shouldUseClone reports whether this entry should be fetched via git clone
+// rather than the GitHub REST API.
+func (idx *Indexer) shouldUseClone(entry RepoEntry) bool {
+	if idx.cfg.ClonesDir == "" {
+		return false
+	}
+	if idx.cfg.ForceClone {
+		return true
+	}
+	if entry.CloneURL != "" {
+		return true
+	}
+	if strings.ToLower(strings.TrimSpace(entry.Platform)) != "github" {
+		return true
+	}
+	// GitHub repos without a token → use clone to avoid unauthenticated rate limits.
+	return strings.TrimSpace(idx.cfg.GitHubToken) == ""
+}
+
+// fetchRepoContentGitClone clones (or pulls) the repo and walks the local tree.
+func (idx *Indexer) fetchRepoContentGitClone(ctx context.Context, entry RepoEntry) (string, []RawFile, string, error) {
+	localDir, headSHA, err := ensureClone(ctx, entry, idx.cfg.ClonesDir, idx.cfg.GitHubToken)
+	if err != nil {
+		return "", nil, "", err
+	}
+	content, rawFiles, walkErr := walkLocalRepo(localDir, idx.cfg.MaxFilesPerRepo, 8000)
+	if walkErr != nil {
+		return "", nil, "", walkErr
+	}
+	if idx.log != nil {
+		idx.log.Info("repointel: indexed from local clone",
+			zap.String("repo", entry.ID),
+			zap.String("dir", localDir),
+			zap.Int("files", len(rawFiles)),
+		)
+	}
+	return content, rawFiles, headSHA, nil
+}
+
 // Index fetches and analyses the repo, returning a populated RepoMemory.
 // The caller is responsible for persisting the result.
 func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, error) {
@@ -101,7 +150,17 @@ func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, er
 	}
 
 	// ── Step 1: fetch key files ────────────────────────────────────────────────
-	content, rawFiles, headSHA, err := idx.fetchRepoContent(ctx, entry)
+	var (
+		content  string
+		rawFiles []RawFile
+		headSHA  string
+		err      error
+	)
+	if idx.shouldUseClone(entry) {
+		content, rawFiles, headSHA, err = idx.fetchRepoContentGitClone(ctx, entry)
+	} else {
+		content, rawFiles, headSHA, err = idx.fetchRepoContent(ctx, entry)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("indexer: fetch %s: %w", entry.ID, err)
 	}
@@ -135,19 +194,19 @@ func (idx *Indexer) Index(ctx context.Context, entry RepoEntry) (*RepoMemory, er
 	return mem, nil
 }
 
-// FetchRawFiles returns the same per-file snapshot used during indexing (GitHub
-// tree + blob fetch, truncated per file) without calling the LLM. Used to build
-// or repair call graphs when RepoMemory.RawFiles is empty (e.g. memory was
-// loaded from disk only).
+// FetchRawFiles returns the same per-file snapshot used during indexing
+// without calling the LLM. Used to build or repair call graphs when
+// RepoMemory.RawFiles is empty (e.g. memory was loaded from disk only).
 func (idx *Indexer) FetchRawFiles(ctx context.Context, entry RepoEntry) ([]RawFile, error) {
 	if idx == nil {
 		return nil, fmt.Errorf("indexer: nil")
 	}
-	_, raw, _, err := idx.fetchRepoContent(ctx, entry)
-	if err != nil {
-		return nil, err
+	if idx.shouldUseClone(entry) {
+		_, raw, _, err := idx.fetchRepoContentGitClone(ctx, entry)
+		return raw, err
 	}
-	return raw, nil
+	_, raw, _, err := idx.fetchRepoContent(ctx, entry)
+	return raw, err
 }
 
 // ── GitHub API fetch ──────────────────────────────────────────────────────────
@@ -220,9 +279,15 @@ func (idx *Indexer) fetchRepoContent(ctx context.Context, entry RepoEntry) (stri
 	return sb.String(), rawFiles, headSHA, nil
 }
 
-// CurrentHeadSHA fetches the current HEAD commit SHA for the repo via a
-// lightweight API call (no file content fetched). Used by the monitor loop.
+// CurrentHeadSHA returns the current remote HEAD commit SHA for the repo.
+// For clone-mode repos it runs git fetch + rev-parse; otherwise uses the GitHub API.
 func (idx *Indexer) CurrentHeadSHA(ctx context.Context, entry RepoEntry) (string, error) {
+	if idx.shouldUseClone(entry) {
+		dir := cloneDir(idx.cfg.ClonesDir, entry.ID)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return remoteHeadSHA(ctx, dir)
+		}
+	}
 	return idx.fetchHeadSHA(ctx, idx.cfg.GitHubBaseURL, entry.Owner, entry.Name)
 }
 

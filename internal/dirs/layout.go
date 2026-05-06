@@ -51,11 +51,12 @@ type Layout struct {
 	Root string
 
 	// Data — persistent databases and long-lived state.
-	Data       string
-	Memory     string
-	MemPalace  string
-	RepoIntel  string
-	LocalIntel string
+	Data        string
+	Memory      string
+	MemPalace   string
+	RepoIntel   string
+	RepoClones  string // shallow git clones for non-GitHub or token-less repos
+	LocalIntel  string
 
 	// Logs — structured operational logs.
 	Logs          string
@@ -112,6 +113,7 @@ func New(root string) *Layout {
 		Memory:          j("data", "memory"),
 		MemPalace:       j("data", "mempalace"),
 		RepoIntel:       j("data", "repointel"),
+		RepoClones:      j("data", "repointel", "clones"),
 		LocalIntel:      j("data", "localintel"),
 		Logs:            j("logs"),
 		LogsAgent:       j("logs", "agent"),
@@ -191,6 +193,7 @@ func (l *Layout) AllDirs() []string {
 		l.Memory,
 		l.MemPalace,
 		l.RepoIntel,
+		l.RepoClones,
 		l.LocalIntel,
 		l.Logs,
 		l.LogsAgent,

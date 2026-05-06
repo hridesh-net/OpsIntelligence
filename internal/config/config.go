@@ -148,6 +148,17 @@ type RepoIntelConfig struct {
 	// WorkQueueDepth is the channel buffer for the sequential processing queue.
 	// Default: 256.
 	WorkQueueDepth int `yaml:"work_queue_depth"`
+
+	// ClonesDir is the directory where shallow git clones are stored for
+	// non-GitHub repos and GitHub repos without a token. When empty,
+	// defaults to <state_dir>/data/repointel/clones.
+	// Relative paths resolve under StateDir.
+	ClonesDir string `yaml:"clones_dir"`
+
+	// ForceClone, when true, uses git clone for all repos instead of the
+	// GitHub REST API. Useful to avoid API rate limits on large repos.
+	// Default: false.
+	ForceClone bool `yaml:"force_clone"`
 }
 
 // DatastoreConfig configures the ops-plane persistence backend.

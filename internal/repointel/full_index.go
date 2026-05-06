@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -180,12 +182,35 @@ func (idx *Indexer) fetchBlobContent(ctx context.Context, base, owner, name, pat
 	return decodeBase64Content(contentResp.Content)
 }
 
-// FetchFullIndexRawFiles walks the repo tree at ref and returns text file bodies (bounded).
-// The bool is treeTruncated from GitHub (recursive trees over ~100k nodes may truncate).
+// FetchFullIndexRawFiles walks the full repo tree and returns every indexable
+// text file within the configured size/count caps.
+// For clone-mode repos the local clone is walked directly; otherwise the GitHub
+// API is used. The bool indicates whether the GitHub tree response was truncated
+// (always false for local clones).
 func (idx *Indexer) FetchFullIndexRawFiles(ctx context.Context, entry RepoEntry, ref string) ([]RawFile, bool, error) {
 	if idx.cfg.FullIndexDisable {
 		return nil, false, nil
 	}
+
+	if idx.shouldUseClone(entry) {
+		dir := cloneDir(idx.cfg.ClonesDir, entry.ID)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			maxFiles := idx.cfg.FullIndexMaxFiles
+			maxBlob := idx.cfg.FullIndexMaxFileBytes
+			files, walkErr := walkFullLocalRepo(dir, maxFiles, maxBlob)
+			if walkErr != nil {
+				return nil, false, walkErr
+			}
+			if idx.log != nil {
+				idx.log.Info("repointel: full index from local clone",
+					zap.String("repo", entry.ID),
+					zap.Int("files", len(files)),
+				)
+			}
+			return files, false, nil
+		}
+	}
+
 	base := idx.cfg.GitHubBaseURL
 	treeURL := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1",
 		base, entry.Owner, entry.Name, ref)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -58,9 +59,10 @@ type DashboardInfo struct {
 	Limits LimitsSnapshot
 
 	// Live data — read on every render, not a snapshot.
-	Tasks        *subagents.TaskManager // for Agents tab
-	RunTracePath string                 // NDJSON path for Logs tab
-	DatastoreKind string                // "sqlite" or "postgres" for Limits tab
+	Tasks               *subagents.TaskManager // for Agents tab
+	RunTracePath        string                 // NDJSON path for master agent (Logs tab)
+	SubagentTracePath   string                 // NDJSON path for sub-agent runs (Logs tab)
+	DatastoreKind       string                 // "sqlite" or "postgres" for Limits tab
 }
 
 // SessionUsage accumulates REPL session token usage for the Usage tab.
@@ -110,6 +112,11 @@ type DashboardModel struct {
 	logCache     []logEntry
 	logOffset    int64
 	logCachePath string // detects if RunTracePath changes between ticks
+
+	// Sub-agent log cache — same incremental pattern for SubagentTracePath.
+	subLogCache     []logEntry
+	subLogOffset    int64
+	subLogCachePath string
 
 	// visible is true when this model is actually being shown in the REPL overlay.
 	// fetchPS is only spawned when visible; the log cache refreshes regardless.
@@ -450,38 +457,32 @@ func (m *DashboardModel) renderUsageTabFiltered(query string) string {
 
 const logCacheMax = 200
 
-// refreshLogCache reads only the new bytes appended to the run trace since the
-// last call. It is driven by the dashboard tick (~1s) so rendering is never
-// blocked by file I/O. The in-memory cache never exceeds logCacheMax entries.
-func (m *DashboardModel) refreshLogCache() {
-	path := m.info.RunTracePath
+// readIncrementalTrace reads any new NDJSON entries appended to path since
+// *offset. On success *offset is advanced to the current end of the file and
+// *trackedPath is updated. Returns nil on any I/O error so tracing never
+// blocks rendering.
+func readIncrementalTrace(path string, offset *int64, trackedPath *string) []logEntry {
 	if path == "" {
-		return
+		return nil
 	}
-	// Reset if the trace path changed (e.g. new session).
-	if path != m.logCachePath {
-		m.logCachePath = path
-		m.logOffset = 0
-		m.logCache = m.logCache[:0]
+	if path != *trackedPath {
+		*trackedPath = path
+		*offset = 0
 	}
-
 	f, err := os.Open(path)
 	if err != nil {
-		return
+		return nil
 	}
 	defer f.Close()
-
 	fi, err := f.Stat()
-	if err != nil || fi.Size() <= m.logOffset {
-		return // nothing new
+	if err != nil || fi.Size() <= *offset {
+		return nil
 	}
-
-	if _, err := f.Seek(m.logOffset, io.SeekStart); err != nil {
-		return
+	if _, err := f.Seek(*offset, io.SeekStart); err != nil {
+		return nil
 	}
-
 	sc := bufio.NewScanner(f)
-	var newEntries []logEntry
+	var entries []logEntry
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
@@ -489,25 +490,54 @@ func (m *DashboardModel) refreshLogCache() {
 		}
 		var e logEntry
 		if json.Unmarshal(line, &e) == nil {
-			newEntries = append(newEntries, e)
+			entries = append(entries, e)
 		}
 	}
-
-	// Record how far we got so the next tick only reads what's new.
 	if pos, err := f.Seek(0, io.SeekCurrent); err == nil {
-		m.logOffset = pos
+		*offset = pos
 	}
+	return entries
+}
 
+// appendToCache appends newEntries to *cache and trims to logCacheMax.
+func appendToCache(cache *[]logEntry, newEntries []logEntry) {
 	if len(newEntries) == 0 {
 		return
 	}
-
-	m.logCache = append(m.logCache, newEntries...)
-	// Trim to cap without allocating a new backing array.
-	if len(m.logCache) > logCacheMax {
-		copy(m.logCache, m.logCache[len(m.logCache)-logCacheMax:])
-		m.logCache = m.logCache[:logCacheMax]
+	*cache = append(*cache, newEntries...)
+	if len(*cache) > logCacheMax {
+		copy(*cache, (*cache)[len(*cache)-logCacheMax:])
+		*cache = (*cache)[:logCacheMax]
 	}
+}
+
+// refreshLogCache reads any new trace entries from both the master and
+// sub-agent trace files. Driven by the dashboard tick so rendering is
+// never blocked by file I/O.
+func (m *DashboardModel) refreshLogCache() {
+	appendToCache(&m.logCache,
+		readIncrementalTrace(m.info.RunTracePath, &m.logOffset, &m.logCachePath))
+	appendToCache(&m.subLogCache,
+		readIncrementalTrace(m.info.SubagentTracePath, &m.subLogOffset, &m.subLogCachePath))
+}
+
+// mergedLogEntries returns the master and sub-agent caches merged in
+// chronological order. The T field is RFC3339Nano so lexicographic comparison
+// is correct.
+func mergedLogEntries(master, subagent []logEntry) []logEntry {
+	if len(subagent) == 0 {
+		return master
+	}
+	if len(master) == 0 {
+		return subagent
+	}
+	merged := make([]logEntry, len(master)+len(subagent))
+	copy(merged, master)
+	copy(merged[len(master):], subagent)
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].T < merged[j].T
+	})
+	return merged
 }
 
 // ── Agents tab ────────────────────────────────────────────────────────────────
@@ -625,17 +655,19 @@ func (m *DashboardModel) renderAgentsTab(query string) string {
 
 // logEntry is one parsed line from the run trace NDJSON.
 type logEntry struct {
-	T            string `json:"t"`
-	Kind         string `json:"kind"`
-	RunnerRole   string `json:"runner_role"`
-	SessionID    string `json:"session_id"`
-	ParentAgent  string `json:"parent_agent_id"`
-	Tool         string `json:"tool"`
-	Result       string `json:"result"`
-	Iteration    int    `json:"iteration"`
-	QueryPreview string `json:"query_preview"`
-	Error        string `json:"error"`
-	Finish       string `json:"finish_reason"`
+	T             string   `json:"t"`
+	Kind          string   `json:"kind"`
+	RunnerRole    string   `json:"runner_role"`
+	SessionID     string   `json:"session_id"`
+	ParentAgent   string   `json:"parent_agent_id"`
+	Tool          string   `json:"tool"`
+	Result        string   `json:"result"`
+	Iteration     int      `json:"iteration"`
+	QueryPreview  string   `json:"query_preview"`
+	Error         string   `json:"error"`
+	Finish        string   `json:"finish_reason"`
+	ToolsOffered  []string `json:"tools_offered"`
+	SkillsEnabled []string `json:"skills_enabled"`
 }
 
 // renderLogsTab renders the Logs tab purely from the in-memory cache — zero
@@ -664,7 +696,7 @@ func (m *DashboardModel) renderLogsTab(query string) string {
 	sb.WriteString(dim.Render(fmt.Sprintf("%-8s  %-8s  %-18s  %s\n", "TIME", "ROLE", "EVENT", "DETAIL")))
 	sb.WriteString(dim.Render(strings.Repeat("─", 70)) + "\n")
 
-	entries := m.logCache
+	entries := mergedLogEntries(m.logCache, m.subLogCache)
 	if len(entries) == 0 {
 		sb.WriteString(dim.Render("No trace events yet. Send a message to the agent to start."))
 		return sb.String()
@@ -682,7 +714,14 @@ func (m *DashboardModel) renderLogsTab(query string) string {
 				detail += dim.Render("  ← "+e.ParentAgent[:min8(e.ParentAgent)])
 			}
 		case "model_iteration":
-			detail = fmt.Sprintf("iter=%d", e.Iteration)
+			detail = fmt.Sprintf("iter=%d  tools=%d", e.Iteration, len(e.ToolsOffered))
+			if len(e.SkillsEnabled) > 0 {
+				skills := strings.Join(e.SkillsEnabled, ",")
+				if len(skills) > 40 {
+					skills = skills[:40] + "…"
+				}
+				detail += "  skills=" + skills
+			}
 		case "tool_call", "tool_result", "tool_done":
 			detail = e.Tool
 			if e.Result != "" {

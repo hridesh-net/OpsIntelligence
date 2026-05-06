@@ -77,7 +77,7 @@ func openRegistry(gf *globalFlags) (*repointel.Registry, error) {
 	}
 	registryFile := cfg.RepoIntel.RegistryFile
 	if registryFile == "" {
-		registryFile = "repointel/repos.yaml"
+		registryFile = "data/repointel/repos.yaml"
 	}
 	if !filepath.IsAbs(registryFile) {
 		registryFile = filepath.Join(cfg.StateDir, registryFile)
@@ -134,10 +134,20 @@ func ensureRepoIntelEnabled(gf *globalFlags) (bool, error) {
 
 func reposAddCmd(gf *globalFlags) *cobra.Command {
 	var platform string
+	var cloneURL string
 	cmd := &cobra.Command{
 		Use:   "add <owner/name>",
 		Short: "Add a repo to the Repo Intelligence registry",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add a repository to the Repo Intelligence registry for indexing and scanning.
+
+For GitHub repos the GitHub API is used by default (requires a token for private repos).
+For GitLab repos, or when --clone-url is provided, the repo is fetched via git clone.
+
+Examples:
+  opsintelligence repos add myorg/myrepo
+  opsintelligence repos add myorg/myrepo --platform gitlab
+  opsintelligence repos add myorg/myrepo --clone-url https://git.internal.company.com/myorg/myrepo.git`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			owner, name, err := parseOwnerName(args[0])
 			if err != nil {
@@ -161,6 +171,7 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 				Owner:    owner,
 				Name:     name,
 				FullName: owner + "/" + name,
+				CloneURL: strings.TrimSpace(cloneURL),
 				AddedAt:  time.Now(),
 			}
 			if err := reg.Add(entry); err != nil {
@@ -172,7 +183,11 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 			if err := reg.UpdateScanStatus(entry.ID, repointel.ScanPending, "", ""); err != nil {
 				return err
 			}
-			fmt.Printf("Repo %s/%s added (platform: %s).\n", owner, name, platform)
+			cloneNote := ""
+			if entry.CloneURL != "" {
+				cloneNote = fmt.Sprintf(" (clone: %s)", entry.CloneURL)
+			}
+			fmt.Printf("Repo %s/%s added (platform: %s)%s.\n", owner, name, platform, cloneNote)
 			mode, syncErr := notifyRepoSyncViaGateway(cfg, entry.ID)
 			switch {
 			case syncErr != nil:
@@ -192,6 +207,7 @@ func reposAddCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", "github", "Platform: github or gitlab")
+	cmd.Flags().StringVar(&cloneURL, "clone-url", "", "Git clone URL (overrides auto-inferred URL; enables git clone fetch path)")
 	return cmd
 }
 
@@ -497,7 +513,7 @@ func runReposTUI(gf *globalFlags) error {
 
 	registryFile := cfg.RepoIntel.RegistryFile
 	if registryFile == "" {
-		registryFile = "repointel/repos.yaml"
+		registryFile = "data/repointel/repos.yaml"
 	}
 	if !filepath.IsAbs(registryFile) {
 		registryFile = filepath.Join(cfg.StateDir, registryFile)
