@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -96,7 +97,7 @@ Optional integrity check: --sha256 or OPSINTELLIGENCE_LOCAL_GEMMA_GGUF_SHA256.`,
 			fmt.Println("    enabled: true")
 			fmt.Printf("    gguf_path: %q\n", res.Path)
 			fmt.Println("    max_tokens: 256")
-			fmt.Printf("    cache_dir: %q\n", filepath.Join(cfg.StateDir, "localintel"))
+			fmt.Printf("    cache_dir: %q\n", dirs.New(cfg.StateDir).LocalIntel)
 			return nil
 		},
 	}

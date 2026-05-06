@@ -58,6 +58,18 @@ func Migrate(l *Layout) {
 	for _, pair := range dirMoves {
 		migrateDir(pair[0], pair[1])
 	}
+
+	// Remove legacy directories that have no equivalent in the new layout and
+	// should be empty after migration. Errors are silently ignored — if a dir
+	// still has contents it will not be removed.
+	for _, legacy := range []string{
+		filepath.Join(root, "policies"),  // superseded by root POLICIES.md
+		filepath.Join(root, "datastore"), // never part of the canonical layout
+	} {
+		if entries, err := os.ReadDir(legacy); err == nil && len(entries) == 0 {
+			os.Remove(legacy)
+		}
+	}
 }
 
 // migrateFile moves src to dst if src exists and dst does not.
@@ -77,6 +89,9 @@ func migrateFile(src, dst string) {
 }
 
 // migrateDir merges the contents of src into dst, then removes src if empty.
+// When a destination entry already exists the source entry is removed (the
+// destination is considered authoritative), so old flat directories are fully
+// cleaned up even when the new structured directory was seeded first.
 func migrateDir(src, dst string) {
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
@@ -93,7 +108,13 @@ func migrateDir(src, dst string) {
 		srcEntry := filepath.Join(src, e.Name())
 		dstEntry := filepath.Join(dst, e.Name())
 		if fileExists(dstEntry) {
-			continue // destination already present — don't overwrite
+			// Destination already has this — clean up the source copy.
+			if e.IsDir() {
+				migrateDir(srcEntry, dstEntry) // recurse to clean sub-entries
+			} else {
+				os.Remove(srcEntry)
+			}
+			continue
 		}
 		if err := os.Rename(srcEntry, dstEntry); err != nil {
 			if e.IsDir() {

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"strings"
 	"time"
 
@@ -48,7 +48,7 @@ func dlqListCmd(gf *globalFlags) *cobra.Command {
 			}
 			dlqPath := cfg.Channels.Outbound.DLQPath
 			if strings.TrimSpace(dlqPath) == "" {
-				dlqPath = filepath.Join(cfg.StateDir, "channels", "dlq.ndjson")
+				dlqPath = dirs.New(cfg.StateDir).DLQ()
 			}
 			f, err := os.Open(dlqPath)
 			if err != nil {

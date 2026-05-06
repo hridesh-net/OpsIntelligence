@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -43,7 +43,7 @@ func securityLogPath(flags *globalFlags) (string, error) {
 	if cfg.Security.LogPath != "" {
 		return cfg.Security.LogPath, nil
 	}
-	return filepath.Join(cfg.StateDir, "security", "audit.ndjson"), nil
+	return dirs.New(cfg.StateDir).AuditLog(), nil
 }
 
 // ─────────────────────────────────────────────
@@ -67,7 +67,7 @@ func securityStatusCmd(flags *globalFlags) *cobra.Command {
 			}
 			logPath := cfg.Security.LogPath
 			if logPath == "" {
-				logPath = filepath.Join(cfg.StateDir, "security", "audit.ndjson")
+				logPath = dirs.New(cfg.StateDir).AuditLog()
 			}
 
 			fmt.Printf("Security Layer Status\n")

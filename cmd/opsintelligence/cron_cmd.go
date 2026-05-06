@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"text/tabwriter"
 
 	"github.com/google/uuid"
@@ -66,7 +66,7 @@ func cronListCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 
-			path := filepath.Join(cfg.StateDir, "cron_jobs.json")
+			path := dirs.New(cfg.StateDir).CronJobs()
 			jobs, err := readCronJobs(path)
 			if err != nil {
 				return fmt.Errorf("failed to read cron jobs: %w", err)
@@ -125,7 +125,7 @@ func cronAddCmd(gf *globalFlags) *cobra.Command {
 			scheduleStr := args[0]
 			promptStr := args[1]
 
-			path := filepath.Join(cfg.StateDir, "cron_jobs.json")
+			path := dirs.New(cfg.StateDir).CronJobs()
 			jobs, err := readCronJobs(path)
 			if err != nil {
 				return fmt.Errorf("failed to read cron jobs: %w", err)
@@ -162,7 +162,7 @@ func cronRemoveCmd(gf *globalFlags) *cobra.Command {
 			}
 
 			targetID := args[0]
-			path := filepath.Join(cfg.StateDir, "cron_jobs.json")
+			path := dirs.New(cfg.StateDir).CronJobs()
 			jobs, err := readCronJobs(path)
 			if err != nil {
 				return fmt.Errorf("failed to read cron jobs: %w", err)

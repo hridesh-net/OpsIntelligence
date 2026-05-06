@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"strings"
 	"text/tabwriter"
 
@@ -278,7 +278,7 @@ func openLibraryFromConfig(cfg *config.Config) (*prompts.Library, error) {
 		Embedded:     embed,
 		EmbeddedRoot: ".",
 		ExtraDirs:    cfg.SmartPrompts.ExtraSourceDirs,
-		Dir:          filepath.Join(cfg.StateDir, "prompts"),
+		Dir:          dirs.New(cfg.StateDir).Prompts,
 	}.Load()
 }
 
