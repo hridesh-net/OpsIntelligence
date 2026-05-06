@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] — 2026-05-06
+
+### Added
+
+- **Repo Intelligence local git clones** (`internal/repointel/cloner.go`, layout + config): shallow **clone/cache** under state dir for indexing when API-only paths are insufficient; clone URL resolution (GitHub token, GitLab, Bitbucket).
+
+### Changed
+
+- **Indexing & full-repo index** (`internal/repointel/indexer.go`, `full_index.go`): improved tree/blob handling and integration with clone-backed sources.
+- **Agent dashboard TUI** (`cmd/opsintelligence/tui/dashboard.go`) and **`repos` CLI** (`cmd/opsintelligence/repos_cmd.go`): repo intel / observability UX and gateway wiring refinements (`cmd/opsintelligence/main.go`, `internal/config/config.go`, `internal/dirs/layout.go`).
+
 ## [1.0.8] — 2026-05-06
 
 ### Fixed
