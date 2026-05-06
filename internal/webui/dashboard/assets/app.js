@@ -328,9 +328,31 @@
     return escapeHtml(d.toLocaleString());
   }
 
+  /** Trace events use `kind`; zap / application logs co-appended to the same NDJSON use `msg` + `level`. */
+  function runTraceEventKind(o) {
+    if (!o || typeof o !== "object") return "event";
+    if (o.kind) return String(o.kind);
+    if (typeof o.msg === "string" && o.msg !== "" && (typeof o.level === "string" || o.caller)) {
+      return "log";
+    }
+    return "event";
+  }
+
   function summarizeRunTraceEvent(o) {
     if (!o || typeof o !== "object") return "";
-    const k = o.kind || "?";
+    if (typeof o.msg === "string" && o.msg !== "" && (typeof o.level === "string" || o.caller)) {
+      const lvl = o.level != null ? String(o.level) : "";
+      let msg = String(o.msg).replace(/\s+/g, " ").trim();
+      if (msg.length > 140) msg = msg.slice(0, 137) + "…";
+      const caller = o.caller ? String(o.caller) : "";
+      const tail = caller.includes("/") ? caller.split("/").pop() : caller;
+      const parts = ["log"];
+      if (lvl) parts.push(lvl);
+      if (tail) parts.push(tail);
+      parts.push(msg);
+      return parts.join(" · ");
+    }
+    const k = o.kind || "event";
     const parts = [`${k}`];
     if (o.runner_role) parts.push(`role=${o.runner_role}`);
     if (o.iteration != null && o.iteration !== "") parts.push(`iter=${o.iteration}`);
@@ -367,6 +389,7 @@
 
   function runTraceKindClass(kind) {
     const k = String(kind || "").toLowerCase();
+    if (k === "log") return "log-kind log-kind-log";
     if (k.includes("error") || k === "chain_run_error") return "log-kind log-kind-error";
     if (k.includes("tool")) return "log-kind log-kind-tool";
     if (k.includes("task")) return "log-kind log-kind-task";
@@ -396,7 +419,7 @@
           obj = { kind: "raw", _raw: row };
         }
       }
-      const kind = (obj && obj.kind) || "event";
+      const kind = obj && typeof obj === "object" ? runTraceEventKind(obj) : "event";
       const ts = (obj && obj.t) || "";
       const stream = (obj && obj._stream) || (obj && obj.runner_role) || "—";
       const summary = obj && typeof obj === "object" ? summarizeRunTraceEvent(obj) : "";
@@ -436,8 +459,14 @@
       }
       if (!obj || typeof obj !== "object") return true;
       const stream = String(obj._stream || obj.runner_role || "").toLowerCase();
-      if (streamNeedle && !stream.includes(streamNeedle)) return false;
-      const kind = String(obj.kind || "").toLowerCase();
+      if (streamNeedle) {
+        const match =
+          stream.includes(streamNeedle) ||
+          ((streamNeedle === "subagent" || streamNeedle === "child") &&
+            (stream.includes("specialist:") || stream.includes("subagent:") || stream.startsWith("task:")));
+        if (!match) return false;
+      }
+      const kind = String(runTraceEventKind(obj)).toLowerCase();
       if (kindNeedle && !kind.includes(kindNeedle)) return false;
       if (textNeedle) {
         try {
@@ -495,7 +524,7 @@
       <button type="button" class="primary" id="runtrace-refresh">Refresh</button>
       <label class="inline"><input type="checkbox" id="runtrace-live" checked /> Auto-refresh (10s)</label>
       <span class="runtrace-toolbar-spacer"></span>
-      <label class="inline">Filter stream / role <input type="search" id="runtrace-filter-stream" placeholder="e.g. master, subagent, specialist" /></label>
+      <label class="inline">Filter stream / role <input type="search" id="runtrace-filter-stream" placeholder="master, subagent (matches specialist:…), …" /></label>
       <label class="inline">Kind <input type="search" id="runtrace-filter-kind" placeholder="task_start, tool…" /></label>
       <label class="inline">Contains <input type="search" id="runtrace-filter-text" placeholder="substring in JSON" /></label>
     `;

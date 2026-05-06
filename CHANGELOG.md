@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Run trace dashboard** (`internal/webui/dashboard/assets/app.js`, `style.css`): treat zap-style JSON lines (`msg` + `level` / `caller`) as **`log`** with readable summaries instead of **`?`**; widen stream filter **`subagent`** to match **`specialist:`** child roles.
+- **Run trace merge API** (`internal/gateway/runtrace_api.go`): when merging master + sub-agent NDJSON, **split the line budget across files** so a busy master file cannot squeeze sub-agent traces out of the tail; infer **`session_id`** hints (`cron:`, `subagent:`) for stream when **`runner_role`** is absent.
+
 ## [1.0.7] — 2026-05-06
 
 ### Fixed

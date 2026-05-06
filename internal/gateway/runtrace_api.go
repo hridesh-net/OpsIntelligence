@@ -164,11 +164,19 @@ func mergeRunTrace(masterAbs, subClean string, maxLines int) (lines []json.RawMe
 		return ls, trunc, []string{subClean}, nil
 	}
 
-	lm, truncM, _, err := readRunTraceTail(masterAbs, maxLines)
+	// Split the line budget across files so a noisy master stream (e.g. zap JSON
+	// lines co-located in the same NDJSON file) cannot push every sub-agent trace
+	// out of the merged tail window.
+	nMaster, nSub := maxLines, maxLines
+	if subClean != "" && masterAbs != subClean {
+		nMaster = (maxLines + 1) / 2
+		nSub = maxLines - nMaster
+	}
+	lm, truncM, _, err := readRunTraceTail(masterAbs, nMaster)
 	if err != nil {
 		return nil, false, nil, err
 	}
-	ls, truncS, _, err := readRunTraceTail(subClean, maxLines)
+	ls, truncS, _, err := readRunTraceTail(subClean, nSub)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -187,11 +195,12 @@ func mergeRunTrace(masterAbs, subClean string, maxLines int) (lines []json.RawMe
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ts.Before(items[j].ts)
 	})
+	// With split reads, len(items) <= maxLines; keep tail trim as a safety net.
 	if len(items) > maxLines {
 		items = items[len(items)-maxLines:]
 		truncated = true
 	} else {
-		truncated = truncM || truncS || len(lm)+len(ls) > maxLines
+		truncated = truncM || truncS
 	}
 	out := make([]json.RawMessage, len(items))
 	for i := range items {
@@ -220,7 +229,16 @@ func runTraceLineTime(raw json.RawMessage) time.Time {
 
 func inferRunnerStream(m map[string]any) string {
 	if s, ok := m["runner_role"].(string); ok {
-		return strings.TrimSpace(s)
+		if t := strings.TrimSpace(s); t != "" {
+			return t
+		}
+	}
+	// Zap-style lines and some events carry session_id but not runner_role.
+	if s, ok := m["session_id"].(string); ok {
+		s = strings.TrimSpace(s)
+		if strings.HasPrefix(s, "subagent:") || strings.HasPrefix(s, "cron:") {
+			return s
+		}
 	}
 	return ""
 }

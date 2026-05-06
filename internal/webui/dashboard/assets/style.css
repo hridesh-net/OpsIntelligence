@@ -160,6 +160,12 @@ code {
   color: var(--fg-dim);
 }
 
+.log-kind-log {
+  border-color: #4a4a55;
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
 .log-kind-tool {
   border-color: #3d5a80;
   color: #9ec5ff;
