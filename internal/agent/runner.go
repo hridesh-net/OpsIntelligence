@@ -539,6 +539,9 @@ func (r *Runner) traceTaskStart(ctx context.Context, userMessage string) {
 	if m := strings.TrimSpace(r.cfg.RunTraceMode); m != "" {
 		traceFields["run_trace_mode"] = m
 	}
+	if pid := correlation.ParentAgentID(ctx); pid != "" {
+		traceFields["parent_agent_id"] = pid
+	}
 	r.emitTrace(ctx, "task_start", traceFields)
 }
 

@@ -352,7 +352,7 @@ func optionalBoolString(p *bool) string {
 	return "false"
 }
 
-func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version, skillSummary string, channels []string, mcpTransport, gwBind string) tui.DashboardInfo {
+func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version, skillSummary string, channels []string, mcpTransport, gwBind string, tasks *subagents.TaskManager) tui.DashboardInfo {
 	webHost := cfg.Gateway.Host
 	if webHost == "" {
 		webHost = "127.0.0.1"
@@ -397,6 +397,9 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		LocalIntelEnabled: cfg.Agent.LocalIntel.Enabled,
 		MCPClientCount:    len(cfg.MCP.Clients),
 		Limits:            limits,
+		Tasks:             tasks,
+		RunTracePath:      cfg.Agent.RunTraceFile,
+		DatastoreKind:     cfg.Datastore.Driver,
 	}
 }
 
@@ -466,7 +469,7 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 			if gwBind == "" {
 				gwBind = "loopback"
 			}
-			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind)
+			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind, nil)
 			return tui.RunDashboard(dash, "opsintelligence status", nil, false)
 		},
 	}
@@ -1789,6 +1792,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	toolReg.Register(tools.SubAgentStreamTool{S: subSvc})
 	toolReg.Register(tools.SubAgentShareContextTool{S: subSvc})
 	toolReg.Register(tools.SubAgentReadContextTool{S: subSvc})
+	toolReg.Register(tools.AgentTreeTool{Tasks: tasks})
 	catalog = tools.NewCatalog(toolReg, toolGraph)
 	runner = runner.WithCatalog(catalog).WithModelRegistry(reg)
 
@@ -2312,7 +2316,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// Interactive REPL mode — rebuild logger to write to file only so that
 	// structured JSON log lines never bleed into the terminal display.
 	tuiLog := buildLogger(gf.logLevel, dirs.New(cfg.StateDir).AgentRunTrace())
-	return runREPL(ctx, runner, modelInfo.ID, tuiLog, cfg, gf)
+	return runREPL(ctx, runner, modelInfo.ID, tuiLog, cfg, gf, tasks)
 }
 
 // extractBundledSkills copies the repo's skills/ directory into destDir (bundled dir).
@@ -2772,7 +2776,7 @@ func (h *cliStreamHandler) OnError(err error) { h.done <- err }
 
 // runREPL launches the interactive agent REPL.
 // It now uses the futuristic bubbletea TUI from cmd/opsintelligence/tui.
-func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger, cfg *config.Config, gf *globalFlags) error {
+func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logger, cfg *config.Config, gf *globalFlags, tasks *subagents.TaskManager) error {
 	// Count providers and skills for the banner
 	providerCount := 1 // at least one is configured or we wouldn't be here
 	skillCount := 0
@@ -2799,7 +2803,7 @@ func runREPL(ctx context.Context, r *agent.Runner, modelID string, log *zap.Logg
 	if gwBind == "" {
 		gwBind = "loopback"
 	}
-	dash := buildDashboardInfo(cfg, gf.configPath, os.Getpid(), version, skillSummary, channels, mcpTransport, gwBind)
+	dash := buildDashboardInfo(cfg, gf.configPath, os.Getpid(), version, skillSummary, channels, mcpTransport, gwBind, tasks)
 
 	a := &agentRunnerAdapter{runner: r}
 	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID, dash)

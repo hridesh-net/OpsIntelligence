@@ -12,10 +12,11 @@ import (
 type ctxKey string
 
 const (
-	requestIDKey ctxKey = "observability.request_id"
-	sessionIDKey ctxKey = "observability.session_id"
-	channelKey   ctxKey = "observability.channel"
-	traceIDKey   ctxKey = "observability.trace_id"
+	requestIDKey     ctxKey = "observability.request_id"
+	sessionIDKey     ctxKey = "observability.session_id"
+	channelKey       ctxKey = "observability.channel"
+	traceIDKey       ctxKey = "observability.trace_id"
+	parentAgentIDKey ctxKey = "observability.parent_agent_id"
 )
 
 const (
@@ -71,6 +72,20 @@ func TraceID(ctx context.Context) string {
 	return v
 }
 
+// WithParentAgentID records the session ID of the master agent that spawned this child.
+func WithParentAgentID(ctx context.Context, parentID string) context.Context {
+	if strings.TrimSpace(parentID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, parentAgentIDKey, strings.TrimSpace(parentID))
+}
+
+// ParentAgentID returns the parent agent session ID, or "" when not set.
+func ParentAgentID(ctx context.Context) string {
+	v, _ := ctx.Value(parentAgentIDKey).(string)
+	return v
+}
+
 // EnsureRequestID guarantees request_id exists on ctx and returns the resulting ctx + id.
 func EnsureRequestID(ctx context.Context) (context.Context, string) {
 	if rid := RequestID(ctx); rid != "" {
@@ -99,7 +114,7 @@ func EnrichFromHTTPHeaders(ctx context.Context, headers http.Header) context.Con
 }
 
 func Fields(ctx context.Context) []zap.Field {
-	fields := make([]zap.Field, 0, 4)
+	fields := make([]zap.Field, 0, 5)
 	if rid := RequestID(ctx); rid != "" {
 		fields = append(fields, zap.String("request_id", rid))
 	}
@@ -111,6 +126,9 @@ func Fields(ctx context.Context) []zap.Field {
 	}
 	if tid := TraceID(ctx); tid != "" {
 		fields = append(fields, zap.String("trace_id", tid))
+	}
+	if pid := ParentAgentID(ctx); pid != "" {
+		fields = append(fields, zap.String("parent_agent_id", pid))
 	}
 	return fields
 }

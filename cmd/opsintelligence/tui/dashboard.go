@@ -1,13 +1,20 @@
 package tui
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/opsintelligence/opsintelligence/internal/subagents"
 )
 
 // TokenUsageSnapshot mirrors provider.TokenUsage without importing provider here.
@@ -49,6 +56,11 @@ type DashboardInfo struct {
 	MCPClientCount    int
 
 	Limits LimitsSnapshot
+
+	// Live data — read on every render, not a snapshot.
+	Tasks        *subagents.TaskManager // for Agents tab
+	RunTracePath string                 // NDJSON path for Logs tab
+	DatastoreKind string                // "sqlite" or "postgres" for Limits tab
 }
 
 // SessionUsage accumulates REPL session token usage for the Usage tab.
@@ -76,6 +88,8 @@ const (
 	dashTabConfig
 	dashTabLimits
 	dashTabUsage
+	dashTabAgents
+	dashTabLogs
 	dashTabCount
 )
 
@@ -90,7 +104,22 @@ type DashboardModel struct {
 	overlay       bool // when true, Esc/q do not quit (parent REPL handles dismiss)
 	search        textinput.Model
 	searchActive  bool
+
+	// Log cache — populated incrementally on each tick, never on render.
+	// Only new bytes since logOffset are read; the entry slice is capped at 200.
+	logCache     []logEntry
+	logOffset    int64
+	logCachePath string // detects if RunTracePath changes between ticks
+
+	// visible is true when this model is actually being shown in the REPL overlay.
+	// fetchPS is only spawned when visible; the log cache refreshes regardless.
+	visible bool
 }
+
+// SetVisible tells the dashboard whether it is currently shown to the user.
+// Call with true on Ctrl+O open, false on close. Avoids spawning the ps
+// subprocess every second when the dashboard is not on screen.
+func (m *DashboardModel) SetVisible(v bool) { m.visible = v }
 
 // NewDashboardModel builds a dashboard. sessionUsage may be nil for standalone status.
 func NewDashboardModel(info DashboardInfo, contextLabel string, sessionUsage *SessionUsage, overlay bool) *DashboardModel {
@@ -160,8 +189,11 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
+		m.refreshLogCache() // always: cheap incremental read, keeps cache warm
 		pid := m.info.Status.PID
-		if pid > 0 {
+		// fetchPS spawns an OS subprocess — only worth doing when the dashboard
+		// is actually visible (!overlay = standalone status command; visible = REPL overlay open).
+		if pid > 0 && (!m.overlay || m.visible) {
 			return m, tea.Batch(fetchPS(pid), tickEvery())
 		}
 		return m, tickEvery()
@@ -187,7 +219,7 @@ func (m *DashboardModel) View() string {
 		ChromePrompt.Render("›") + " " + lipgloss.NewStyle().Background(ColorChromeBg).Foreground(ColorWhite).Render(m.contextLabel),
 	)
 
-	tabNames := []string{"Status", "Config", "Limits", "Usage"}
+	tabNames := []string{"Status", "Config", "Limits", "Usage", "Agents", "Logs"}
 	var tabParts []string
 	for i, name := range tabNames {
 		if i == m.activeTab {
@@ -257,6 +289,10 @@ func (m *DashboardModel) renderTabBodyFiltered(query string) string {
 		return m.renderLimitsTabFiltered(query)
 	case dashTabUsage:
 		return m.renderUsageTabFiltered(query)
+	case dashTabAgents:
+		return m.renderAgentsTab(query)
+	case dashTabLogs:
+		return m.renderLogsTab(query)
 	default:
 		return ""
 	}
@@ -317,6 +353,12 @@ func (m *DashboardModel) renderLimitsTabFiltered(query string) string {
 	lav := lipgloss.NewStyle().Foreground(ColorAccentLavender)
 	L := m.info.Limits
 
+	ds := nz(m.info.DatastoreKind, "sqlite")
+	maxSessions := "~50–100  (SQLite WAL, single-writer)"
+	if ds == "postgres" {
+		maxSessions = "~500+  (tune max_open_conns)"
+	}
+
 	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Limits")
 	kv := []struct{ k, v string }{
 		{"max_iterations", fmtLimit(L.MaxIterations)},
@@ -327,6 +369,10 @@ func (m *DashboardModel) renderLimitsTabFiltered(query string) string {
 		{"subagent.retain_limit", fmtLimit(L.SubagentRetainLimit)},
 		{"local_intel.max_tokens", fmtLimit(L.LocalIntelMaxTokens)},
 		{"local_intel.smart_route_max", fmtLimit(L.SmartRoutingMaxTokens)},
+		{"session_store", "in-process RAM"},
+		{"datastore", ds},
+		{"horizontal_scaling", "✗  single-instance"},
+		{"recommended_max_sessions", maxSessions},
 	}
 	rows := []string{title, ""}
 	matched := 0
@@ -398,6 +444,323 @@ func (m *DashboardModel) renderUsageTabFiltered(query string) string {
 		b.WriteString(dim.Render("No PID context (start the agent REPL for live session usage)."))
 	}
 	return b.String()
+}
+
+// ── Log cache — incremental reader ───────────────────────────────────────────
+
+const logCacheMax = 200
+
+// refreshLogCache reads only the new bytes appended to the run trace since the
+// last call. It is driven by the dashboard tick (~1s) so rendering is never
+// blocked by file I/O. The in-memory cache never exceeds logCacheMax entries.
+func (m *DashboardModel) refreshLogCache() {
+	path := m.info.RunTracePath
+	if path == "" {
+		return
+	}
+	// Reset if the trace path changed (e.g. new session).
+	if path != m.logCachePath {
+		m.logCachePath = path
+		m.logOffset = 0
+		m.logCache = m.logCache[:0]
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil || fi.Size() <= m.logOffset {
+		return // nothing new
+	}
+
+	if _, err := f.Seek(m.logOffset, io.SeekStart); err != nil {
+		return
+	}
+
+	sc := bufio.NewScanner(f)
+	var newEntries []logEntry
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var e logEntry
+		if json.Unmarshal(line, &e) == nil {
+			newEntries = append(newEntries, e)
+		}
+	}
+
+	// Record how far we got so the next tick only reads what's new.
+	if pos, err := f.Seek(0, io.SeekCurrent); err == nil {
+		m.logOffset = pos
+	}
+
+	if len(newEntries) == 0 {
+		return
+	}
+
+	m.logCache = append(m.logCache, newEntries...)
+	// Trim to cap without allocating a new backing array.
+	if len(m.logCache) > logCacheMax {
+		copy(m.logCache, m.logCache[len(m.logCache)-logCacheMax:])
+		m.logCache = m.logCache[:logCacheMax]
+	}
+}
+
+// ── Agents tab ────────────────────────────────────────────────────────────────
+
+func (m *DashboardModel) renderAgentsTab(query string) string {
+	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Active Agents")
+	dim := lipgloss.NewStyle().Foreground(ColorMuted)
+	green := lipgloss.NewStyle().Foreground(ColorSuccess)
+	orange := lipgloss.NewStyle().Foreground(ColorNeon)
+	errSt := lipgloss.NewStyle().Foreground(ColorError)
+
+	if m.info.Tasks == nil {
+		return title + "\n\n" + dim.Render("Task manager not available.")
+	}
+	tasks := m.info.Tasks.List()
+
+	var sb strings.Builder
+	sb.WriteString(title)
+	sb.WriteString("\n\n")
+
+	// Master row is always present.
+	sb.WriteString(green.Render("■ master") + "  " + dim.Render("running") + "\n")
+
+	active := 0
+	for _, tk := range tasks {
+		if tk.Status != subagents.StatusRunning && tk.Status != subagents.StatusPending {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(tk.SubAgentNm), query) &&
+			!strings.Contains(strings.ToLower(string(tk.Status)), query) {
+			continue
+		}
+		active++
+		icon := green.Render("■")
+		statusStr := green.Render(string(tk.Status))
+		if tk.Status == subagents.StatusPending {
+			icon = orange.Render("◷")
+			statusStr = orange.Render(string(tk.Status))
+		}
+		elapsed := tk.Elapsed().Round(time.Second)
+		sb.WriteString(fmt.Sprintf("  └─ %s %-12s %s  %s\n",
+			icon,
+			lipgloss.NewStyle().Bold(true).Render(tk.SubAgentNm),
+			statusStr,
+			dim.Render(elapsed.String()),
+		))
+		last := tk.LastEvent()
+		if last.Message != "" {
+			phase := last.Phase
+			if phase == "" {
+				phase = string(last.Kind)
+			}
+			msg := last.Message
+			if len([]rune(msg)) > 72 {
+				msg = string([]rune(msg)[:72]) + "…"
+			}
+			sb.WriteString(fmt.Sprintf("       %s %s\n",
+				dim.Render("["+phase+"]"),
+				dim.Render(msg),
+			))
+		}
+	}
+
+	if active == 0 && query == "" {
+		sb.WriteString("  " + dim.Render("(no active specialists)") + "\n")
+	}
+
+	// Completed / failed agents
+	var done []subagents.Task
+	for _, tk := range tasks {
+		if tk.Status == subagents.StatusRunning || tk.Status == subagents.StatusPending {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(tk.SubAgentNm), query) &&
+			!strings.Contains(strings.ToLower(string(tk.Status)), query) {
+			continue
+		}
+		done = append(done, tk)
+	}
+	if len(done) > 0 {
+		sb.WriteString("\n" + dim.Render("── Completed ─────────────────────────────────") + "\n")
+		for _, tk := range done {
+			icon := green.Render("✓")
+			if tk.Status == subagents.StatusFailed {
+				icon = errSt.Render("✗")
+			} else if tk.Status == subagents.StatusCancelled {
+				icon = dim.Render("⊘")
+			}
+			elapsed := tk.Elapsed().Round(time.Second)
+			extra := ""
+			if tk.Error != "" {
+				msg := tk.Error
+				if len([]rune(msg)) > 50 {
+					msg = string([]rune(msg)[:50]) + "…"
+				}
+				extra = "  " + errSt.Render(msg)
+			}
+			sb.WriteString(fmt.Sprintf("%s %-14s %s  %s%s\n",
+				icon,
+				lipgloss.NewStyle().Bold(true).Render(tk.SubAgentNm),
+				dim.Render(string(tk.Status)),
+				dim.Render(elapsed.String()),
+				extra,
+			))
+		}
+	}
+
+	if active == 0 && len(done) == 0 {
+		sb.WriteString("\n" + dim.Render("No specialist agents have been spawned yet in this session."))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// ── Logs tab ──────────────────────────────────────────────────────────────────
+
+// logEntry is one parsed line from the run trace NDJSON.
+type logEntry struct {
+	T            string `json:"t"`
+	Kind         string `json:"kind"`
+	RunnerRole   string `json:"runner_role"`
+	SessionID    string `json:"session_id"`
+	ParentAgent  string `json:"parent_agent_id"`
+	Tool         string `json:"tool"`
+	Result       string `json:"result"`
+	Iteration    int    `json:"iteration"`
+	QueryPreview string `json:"query_preview"`
+	Error        string `json:"error"`
+	Finish       string `json:"finish_reason"`
+}
+
+// renderLogsTab renders the Logs tab purely from the in-memory cache — zero
+// file I/O. The cache is refreshed incrementally on every dashboard tick.
+func (m *DashboardModel) renderLogsTab(query string) string {
+	title := lipgloss.NewStyle().Foreground(ColorAccentLavender).Bold(true).Render("Run Trace")
+	dim := lipgloss.NewStyle().Foreground(ColorMuted)
+	cyan := lipgloss.NewStyle().Foreground(ColorCyan)
+	green := lipgloss.NewStyle().Foreground(ColorSuccess)
+	orange := lipgloss.NewStyle().Foreground(ColorNeon)
+	errSt := lipgloss.NewStyle().Foreground(ColorError)
+	white := lipgloss.NewStyle().Foreground(ColorWhite)
+
+	path := m.info.RunTracePath
+	if path == "" {
+		return title + "\n\n" + dim.Render("Run trace not configured.")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(title)
+	sb.WriteString("  ")
+	sb.WriteString(dim.Render(path))
+	sb.WriteString("\n\n")
+
+	// Header row
+	sb.WriteString(dim.Render(fmt.Sprintf("%-8s  %-8s  %-18s  %s\n", "TIME", "ROLE", "EVENT", "DETAIL")))
+	sb.WriteString(dim.Render(strings.Repeat("─", 70)) + "\n")
+
+	entries := m.logCache
+	if len(entries) == 0 {
+		sb.WriteString(dim.Render("No trace events yet. Send a message to the agent to start."))
+		return sb.String()
+	}
+
+	matched := 0
+	for _, e := range entries {
+
+		// Build detail string
+		var detail string
+		switch e.Kind {
+		case "task_start":
+			detail = e.QueryPreview
+			if e.ParentAgent != "" {
+				detail += dim.Render("  ← "+e.ParentAgent[:min8(e.ParentAgent)])
+			}
+		case "model_iteration":
+			detail = fmt.Sprintf("iter=%d", e.Iteration)
+		case "tool_call", "tool_result", "tool_done":
+			detail = e.Tool
+			if e.Result != "" {
+				r := e.Result
+				if len([]rune(r)) > 50 {
+					r = string([]rune(r)[:50]) + "…"
+				}
+				detail += "  → " + r
+			}
+		case "task_done":
+			detail = "finish=" + e.Finish
+			if e.Error != "" {
+				detail += "  err=" + e.Error
+			}
+		default:
+			detail = e.Kind
+		}
+
+		// Filter
+		searchTarget := strings.ToLower(e.Kind + " " + e.RunnerRole + " " + detail + " " + e.Tool)
+		if query != "" && !strings.Contains(searchTarget, query) {
+			continue
+		}
+		matched++
+
+		// Timestamp — show only HH:MM:SS
+		ts := e.T
+		if len(ts) >= 19 {
+			ts = ts[11:19]
+		}
+
+		// Role badge
+		roleBadge := cyan.Render("master  ")
+		if e.RunnerRole == "subagent" {
+			roleBadge = orange.Render("agent   ")
+		}
+
+		// Kind color
+		kindStr := white.Render(e.Kind)
+		switch e.Kind {
+		case "task_start":
+			kindStr = green.Render(fmt.Sprintf("%-18s", e.Kind))
+		case "task_done":
+			if e.Error != "" {
+				kindStr = errSt.Render(fmt.Sprintf("%-18s", e.Kind))
+			} else {
+				kindStr = green.Render(fmt.Sprintf("%-18s", e.Kind))
+			}
+		case "tool_call":
+			kindStr = cyan.Render(fmt.Sprintf("%-18s", e.Kind))
+		case "tool_done", "tool_result":
+			kindStr = dim.Render(fmt.Sprintf("%-18s", e.Kind))
+		default:
+			kindStr = white.Render(fmt.Sprintf("%-18s", e.Kind))
+		}
+
+		// Truncate detail
+		detailRunes := []rune(detail)
+		if len(detailRunes) > 50 {
+			detail = string(detailRunes[:50]) + "…"
+		}
+
+		sb.WriteString(fmt.Sprintf("%s  %s  %s  %s\n",
+			dim.Render(ts), roleBadge, kindStr, dim.Render(detail)))
+	}
+
+	if matched == 0 && query != "" {
+		sb.WriteString(dim.Render("No entries matching " + strconv.Quote(query)))
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func min8(s string) int {
+	if len(s) < 8 {
+		return len(s)
+	}
+	return 8
 }
 
 func rowKV(dim, valStyle lipgloss.Style, k, v string) string {

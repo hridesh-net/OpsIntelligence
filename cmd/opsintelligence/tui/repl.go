@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/opsintelligence/opsintelligence/internal/subagents"
 )
 
 // ─────────────────────────────────────────────
@@ -56,6 +58,7 @@ type agentDoneMsg struct {
 }
 type agentErrMsg struct{ err error }
 type pulseMsg struct{}
+type subAgentPollMsg struct{} // fires every 500ms to refresh sub-agent status
 
 // ─────────────────────────────────────────────
 // toolEvent — one tool call + its result
@@ -113,6 +116,9 @@ type REPLModel struct {
 	// atBottom tracks whether the viewport is pinned to the latest content.
 	// Auto-scroll only fires when true; manual scroll-up clears it.
 	atBottom bool
+
+	// Sub-agent live poll — reads TaskManager every 500ms while agents are active.
+	taskCursors map[string]int // task ID → number of events already displayed
 }
 
 // NewREPLModel constructs the model. sendMsg is invoked on Enter; it must not block.
@@ -162,6 +168,10 @@ func pulseCmd() tea.Cmd {
 	return tea.Tick(480*time.Millisecond, func(time.Time) tea.Msg { return pulseMsg{} })
 }
 
+func subAgentPollCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return subAgentPollMsg{} })
+}
+
 // ─────────────────────────────────────────────
 // Init
 // ─────────────────────────────────────────────
@@ -203,6 +213,7 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+o" && !m.configOpen {
 			m.configOpen = true
+			m.dashboard.SetVisible(true) // enable fetchPS while dashboard is open
 			d, c := m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 			m.dashboard = d.(*DashboardModel)
 			cmds = append(cmds, c)
@@ -215,6 +226,7 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.Type == tea.KeyEsc || msg.String() == "ctrl+o" || msg.String() == "q" || msg.String() == "Q" {
 				m.configOpen = false
+				m.dashboard.SetVisible(false) // stop spawning ps subprocess
 				return m, nil
 			}
 			d, c := m.dashboard.Update(msg)
@@ -240,6 +252,7 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if line == "/config" {
 					m.textarea.Reset()
 					m.configOpen = true
+					m.dashboard.SetVisible(true)
 					d, c := m.dashboard.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 					m.dashboard = d.(*DashboardModel)
 					cmds = append(cmds, c)
@@ -255,7 +268,11 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.thinking = true
 					m.tokenBuf = ""
 					m.activeTools = nil
+					if m.taskCursors == nil {
+						m.taskCursors = make(map[string]int)
+					}
 					m.refreshViewport()
+					cmds = append(cmds, subAgentPollCmd())
 					if m.sendMsg != nil {
 						m.sendMsg(line)
 					}
@@ -353,6 +370,9 @@ func (m *REPLModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pulseMsg:
 		m.pulseFrame++
 		cmds = append(cmds, pulseCmd())
+
+	case subAgentPollMsg:
+		m.pollSubAgentEvents(&cmds)
 
 	case spinner.TickMsg:
 		var sc tea.Cmd
@@ -499,6 +519,83 @@ func (m *REPLModel) refreshViewport() {
 	m.viewport.SetContent(m.buildContent())
 	if m.atBottom {
 		m.viewport.GotoBottom()
+	}
+}
+
+// pollSubAgentEvents reads new events from active specialist tasks and appends
+// them to the REPL history as indented lines, giving real-time visibility into
+// what sub-agents are doing without requiring the user to open the dashboard.
+func (m *REPLModel) pollSubAgentEvents(cmds *[]tea.Cmd) {
+	tasks := m.dashboardInfo.Tasks
+	if tasks == nil {
+		return
+	}
+	if m.taskCursors == nil {
+		m.taskCursors = make(map[string]int)
+	}
+
+	active := tasks.Active()
+	hasActive := len(active) > 0
+
+	// Build a set of currently-active task IDs for O(1) membership check.
+	activeIDs := make(map[string]bool, len(active))
+	for _, tk := range active {
+		activeIDs[tk.ID] = true
+	}
+
+	// Drain new events from each active task.
+	for _, tk := range active {
+		cursor := m.taskCursors[tk.ID]
+		events := tasks.Events(tk.ID, cursor)
+		if len(events) == 0 {
+			continue
+		}
+		if cursor == 0 {
+			badge := lipgloss.NewStyle().Bold(true).Foreground(ColorNeon).Render("▸ " + tk.SubAgentNm)
+			m.appendHistory("  " + badge + Muted.Render("  specialist agent"))
+		}
+		for _, ev := range events {
+			phase := ev.Phase
+			if phase == "" {
+				phase = string(ev.Kind)
+			}
+			msg := ev.Message
+			if len([]rune(msg)) > 90 {
+				msg = string([]rune(msg)[:90]) + "…"
+			}
+			m.appendHistory("  " + Muted.Render("  │ ["+phase+"] "+msg))
+		}
+		m.taskCursors[tk.ID] = cursor + len(events)
+		m.refreshViewport()
+	}
+
+	// Detect tasks we tracked that just left the active set — print a done line.
+	// Uses tasks.Get(id) (single O(1) lookup) instead of tasks.List() (full copy).
+	needRefresh := false
+	for id, cursor := range m.taskCursors {
+		if cursor <= 0 || activeIDs[id] {
+			continue // already printed done, or still active
+		}
+		tk, ok := tasks.Get(id)
+		if !ok {
+			continue
+		}
+		icon := lipgloss.NewStyle().Foreground(ColorSuccess).Render("✓")
+		if tk.Status == subagents.StatusFailed {
+			icon = ErrorStyle.Render("✗")
+		}
+		m.appendHistory("  " + icon + Muted.Render(
+			" "+tk.SubAgentNm+" "+string(tk.Status)+" in "+tk.Elapsed().Round(time.Second).String()))
+		m.taskCursors[id] = -1 // sentinel: done line printed
+		needRefresh = true
+	}
+	if needRefresh {
+		m.refreshViewport()
+	}
+
+	// Continue polling while agents are active or the master is still thinking.
+	if hasActive || m.thinking {
+		*cmds = append(*cmds, subAgentPollCmd())
 	}
 }
 

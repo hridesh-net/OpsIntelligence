@@ -13,6 +13,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/graph"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
+	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
@@ -117,6 +118,12 @@ func (s *SubAgentSvc) runSyncWithTask(ctx context.Context, taskID, subAgentID, t
 
 	sid := "subagent:" + sa.ID + ":" + uuid.New().String()
 	runner := run.WithSession(sid)
+
+	// Propagate parent agent's session ID so child run traces can be linked
+	// back to the master in dashboards and log analysis.
+	if parentSID := correlation.SessionID(ctx); parentSID != "" {
+		ctx = correlation.WithParentAgentID(ctx, parentSID)
+	}
 
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
