@@ -62,6 +62,12 @@ type AuthService struct {
 	RunTraceMaster   string
 	RunTraceSubagent string
 
+	// LogsAgentDir / LogsSubagentsDir are the resolved log subtrees where
+	// the runtrace API discovers per-run runtrace.ndjson files (for the
+	// async sub-agent and specialist per-run-id directories).
+	LogsAgentDir     string
+	LogsSubagentsDir string
+
 	// Tasks is the shared sub-agent async task tracker (optional). Set from
 	// cmd/opsintelligence after BuildAuthService when the full agent stack runs.
 	Tasks *subagents.TaskManager
@@ -140,6 +146,8 @@ func BuildAuthService(ctx context.Context, cfg *config.Config, store datastore.S
 		Log:                     log,
 		RunTraceMaster:          strings.TrimSpace(cfg.Agent.RunTraceFile),
 		RunTraceSubagent:        strings.TrimSpace(cfg.Agent.RunTraceSubagentFile),
+		LogsAgentDir:            cfg.Dirs().LogsAgent,
+		LogsSubagentsDir:        cfg.Dirs().LogsSubagents,
 	}
 	return svc, nil
 }

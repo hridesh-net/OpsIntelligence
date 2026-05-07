@@ -488,7 +488,7 @@
       return;
     }
     const frag = document.createDocumentFragment();
-    for (let idx = 0; idx < lines.length; idx++) {
+    for (let idx = lines.length - 1; idx >= 0; idx--) {
       const row = lines[idx];
       let obj = row;
       if (typeof row === "string") {

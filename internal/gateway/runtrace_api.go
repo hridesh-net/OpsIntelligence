@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,163 +51,197 @@ func (s *AuthService) handleRunTrace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	masterAbs := filepath.Clean(strings.TrimSpace(s.RunTraceMaster))
-	subRaw := strings.TrimSpace(s.RunTraceSubagent)
-	var subClean string
-	if subRaw != "" {
-		subClean = filepath.Clean(subRaw)
-	}
-
-	switch which {
-	case "all":
-		if masterAbs == "" && subClean == "" {
-			writeJSONError(w, http.StatusNotFound, "run trace not configured for this stream")
-			return
-		}
-		lines, truncated, paths, err := mergeRunTrace(masterAbs, subClean, maxLines)
-		if err != nil {
-			s.Log.Warn("run trace merge", zap.Error(err))
-			writeJSONError(w, http.StatusInternalServerError, "run trace read failed")
-			return
-		}
-		pathLabel := strings.Join(paths, " + ")
-		if pathLabel == "" {
-			pathLabel = "(merged)"
-		}
-		writeJSON(w, http.StatusOK, runTraceResponse{
-			Which:     "all",
-			Path:      pathLabel,
-			Paths:     paths,
-			Lines:     lines,
-			Truncated: truncated,
-		})
-		return
-	case "master", "subagent", "sub":
-		// continue below
-	default:
-		writeJSONError(w, http.StatusBadRequest, "which must be master, subagent, or all")
-		return
-	}
-
-	wantPath := ""
-	switch which {
-	case "master":
-		wantPath = s.RunTraceMaster
-	case "subagent", "sub":
-		wantPath = s.RunTraceSubagent
-	}
-	if wantPath == "" {
+	sources := s.discoverTraceSources(which)
+	if len(sources) == 0 {
 		writeJSONError(w, http.StatusNotFound, "run trace not configured for this stream")
 		return
 	}
-	abs := filepath.Clean(wantPath)
-	if !filepath.IsAbs(abs) {
-		writeJSONError(w, http.StatusInternalServerError, "invalid trace path")
-		return
-	}
-	allowed := abs == masterAbs
-	if subClean != "" {
-		allowed = allowed || abs == subClean
-	}
-	if !allowed {
-		writeJSONError(w, http.StatusForbidden, "invalid trace selection")
-		return
-	}
 
-	lines, truncated, start, err := readRunTraceTail(abs, maxLines)
+	lines, truncated, paths, err := mergeRunTraceSources(sources, maxLines)
 	if err != nil {
-		s.Log.Warn("run trace read", zap.String("path", abs), zap.Error(err))
+		s.Log.Warn("run trace merge", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "run trace read failed")
 		return
 	}
-	fileTag := "master"
-	if which == "subagent" || which == "sub" {
-		fileTag = "subagent"
-	}
-	for i := range lines {
-		lines[i] = tagRunTraceLine(lines[i], fileTag)
+	pathLabel := strings.Join(paths, " · ")
+	if pathLabel == "" {
+		pathLabel = "(empty)"
 	}
 	writeJSON(w, http.StatusOK, runTraceResponse{
 		Which:     which,
-		Path:      abs,
+		Path:      pathLabel,
+		Paths:     paths,
 		Lines:     lines,
 		Truncated: truncated,
-		ByteStart: start,
 	})
 }
 
-func mergeRunTrace(masterAbs, subClean string, maxLines int) (lines []json.RawMessage, truncated bool, paths []string, err error) {
+// traceSource pairs an absolute runtrace.ndjson path with the fallback
+// `_stream` label used when the JSON line itself does not carry a runner_role.
+type traceSource struct {
+	path  string
+	label string
+}
+
+// discoverTraceSources walks the configured agent / sub-agent log subtrees
+// and returns every runtrace.ndjson file relevant to the requested stream.
+// Falls back to the configured master/sub trace paths when the discovery
+// roots are not set (older deployments / tests).
+func (s *AuthService) discoverTraceSources(which string) []traceSource {
+	masterAbs := filepath.Clean(strings.TrimSpace(s.RunTraceMaster))
+	subAbs := strings.TrimSpace(s.RunTraceSubagent)
+	if subAbs != "" {
+		subAbs = filepath.Clean(subAbs)
+	}
+
+	var sources []traceSource
+	seen := map[string]bool{}
+	add := func(path, label string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		sources = append(sources, traceSource{path: path, label: label})
+	}
+
+	switch which {
+	case "master":
+		if masterAbs != "" {
+			add(masterAbs, "master")
+		}
+		appendDiscovered(&sources, seen, s.LogsAgentDir, "master")
+	case "subagent", "sub":
+		if subAbs != "" {
+			add(subAbs, "subagents")
+		}
+		appendDiscovered(&sources, seen, s.LogsSubagentsDir, "subagents")
+	case "all":
+		if masterAbs != "" {
+			add(masterAbs, "master")
+		}
+		if subAbs != "" && subAbs != masterAbs {
+			add(subAbs, "subagents")
+		}
+		appendDiscovered(&sources, seen, s.LogsAgentDir, "master")
+		appendDiscovered(&sources, seen, s.LogsSubagentsDir, "subagents")
+	}
+	return sources
+}
+
+// appendDiscovered walks rootDir for runtrace.ndjson files and appends them
+// to sources with a label derived from their path relative to rootDir.
+func appendDiscovered(sources *[]traceSource, seen map[string]bool, rootDir, rootLabel string) {
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir == "" {
+		return
+	}
+	_ = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() != "runtrace.ndjson" {
+			return nil
+		}
+		clean := filepath.Clean(path)
+		if seen[clean] {
+			return nil
+		}
+		rel, _ := filepath.Rel(rootDir, path)
+		label := traceLabelFromRel(rootLabel, rel)
+		seen[clean] = true
+		*sources = append(*sources, traceSource{path: clean, label: label})
+		return nil
+	})
+}
+
+// traceLabelFromRel turns a runtrace.ndjson path relative to its root log dir
+// into a short stream label, e.g. "subagents/pr_review/abcd1234/runtrace.ndjson"
+// → "sub:pr_review:abcd1234". Used as the _stream fallback when the JSON line
+// does not already carry a runner_role.
+func traceLabelFromRel(rootLabel, rel string) string {
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 {
+		return rootLabel
+	}
+	if len(parts) == 1 && parts[0] == "runtrace.ndjson" {
+		return rootLabel
+	}
+	trimmed := parts
+	if trimmed[len(trimmed)-1] == "runtrace.ndjson" {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	prefix := "sub"
+	if rootLabel == "master" {
+		prefix = "agent"
+	}
+	short := func(s string) string {
+		if len(s) > 14 {
+			return s[:14]
+		}
+		return s
+	}
+	switch len(trimmed) {
+	case 0:
+		return rootLabel
+	case 1:
+		return prefix + ":" + short(trimmed[0])
+	default:
+		return prefix + ":" + short(trimmed[0]) + ":" + short(trimmed[len(trimmed)-1])
+	}
+}
+
+// mergeRunTraceSources reads the tail of every source, tags each line with
+// _stream (existing runner_role wins, otherwise the source's label), merges
+// them by timestamp, and returns the most recent maxLines.
+func mergeRunTraceSources(sources []traceSource, maxLines int) (lines []json.RawMessage, truncated bool, paths []string, err error) {
 	if maxLines <= 0 {
 		maxLines = 400
 	}
-	// Single path (or duplicate config pointing at the same file).
-	if subClean == "" || masterAbs == subClean {
-		if masterAbs == "" {
-			return nil, false, nil, fmt.Errorf("no trace path")
-		}
-		lm, trunc, _, err := readRunTraceTail(masterAbs, maxLines)
-		if err != nil {
-			return nil, false, nil, err
-		}
-		for i := range lm {
-			lm[i] = tagRunTraceLine(lm[i], "master")
-		}
-		return lm, trunc, []string{masterAbs}, nil
-	}
-	if masterAbs == "" {
-		ls, trunc, _, err := readRunTraceTail(subClean, maxLines)
-		if err != nil {
-			return nil, false, nil, err
-		}
-		for i := range ls {
-			ls[i] = tagRunTraceLine(ls[i], "subagent")
-		}
-		return ls, trunc, []string{subClean}, nil
+	if len(sources) == 0 {
+		return nil, false, nil, fmt.Errorf("no trace sources")
 	}
 
-	// Split the line budget across files so a noisy master stream (e.g. zap JSON
-	// lines co-located in the same NDJSON file) cannot push every sub-agent trace
-	// out of the merged tail window.
-	nMaster, nSub := maxLines, maxLines
-	if subClean != "" && masterAbs != subClean {
-		nMaster = (maxLines + 1) / 2
-		nSub = maxLines - nMaster
-	}
-	lm, truncM, _, err := readRunTraceTail(masterAbs, nMaster)
-	if err != nil {
-		return nil, false, nil, err
-	}
-	ls, truncS, _, err := readRunTraceTail(subClean, nSub)
-	if err != nil {
-		return nil, false, nil, err
+	// Even split per source so a single noisy stream cannot starve others.
+	per := maxLines / len(sources)
+	if per < 32 {
+		per = 32
 	}
 
 	type item struct {
 		ts  time.Time
 		raw json.RawMessage
 	}
-	items := make([]item, 0, len(lm)+len(ls))
-	for _, raw := range lm {
-		items = append(items, item{ts: runTraceLineTime(raw), raw: tagRunTraceLine(raw, "master")})
+	var items []item
+	paths = make([]string, 0, len(sources))
+	for _, src := range sources {
+		raw, trunc, _, rerr := readRunTraceTail(src.path, per)
+		if rerr != nil {
+			return nil, false, nil, rerr
+		}
+		if trunc {
+			truncated = true
+		}
+		paths = append(paths, src.path)
+		for _, ln := range raw {
+			tagged := tagRunTraceLine(ln, src.label)
+			items = append(items, item{ts: runTraceLineTime(tagged), raw: tagged})
+		}
 	}
-	for _, raw := range ls {
-		items = append(items, item{ts: runTraceLineTime(raw), raw: tagRunTraceLine(raw, "subagent")})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].ts.Before(items[j].ts)
-	})
-	// With split reads, len(items) <= maxLines; keep tail trim as a safety net.
+	sort.Slice(items, func(i, j int) bool { return items[i].ts.Before(items[j].ts) })
 	if len(items) > maxLines {
 		items = items[len(items)-maxLines:]
 		truncated = true
-	} else {
-		truncated = truncM || truncS
 	}
 	out := make([]json.RawMessage, len(items))
 	for i := range items {
 		out[i] = items[i].raw
 	}
-	return out, truncated, []string{masterAbs, subClean}, nil
+	return out, truncated, paths, nil
 }
 
 func runTraceLineTime(raw json.RawMessage) time.Time {
