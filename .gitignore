@@ -71,3 +71,7 @@ yarn-error.log*
 sqlite3.h
 sqlite3ext.h
 dist/
+
+# MkDocs output
+/site/
+.venv/

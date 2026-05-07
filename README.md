@@ -11,6 +11,20 @@
   <img src="https://img.shields.io/badge/Posture-read--only%20by%20default-6f42c1?style=for-the-badge" alt="Read-only by default">
 </p>
 
+## Documentation
+
+Full docs are maintained under **`docs/`** for MkDocs. Browse on GitHub: **[`docs/index.md`](docs/index.md)**.
+
+Serve or build locally (requires Python 3):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-docs.txt   # once; omit if pip works globally
+.venv/bin/mkdocs serve                 # http://127.0.0.1:8000
+.venv/bin/mkdocs build --strict        # static site in ./site
+```
+
+Architecture narrative for contributors: [`docs/architecture/overview.md`](docs/architecture/overview.md).
+
 ## The short version
 
 | You bring | It handles |
@@ -23,10 +37,10 @@
 
 ## Architecture
 
-Single-page runtime view (parallel ingress → `agent.Runner` → provider, memory, datastore, and tool execution). Edit in draw.io: [`doc/architecture/opsintelligence-architecture.drawio`](doc/architecture/opsintelligence-architecture.drawio). Exports (SVG/PDF with embedded diagram) live in the same folder. For tabbed flows and extra detail, see [`architecture-overview.drawio`](architecture-overview.drawio) at the repo root.
+Single-page runtime view (parallel ingress → `agent.Runner` → provider, memory, datastore, and tool execution). Edit in draw.io: [`docs/architecture/diagrams/opsintelligence-architecture.drawio`](docs/architecture/diagrams/opsintelligence-architecture.drawio). The PNG below lives under `docs/` so MkDocs and GitHub render it from the same path (regenerate with the draw.io CLI — see [Contributing → Architecture diagram export](docs/contributing.md#architecture-diagram-export)). For tabbed flows and extra detail, see [`architecture-overview.drawio`](architecture-overview.drawio) at the repo root. Contributor-oriented internals: [**MkDocs → Architecture**](docs/architecture/overview.md) (`pip install -r requirements-docs.txt && mkdocs serve`).
 
 <p align="center">
-  <img src="doc/architecture/opsintelligence-architecture.png" alt="OpsIntelligence runtime architecture: Gateway, channels, and webhooks into Runner; Orchestrator; provider and LLM; ToolGraph, Catalog, ToolRegistry; devops, MCP, bash, subagents" width="920">
+  <img src="docs/architecture/diagrams/opsintelligence-architecture.png" alt="OpsIntelligence runtime architecture: ingress, config, agent Runner, provider, tools and graphs, memory, repointel, observability, external DevOps surface" width="920">
 </p>
 
 ## What this is

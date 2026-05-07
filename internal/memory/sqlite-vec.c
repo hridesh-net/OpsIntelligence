@@ -4587,7 +4587,7 @@ void vec0_query_point_data_clear(struct vec0_query_point_data *point_data) {
 }
 
 typedef enum {
-  // If any values are updated, please update the ARCHITECTURE.md docs accordingly!
+  // If any values are updated, please update docs/architecture/resources.md accordingly!
 
  VEC0_QUERY_PLAN_FULLSCAN = '1',
  VEC0_QUERY_PLAN_POINT = '2',
@@ -5291,7 +5291,7 @@ static int vec0Close(sqlite3_vtab_cursor *cur) {
 // All the different type of "values" provided to argv/argc in vec0Filter.
 // These enums denote the use and purpose of all of them.
 typedef enum  {
-  // If any values are updated, please update the ARCHITECTURE.md docs accordingly!
+  // If any values are updated, please update docs/architecture/resources.md accordingly!
 
   VEC0_IDXSTR_KIND_KNN_MATCH = '{',
   VEC0_IDXSTR_KIND_KNN_K = '}',
@@ -5304,7 +5304,7 @@ typedef enum  {
 // The different SQLITE_INDEX_CONSTRAINT values that vec0 partition key columns
 // support, but as characters that fit nicely in idxstr.
 typedef enum  {
-  // If any values are updated, please update the ARCHITECTURE.md docs accordingly!
+  // If any values are updated, please update docs/architecture/resources.md accordingly!
 
   VEC0_PARTITION_OPERATOR_EQ = 'a',
   VEC0_PARTITION_OPERATOR_GT = 'b',

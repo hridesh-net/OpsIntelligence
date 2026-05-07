@@ -1,0 +1,62 @@
+site_name: OpsIntelligence
+site_description: DevOps judgment on a loop — documentation
+repo_url: https://github.com/hridesh-net/OpsIntelligence
+repo_name: OpsIntelligence
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.expand
+    - toc.follow
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - fenced_code
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
+
+nav:
+  - Overview: index.md
+  - Install: install.md
+  - Configuration: configuration.md
+  - Architecture:
+      - architecture/overview.md
+      - architecture/packages.md
+      - architecture/agents-and-graphs.md
+      - architecture/resources.md
+      - architecture/repo-intelligence.md
+      - architecture/local-intel.md
+  - Agents & tools: agents-tools.md
+  - Repo intelligence: repo-intelligence.md
+  - Observability: observability.md
+  - Security: security.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
