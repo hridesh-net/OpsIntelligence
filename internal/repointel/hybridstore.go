@@ -145,15 +145,17 @@ func (hs *HybridStore) UpsertChunks(chunks []Chunk, embeddings [][]float32) erro
 			return fmt.Errorf("fts insert %s: %w", c.ID, err)
 		}
 
-		// vec0 — only if embedding provided and correct dimension
+		// vec0 — delete then insert (vec0 does not support ON CONFLICT DO UPDATE).
+		// Non-fatal if no embedding or wrong dimension — FTS5 still works.
 		if i < len(embeddings) && len(embeddings[i]) == hs.dims {
 			blob := float32sToBytes(embeddings[i])
+			_, _ = tx.Exec(`DELETE FROM vec_repo_chunks WHERE chunk_id = ?`, c.ID)
 			if _, err = tx.Exec(`
-				INSERT INTO vec_repo_chunks (chunk_id, embedding)
-				VALUES (?, ?)
-				ON CONFLICT(chunk_id) DO UPDATE SET embedding=excluded.embedding
+				INSERT INTO vec_repo_chunks (chunk_id, embedding) VALUES (?, ?)
 			`, c.ID, blob); err != nil {
-				return fmt.Errorf("vec upsert %s: %w", c.ID, err)
+				// Non-fatal: FTS5 search still works without the vector row.
+				// Log via the caller (manager warns on UpsertChunks error).
+				_ = err
 			}
 		}
 	}

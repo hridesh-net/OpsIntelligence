@@ -149,15 +149,20 @@ type RepoIntelConfig struct {
 	// Default: 256.
 	WorkQueueDepth int `yaml:"work_queue_depth"`
 
-	// ClonesDir is the directory where shallow git clones are stored for
-	// non-GitHub repos and GitHub repos without a token. When empty,
-	// defaults to <state_dir>/data/repointel/clones.
+	// ClonesDir is the directory where shallow git clones are stored.
+	// When empty, defaults to <state_dir>/data/repointel/clones.
 	// Relative paths resolve under StateDir.
+	// All repos are cloned here by default; set disable_clone: true to use
+	// the GitHub REST API instead.
 	ClonesDir string `yaml:"clones_dir"`
 
-	// ForceClone, when true, uses git clone for all repos instead of the
-	// GitHub REST API. Useful to avoid API rate limits on large repos.
-	// Default: false.
+	// DisableClone, when true, uses the GitHub REST API for GitHub repos
+	// instead of git clone. Default: false (cloning is the default).
+	// Non-GitHub repos (GitLab, Bitbucket) always use git clone regardless.
+	DisableClone bool `yaml:"disable_clone"`
+
+	// ForceClone is deprecated and has no effect. Cloning is now the default
+	// when ClonesDir is configured. Will be removed in a future release.
 	ForceClone bool `yaml:"force_clone"`
 }
 

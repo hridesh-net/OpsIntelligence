@@ -22,7 +22,7 @@ import (
 
 // IndexerConfig holds tuning parameters for the Indexer.
 type IndexerConfig struct {
-	// GitHubToken is the PAT used to fetch file contents via the GitHub API.
+	// GitHubToken is the PAT used for authenticated git clones and GitHub API calls.
 	GitHubToken string
 
 	// GitHubBaseURL defaults to https://api.github.com.
@@ -51,12 +51,19 @@ type IndexerConfig struct {
 	FullIndexConcurrency int
 
 	// ClonesDir is the base directory where shallow git clones are stored.
-	// When empty, the indexer falls back to the GitHub API for all repos.
+	// When set (including the default <state>/data/repointel/clones), all repos
+	// are indexed via git clone. Set DisableClone: true to fall back to the
+	// GitHub REST API instead.
 	ClonesDir string
 
-	// ForceClone, when true, uses git clone for all repos rather than the
-	// GitHub REST API. Default: false — non-GitHub repos always use clone;
-	// GitHub repos use the API unless this flag is set or GitHubToken is empty.
+	// DisableClone, when true, uses the GitHub REST API instead of git clone
+	// even when ClonesDir is configured. Equivalent to opting out of local clones.
+	// Default: false (clone is the default when ClonesDir is set).
+	DisableClone bool
+
+	// ForceClone is kept for backward compatibility; it is now a no-op because
+	// cloning is the default whenever ClonesDir is configured.
+	// Deprecated: remove from config files; will be removed in a future release.
 	ForceClone bool
 }
 
@@ -103,23 +110,21 @@ func NewIndexer(cfg IndexerConfig, router *pipeline.LLMRouter, log *zap.Logger) 
 	}
 }
 
-// shouldUseClone reports whether this entry should be fetched via git clone
-// rather than the GitHub REST API.
+// shouldUseClone reports whether this entry should be fetched via git clone.
+//
+// Default behaviour: clone whenever ClonesDir is configured, regardless of
+// platform or token. The token (when present) is embedded in the clone URL
+// so authenticated clones work the same way as API access.
+//
+// Set DisableClone: true to revert to GitHub REST API for GitHub repos.
 func (idx *Indexer) shouldUseClone(entry RepoEntry) bool {
 	if idx.cfg.ClonesDir == "" {
-		return false
+		return false // no clone directory configured — nothing to clone into
 	}
-	if idx.cfg.ForceClone {
-		return true
+	if idx.cfg.DisableClone {
+		return false // operator explicitly opted out of cloning
 	}
-	if entry.CloneURL != "" {
-		return true
-	}
-	if strings.ToLower(strings.TrimSpace(entry.Platform)) != "github" {
-		return true
-	}
-	// GitHub repos without a token → use clone to avoid unauthenticated rate limits.
-	return strings.TrimSpace(idx.cfg.GitHubToken) == ""
+	return true // clone by default whenever ClonesDir is set
 }
 
 // fetchRepoContentGitClone clones (or pulls) the repo and walks the local tree.

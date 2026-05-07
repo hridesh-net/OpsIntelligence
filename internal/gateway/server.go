@@ -288,6 +288,11 @@ func (s *Server) Start() error {
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
 	mux.HandleFunc("/api/chat", auth(s.withCorrelation(s.handleChat)))
 
+	// ── API: RAG Chat (repo-grounded SSE streaming) ───────────────────────────
+	// Like /api/chat but retrieves context from repointel hybrid store first
+	// and injects it into the prompt. FTS5 search works without embeddings.
+	mux.HandleFunc("/api/rag-chat", auth(s.withCorrelation(s.handleRAGChat)))
+
 	// ── WebSocket (legacy / channel use) ─────────────────────────────────────
 	mux.HandleFunc("/ws", s.withCorrelation(func(w http.ResponseWriter, r *http.Request) {
 		serveWs(s.Hub, s.logger(), w, r)

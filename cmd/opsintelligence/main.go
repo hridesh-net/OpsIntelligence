@@ -2023,6 +2023,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				FullIndexChunkRunes:   riCfg.FullIndexChunkRunes,
 				FullIndexConcurrency:  riCfg.FullIndexConcurrency,
 				ClonesDir:             clonesDir,
+				DisableClone:          riCfg.DisableClone,
 				ForceClone:            riCfg.ForceClone,
 			}, riRouter, runnerLog)
 			scnr := repointel.NewScanner(riRouter, runnerLog)

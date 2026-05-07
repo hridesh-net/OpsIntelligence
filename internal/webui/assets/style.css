@@ -491,6 +491,238 @@ textarea:focus {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
+/* ── Mode tabs ───────────────────────────────────────────── */
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+.mode-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 6px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+  font-family: var(--font-ui);
+}
+.mode-tab.active {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+.mode-hint {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+/* ── Repo items ──────────────────────────────────────────── */
+#repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.repo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: none;
+  text-align: left;
+  transition: background 0.13s, border-color 0.13s;
+  font-family: var(--font-ui);
+}
+.repo-item:hover  { background: var(--bg-hover); }
+.repo-item.active {
+  background: rgba(196,161,255,0.08);
+  border-color: rgba(196,161,255,0.2);
+}
+.repo-icon { font-size: 14px; flex-shrink: 0; }
+.repo-info { flex: 1; min-width: 0; }
+.repo-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.repo-meta { display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+.lang-tag {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.risk-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.risk-badge.low    { background: rgba(122,255,212,0.12); color: var(--neon); }
+.risk-badge.medium { background: rgba(255,209,102,0.14); color: var(--warn); }
+.risk-badge.high   { background: rgba(255,107,107,0.14); color: var(--error); }
+.risk-badge.critical { background: rgba(255,60,60,0.2); color: #ff4444; }
+.repo-loading { font-size: 12px; color: var(--muted); padding: 8px 4px; }
+.repo-empty   { font-size: 12px; color: var(--muted); padding: 8px 4px; line-height: 1.5; }
+.repo-empty code {
+  background: rgba(196,161,255,0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ── Chat header upgrades ─────────────────────────────────── */
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.context-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-dim);
+  background: rgba(196,161,255,0.1);
+  border: 1px solid rgba(196,161,255,0.2);
+  padding: 2px 8px;
+  border-radius: 20px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Input footer ─────────────────────────────────────────── */
+.input-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 0 2px;
+}
+.input-mode-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.input-mode-badge.rag {
+  background: rgba(196,161,255,0.15);
+  color: var(--accent);
+}
+.input-mode-badge.agent {
+  background: rgba(122,255,212,0.1);
+  color: var(--neon);
+}
+.input-hint-text {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Source attribution ──────────────────────────────────── */
+.sources-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.sources-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.source-pill {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: rgba(196,161,255,0.08);
+  border: 1px solid rgba(196,161,255,0.15);
+  color: var(--accent-dim);
+  padding: 2px 8px;
+  border-radius: 10px;
+  cursor: default;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+}
+
+/* ── Example prompts ─────────────────────────────────────── */
+.example-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  width: 100%;
+  max-width: 420px;
+}
+.example-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-sub);
+  font-size: 13px;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-family: var(--font-ui);
+  line-height: 1.4;
+}
+.example-btn:hover {
+  background: var(--bg-hover);
+  border-color: rgba(196,161,255,0.25);
+  color: var(--text);
+}
+
+/* ── Auth card upgrade ───────────────────────────────────── */
+.auth-logo {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.auth-card h2 { margin-bottom: 4px; }
+
+/* ── Session ID pill ─────────────────────────────────────── */
+.session-id-pill {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+
+/* ── Markdown headings ───────────────────────────────────── */
+.md-h {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.95em;
+  color: var(--accent-dim);
+}
+
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 680px) {
   #sidebar { display: none; }

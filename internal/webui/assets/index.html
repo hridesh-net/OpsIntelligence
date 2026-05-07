@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpsIntelligence — Local Web Chat</title>
-  <meta name="description" content="OpsIntelligence local web interface for interacting with your autonomous AI agent." />
+  <title>OpsIntelligence — Knowledge Chat</title>
   <link rel="stylesheet" href="/assets/style.css" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦅</text></svg>" />
 </head>
@@ -13,8 +12,9 @@
 <!-- Auth gate overlay -->
 <div id="auth-gate">
   <div class="auth-card">
-    <h2>🦅 OpsIntelligence</h2>
-    <p class="sub">Enter your gateway token to access the web interface.</p>
+    <div class="auth-logo">🦅</div>
+    <h2>OpsIntelligence</h2>
+    <p class="sub">Enter your gateway token to access the knowledge chat.</p>
     <label for="token-input">Gateway Token</label>
     <input type="password" id="token-input" placeholder="Paste your token here…" autocomplete="current-password" />
     <div class="form-error" id="auth-error"></div>
@@ -27,7 +27,7 @@
   <aside id="sidebar">
     <div id="sidebar-header">
       <div class="logo">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
         </svg>
         OpsIntelligence
@@ -36,39 +36,59 @@
     </div>
 
     <div id="sidebar-body">
+
+      <!-- Mode selector -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Mode</div>
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="tab-rag" onclick="setMode('rag')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            RAG Chat
+          </button>
+          <button class="mode-tab" id="tab-agent" onclick="setMode('agent')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Agent
+          </button>
+        </div>
+        <div class="mode-hint" id="mode-hint">Answers grounded in your indexed repos.</div>
+      </div>
+
+      <!-- Repo context (only shown in RAG mode) -->
+      <div class="sidebar-section" id="repo-section">
+        <div class="sidebar-section-title">Knowledge Base</div>
+        <div id="repo-list">
+          <div class="repo-loading">Loading repos…</div>
+        </div>
+      </div>
+
+      <!-- Status -->
       <div class="sidebar-section">
         <div class="sidebar-section-title">Status</div>
         <div class="status-pill">
           <span class="dot offline" id="status-dot"></span>
           <span id="status-text">Connecting…</span>
         </div>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="sidebar-section-title">Active Model</div>
         <div class="model-chip" id="model-chip">—</div>
       </div>
 
+      <!-- Actions -->
       <div class="sidebar-section">
         <div class="sidebar-section-title">Actions</div>
-        <button class="sidebar-btn" onclick="clearChat()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-          Clear Chat
-        </button>
         <button class="sidebar-btn" onclick="newSession()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Session
         </button>
-        <button class="sidebar-btn" onclick="copySession()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          Copy Session ID
+        <button class="sidebar-btn" onclick="clearChat()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>
+          Clear Chat
         </button>
       </div>
     </div>
 
     <div id="sidebar-footer">
+      <div class="session-id-pill" id="session-hint">Session: —</div>
       <button class="sidebar-btn" onclick="logout()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         Change Token
       </button>
     </div>
@@ -77,19 +97,27 @@
   <!-- Main chat -->
   <main id="main">
     <header id="chat-header">
-      <h1>Chat</h1>
+      <div class="chat-header-left">
+        <h1 id="chat-title">Knowledge Chat</h1>
+        <div class="context-badge" id="context-badge" style="display:none"></div>
+      </div>
       <div class="actions">
         <button class="btn-icon" title="Refresh status" onclick="fetchStatus()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
     </header>
 
     <div id="messages">
       <div class="empty-state" id="empty-state">
-        <div class="big-icon">🦅</div>
-        <h2>OpsIntelligence</h2>
-        <p>Your autonomous AI agent is ready. Start chatting below.</p>
+        <div class="empty-icon">🦅</div>
+        <h2>Ask about your repositories</h2>
+        <p>Select a knowledge base in the sidebar and ask anything about your indexed repos — architecture, dependencies, security issues, code patterns, and more.</p>
+        <div class="example-prompts">
+          <button class="example-btn" onclick="useExample(this)">What is the architecture of the indexed repos?</button>
+          <button class="example-btn" onclick="useExample(this)">What security issues were found?</button>
+          <button class="example-btn" onclick="useExample(this)">What are the key dependencies and their versions?</button>
+        </div>
       </div>
     </div>
 
@@ -98,7 +126,7 @@
         <textarea
           id="msg-input"
           rows="1"
-          placeholder="Message OpsIntelligence… (Shift+Enter for new line)"
+          placeholder="Ask about your repositories… (Enter to send, Shift+Enter for new line)"
           oninput="autoResize(this)"
           onkeydown="handleKey(event)"
         ></textarea>
@@ -106,7 +134,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
-      <div class="input-hint">Enter to send · Shift+Enter for new line · <span id="session-hint">Session: —</span></div>
+      <div class="input-footer">
+        <span class="input-mode-badge" id="input-mode-badge">RAG</span>
+        <span class="input-hint-text">Enter to send · Shift+Enter for new line</span>
+      </div>
     </div>
   </main>
 </div>
