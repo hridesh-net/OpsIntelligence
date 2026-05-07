@@ -65,42 +65,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsqlite3-dev
 
-      # Download Zig directly from GitHub Releases (backed by GitHub CDN —
-      # more reliable than ziglang.org which has no uptime SLA and whose
-      # mirror-list endpoint has historically returned HTML 5xx in CI).
-      # The host runner is always linux-x86_64 even when cross-compiling to arm64.
-      - name: Cache Zig toolchain
-        if: matrix.target == 'linux-arm64'
-        id: cache-zig
-        uses: actions/cache@v4
-        with:
-          path: /tmp/zig-linux-x86_64-0.13.0
-          key: zig-0.13.0-linux-x86_64
-
-      - name: Setup Zig (direct GitHub Releases download)
+      - name: Install ARM64 cross-compiler
         if: matrix.target == 'linux-arm64'
         run: |
-          ZIG_DIR="/tmp/zig-linux-x86_64-0.13.0"
-          if [ -x "${ZIG_DIR}/zig" ]; then
-            echo "Using cached Zig toolchain."
-          else
-            echo "Downloading Zig 0.13.0 from GitHub Releases…"
-            curl -fsSL \
-              --retry 5 --retry-delay 10 --retry-max-time 300 \
-              "https://github.com/ziglang/zig/releases/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz" \
-              -o /tmp/zig.tar.xz
-            tar xf /tmp/zig.tar.xz -C /tmp
-          fi
-          echo "${ZIG_DIR}" >> "$GITHUB_PATH"
-          "${ZIG_DIR}/zig" version
-
-          # Write wrapper scripts so CC/CXX are single-token paths with no
-          # spaces — some CGO/linker invocation paths do not split env vars.
-          printf '#!/bin/sh\nexec zig cc -target aarch64-linux-musl "$@"\n' \
-            > /tmp/zig-cc-arm64
-          printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl "$@"\n' \
-            > /tmp/zig-cxx-arm64
-          chmod +x /tmp/zig-cc-arm64 /tmp/zig-cxx-arm64
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build Binary (Native)
         if: matrix.target != 'linux-arm64'
@@ -113,19 +82,15 @@ jobs:
           mkdir -p dist
           go build -mod=vendor -tags fts5,opsintelligence_localgemma -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
 
-      - name: Build Binary (Linux ARM64 Cross-Compile with Zig)
+      - name: Build Binary (Linux ARM64 Cross-Compile)
         if: matrix.target == 'linux-arm64'
         env:
           CGO_ENABLED: 1
           GOOS: linux
           GOARCH: arm64
-          CC: /tmp/zig-cc-arm64
-          CXX: /tmp/zig-cxx-arm64
+          CC: aarch64-linux-gnu-gcc
         run: |
           mkdir -p dist
-          # Zig/musl static link + jupiterrider/ffi (opsintelligence_localgemma) panics at init:
-          # purego.Dlopen("libffi.so.8") -> "Dynamic loading not supported". Ship arm64 without
-          # in-process Gemma; use cloud LLM + local-intel GGUF prep, or build on-device with glibc + localgemma.
           go build -mod=vendor -tags fts5 -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
 
       - name: Upload Artifact
