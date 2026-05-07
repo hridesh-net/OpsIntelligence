@@ -441,6 +441,31 @@
     return parts.join(" · ");
   }
 
+  function renderRunTraceEmpty(metaText) {
+    const total = Array.isArray(runTraceLineCache) ? runTraceLineCache.length : 0;
+    const paths = (window.__rtPaths || []).map((p) => `<code>${escapeHtml(p)}</code>`).join("<br>");
+    if (total === 0) {
+      return `
+        <div class="log-empty runtrace-empty">
+          <div class="runtrace-empty-title">No agent runs recorded yet</div>
+          <p class="runtrace-empty-body">
+            Run trace files appear here as soon as the agent executes a step. Trigger one of these
+            and refresh to see live events.
+          </p>
+          <ul class="runtrace-empty-list">
+            <li>Send a chat message or webhook to a wired channel.</li>
+            <li>Run an async sub-agent task (<code>subagent_run_async</code>) or a chain.</li>
+            <li>Invoke the agent from the CLI: <code>opsintelligence run "&lt;prompt&gt;"</code>.</li>
+            <li>Index a repo via <strong>Repo Intel → Add</strong> to see indexer traces.</li>
+          </ul>
+          ${paths ? `<p class="runtrace-empty-paths">Trace files (created on first event):<br>${paths}</p>` : ""}
+          <p class="runtrace-empty-meta">${escapeHtml(metaText)}</p>
+        </div>
+      `;
+    }
+    return `<div class="log-empty">${escapeHtml(metaText)} — filters hide every line. Clear filters above to see ${total} cached event${total === 1 ? "" : "s"}.</div>`;
+  }
+
   function runTraceKindClass(kind) {
     const k = String(kind || "").toLowerCase();
     if (k === "log") return "log-kind log-kind-log";
@@ -459,7 +484,7 @@
     }
     bodyEl.innerHTML = "";
     if (!lines.length) {
-      bodyEl.innerHTML = `<div class="log-empty">${escapeHtml(metaText)} — no lines match.</div>`;
+      bodyEl.innerHTML = renderRunTraceEmpty(metaText);
       return;
     }
     const frag = document.createDocumentFragment();
@@ -547,7 +572,14 @@
       const lines = Array.isArray(data.lines) ? data.lines : [];
       runTraceLineCache = lines;
       runTraceWhichCache = which || "all";
-      const paths = Array.isArray(data.paths) && data.paths.length ? data.paths.join(" · ") : data.path || "—";
+      const pathList =
+        Array.isArray(data.paths) && data.paths.length
+          ? data.paths
+          : data.path
+            ? [data.path]
+            : [];
+      window.__rtPaths = pathList;
+      const paths = pathList.length ? pathList.join(" · ") : "—";
       window.__rtPathNote = `Sources: ${paths}${data.truncated ? " · tail truncated" : ""}`;
       applyRunTraceFilters();
     } catch (err) {

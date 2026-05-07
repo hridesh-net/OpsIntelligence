@@ -222,6 +222,57 @@ code {
   color: var(--danger);
 }
 
+.runtrace-empty {
+  padding: 24px 24px 22px;
+  font-family: var(--sans);
+}
+
+.runtrace-empty-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--fg);
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.runtrace-empty-body {
+  margin: 0 0 12px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  max-width: 60ch;
+}
+
+.runtrace-empty-list {
+  margin: 0 0 14px;
+  padding-left: 18px;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.runtrace-empty-list code {
+  font-size: 12px;
+}
+
+.runtrace-empty-paths {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.runtrace-empty-paths code {
+  font-size: 11px;
+  background: var(--bg-elev);
+}
+
+.runtrace-empty-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+}
+
 .tasks-body {
   margin-top: 8px;
 }
