@@ -48,7 +48,8 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version-file: 'go.mod'
+          cache: false
           
       - name: Install MSYS2 (Windows)
         if: matrix.os == 'windows-latest'
@@ -93,6 +94,14 @@ jobs:
           echo "${ZIG_DIR}" >> "$GITHUB_PATH"
           "${ZIG_DIR}/zig" version
 
+          # Write wrapper scripts so CC/CXX are single-token paths with no
+          # spaces — some CGO/linker invocation paths do not split env vars.
+          printf '#!/bin/sh\nexec zig cc -target aarch64-linux-musl "$@"\n' \
+            > /tmp/zig-cc-arm64
+          printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl "$@"\n' \
+            > /tmp/zig-cxx-arm64
+          chmod +x /tmp/zig-cc-arm64 /tmp/zig-cxx-arm64
+
       - name: Build Binary (Native)
         if: matrix.target != 'linux-arm64'
         env:
@@ -110,8 +119,8 @@ jobs:
           CGO_ENABLED: 1
           GOOS: linux
           GOARCH: arm64
-          CC: zig cc -target aarch64-linux-musl
-          CXX: zig c++ -target aarch64-linux-musl
+          CC: /tmp/zig-cc-arm64
+          CXX: /tmp/zig-cxx-arm64
         run: |
           mkdir -p dist
           # Zig/musl static link + jupiterrider/ffi (opsintelligence_localgemma) panics at init:
