@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] — 2026-05-06
+
+### Added
+
+- **Per-agent log directories** (`cmd/opsintelligence/tui/dashboard.go`, `internal/dirs/layout.go`): every agent type now writes to its own isolated directory under `logs/` — master → `logs/agent/`, sub-agents → `logs/subagents/<task-id>/`, specialist agents → `logs/subagents/<name>/<run-id>/`, repo intel → `logs/repointel/<repo-id>/`. The dashboard Logs tab scans the full directory tree on each tick using a `map[string]int64` per-file offset (zero CPU when idle) instead of two fixed paths.
+- **Repointel trace events** (`internal/repointel/manager.go`): indexing and scanning now emit `task_start` / `task_done` trace events (via caller-supplied `TraceFunc` — no direct runtrace import in the manager), making repo intel activity visible in the dashboard Logs tab alongside agent turns.
+- **PR review chain-of-thought pipeline** (`internal/tools/pr_review_chain.go`, `internal/tools/devops.go`): `/pr-review:` and `devops.github.review_pr` now route through `prompts/chains/pr-review.yaml` (gather → analyze → critique → render → post) when the prompt library is available. Injects methodology from `config/pr_review/methodology.md` and repo intelligence context; structured XML reasoning (`<plan>`, `<findings>`, `<critique>`) is private and stripped before the verdict is posted as a formal GitHub review with inline line-level comments.
+- **`Runner.Cleanup()`** (`internal/agent/runner.go`): new method that calls `memory.Manager.DeleteSession()` to free working memory and episodic records after a short-lived runner (sub-agent, specialist) completes.
+
+### Changed
+
+- **Sub-agent and specialist trace isolation** (`internal/tools/subagent.go`, `cmd/opsintelligence/main.go`): each async sub-agent run gets its own `logs/subagents/<task-id>/runtrace.ndjson`; each specialist invocation gets a per-run UUID directory `logs/subagents/<name>/<run-id>/runtrace.ndjson` so parallel runs of the same agent type never interleave.
+- **Default `MaxConcurrent = 2`** (`internal/subagents/tasks.go`): changed from 8 → 2 sub-agents running in parallel by default; override via `agent.subagent_tasks.max_concurrent` in config.
+- **Dashboard Logs tab** (`cmd/opsintelligence/tui/dashboard.go`): `model_iteration` events now show `tools_offered` count and `skills_enabled` names; log entries carry a `Source` label derived from the file path (e.g. `master`, `sub:abc12345`, `repointel:github-Hmbown-DeepSeek-TUI`) visible in the ROLE/SOURCE column.
+
+### Fixed
+
+- **Working memory leak** (`internal/tools/subagent.go`, `internal/agents/orchestrator.go`): `Runner.Cleanup()` is now called after every sub-agent and specialist task completes, releasing working memory and episodic SQLite records that previously accumulated for the lifetime of the process.
+- **Repo registry and memory paths** (`cmd/opsintelligence/main.go`, `cmd/opsintelligence/repos_cmd.go`): default `RegistryPath` and `MemoryDir` now resolve against `layout.RepoIntel` (`data/repointel/`) instead of the pre-migration `repointel/` root, preventing registry loss after the v0.4 layout migration.
+
 ## [1.0.10] — 2026-05-06
 
 ### Changed

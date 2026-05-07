@@ -54,6 +54,12 @@ type ManagerConfig struct {
 	// Defaults match memory.Manager when zero.
 	RAGChunkSize    int
 	RAGChunkOverlap int
+
+	// TraceFunc, when non-nil, is called with structured event data so the
+	// caller can forward repo intel activity to the run trace infrastructure
+	// without creating a direct dependency on the runtrace package here.
+	// kind is a short event identifier (e.g. "task_start", "task_done").
+	TraceFunc func(kind string, fields map[string]any)
 }
 
 func (c *ManagerConfig) applyDefaults() {
@@ -475,6 +481,15 @@ func (m *Manager) writeProgressFile(e ProgressEvent) {
 	_ = os.WriteFile(path, b, 0o644)
 }
 
+// emitTrace forwards a structured event to the caller-supplied TraceFunc.
+// It is a no-op when TraceFunc is nil.
+func (m *Manager) emitTrace(kind string, fields map[string]any) {
+	if m.cfg.TraceFunc == nil {
+		return
+	}
+	m.cfg.TraceFunc(kind, fields)
+}
+
 // pipelineSteps is the total number of steps in the processing pipeline.
 // Used by the TUI to render a progress bar.
 const pipelineSteps = 8
@@ -494,6 +509,14 @@ func (m *Manager) process(ctx context.Context, id string) {
 		return
 	}
 
+	m.emitTrace("task_start", map[string]any{
+		"runner_role":   "repointel",
+		"repo_id":       id,
+		"repo":          entry.FullName,
+		"platform":      entry.Platform,
+		"query_preview": "index+scan " + entry.FullName,
+	})
+
 	// ── Step 1: Index codebase ────────────────────────────────────────────────
 	step(1, ProgressIndexing, "fetching and analysing codebase")
 	_ = m.registry.UpdateIndexStatus(id, IndexIndexing, "", "")
@@ -502,6 +525,12 @@ func (m *Manager) process(ctx context.Context, id string) {
 	if err != nil {
 		_ = m.registry.UpdateIndexStatus(id, IndexError, "", err.Error())
 		fail(1, "indexing failed: "+err.Error(), err)
+		m.emitTrace("task_done", map[string]any{
+			"runner_role": "repointel",
+			"repo_id":     id,
+			"finish":      "error",
+			"error":       err.Error(),
+		})
 		return
 	}
 
@@ -529,6 +558,12 @@ func (m *Manager) process(ctx context.Context, id string) {
 	if err != nil {
 		_ = m.registry.UpdateScanStatus(id, ScanError, "", err.Error())
 		fail(2, "scan failed: "+err.Error(), err)
+		m.emitTrace("task_done", map[string]any{
+			"runner_role": "repointel",
+			"repo_id":     id,
+			"finish":      "error",
+			"error":       err.Error(),
+		})
 		return
 	}
 
@@ -575,6 +610,14 @@ func (m *Manager) process(ctx context.Context, id string) {
 			zap.Int("cves", len(scanResult.CVEs)),
 		)
 	}
+
+	m.emitTrace("task_done", map[string]any{
+		"runner_role": "repointel",
+		"repo_id":     id,
+		"finish":      "ok",
+		"risk":        scanResult.RiskLevel,
+		"cves":        len(scanResult.CVEs),
+	})
 }
 
 // generateMarkdown writes ref.md and summary.md for the repo and records their

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,10 +60,11 @@ type DashboardInfo struct {
 	Limits LimitsSnapshot
 
 	// Live data — read on every render, not a snapshot.
-	Tasks               *subagents.TaskManager // for Agents tab
-	RunTracePath        string                 // NDJSON path for master agent (Logs tab)
-	SubagentTracePath   string                 // NDJSON path for sub-agent runs (Logs tab)
-	DatastoreKind       string                 // "sqlite" or "postgres" for Limits tab
+	Tasks             *subagents.TaskManager // for Agents tab
+	RunTracePath      string                 // master agent NDJSON path (fallback when LogsDir is empty)
+	SubagentTracePath string                 // sub-agent NDJSON path (fallback when LogsDir is empty)
+	LogsDir           string                 // root of the logs tree; when set, the dashboard scans all runtrace.ndjson files inside
+	DatastoreKind     string                 // "sqlite" or "postgres" for Limits tab
 }
 
 // SessionUsage accumulates REPL session token usage for the Usage tab.
@@ -108,15 +110,12 @@ type DashboardModel struct {
 	searchActive  bool
 
 	// Log cache — populated incrementally on each tick, never on render.
-	// Only new bytes since logOffset are read; the entry slice is capped at 200.
-	logCache     []logEntry
-	logOffset    int64
-	logCachePath string // detects if RunTracePath changes between ticks
-
-	// Sub-agent log cache — same incremental pattern for SubagentTracePath.
-	subLogCache     []logEntry
-	subLogOffset    int64
-	subLogCachePath string
+	// When LogsDir is set the dashboard scans the entire logs directory tree;
+	// otherwise the two fixed paths (RunTracePath, SubagentTracePath) are used.
+	// logFileOffsets tracks how many bytes of each file have been consumed so
+	// only new bytes are read on each tick (zero CPU when nothing is appended).
+	logFileOffsets map[string]int64
+	logAllCache    []logEntry
 
 	// visible is true when this model is actually being shown in the REPL overlay.
 	// fetchPS is only spawned when visible; the log cache refreshes regardless.
@@ -455,30 +454,94 @@ func (m *DashboardModel) renderUsageTabFiltered(query string) string {
 
 // ── Log cache — incremental reader ───────────────────────────────────────────
 
-const logCacheMax = 200
+const logCacheMax = 300
 
-// readIncrementalTrace reads any new NDJSON entries appended to path since
-// *offset. On success *offset is advanced to the current end of the file and
-// *trackedPath is updated. Returns nil on any I/O error so tracing never
-// blocks rendering.
-func readIncrementalTrace(path string, offset *int64, trackedPath *string) []logEntry {
-	if path == "" {
+// traceFileInfo pairs a log file path with a short human-readable source label.
+type traceFileInfo struct {
+	path   string
+	source string // e.g. "master", "sub:abc123", "repointel:github-Foo-Bar"
+}
+
+// collectTracePaths finds all runtrace.ndjson files under logsDir, plus the
+// two fixed fallback paths when logsDir is empty. audit/ and pipeline/
+// directories are excluded (different NDJSON schemas).
+func collectTracePaths(logsDir, fixedMaster, fixedSub string) []traceFileInfo {
+	if logsDir == "" {
+		var out []traceFileInfo
+		if fixedMaster != "" {
+			out = append(out, traceFileInfo{fixedMaster, "master"})
+		}
+		if fixedSub != "" && fixedSub != fixedMaster {
+			out = append(out, traceFileInfo{fixedSub, "subagents"})
+		}
+		return out
+	}
+
+	skip := map[string]bool{"audit": true, "pipeline": true}
+	var out []traceFileInfo
+	_ = filepath.WalkDir(logsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && skip[d.Name()] {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && d.Name() == "runtrace.ndjson" {
+			rel, _ := filepath.Rel(logsDir, path)
+			out = append(out, traceFileInfo{path, labelFromRelPath(rel)})
+		}
 		return nil
+	})
+	return out
+}
+
+// labelFromRelPath derives a short display label from the path relative to LogsDir.
+// e.g. "agent/runtrace.ndjson" → "master"
+//
+//	"subagents/abc123/runtrace.ndjson" → "sub:abc123"
+//	"repointel/github-Foo-Bar/runtrace.ndjson" → "repointel:github-Foo-Bar"
+func labelFromRelPath(rel string) string {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	switch {
+	case len(parts) >= 1 && parts[0] == "agent":
+		return "master"
+	case len(parts) >= 2 && parts[0] == "subagents":
+		if parts[1] == "runtrace.ndjson" {
+			return "subagents"
+		}
+		id := parts[1]
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		return "sub:" + id
+	case len(parts) >= 2 && parts[0] == "repointel":
+		name := parts[1]
+		if len(name) > 20 {
+			name = name[:20]
+		}
+		return "repointel:" + name
+	default:
+		if len(parts) >= 2 {
+			return parts[0] + ":" + parts[1]
+		}
+		return rel
 	}
-	if path != *trackedPath {
-		*trackedPath = path
-		*offset = 0
-	}
+}
+
+// readTraceFile reads any new NDJSON entries from path since *offset and
+// advances *offset. source is stamped onto each entry for display. Returns
+// nil on any I/O error so tracing never blocks rendering.
+func readTraceFile(path string, offset *int64, source string) []logEntry {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || fi.Size() <= *offset {
+	fi, statErr := f.Stat()
+	if statErr != nil || fi.Size() <= *offset {
 		return nil
 	}
-	if _, err := f.Seek(*offset, io.SeekStart); err != nil {
+	if _, seekErr := f.Seek(*offset, io.SeekStart); seekErr != nil {
 		return nil
 	}
 	sc := bufio.NewScanner(f)
@@ -490,6 +553,7 @@ func readIncrementalTrace(path string, offset *int64, trackedPath *string) []log
 		}
 		var e logEntry
 		if json.Unmarshal(line, &e) == nil {
+			e.Source = source
 			entries = append(entries, e)
 		}
 	}
@@ -499,45 +563,37 @@ func readIncrementalTrace(path string, offset *int64, trackedPath *string) []log
 	return entries
 }
 
-// appendToCache appends newEntries to *cache and trims to logCacheMax.
-func appendToCache(cache *[]logEntry, newEntries []logEntry) {
-	if len(newEntries) == 0 {
+// refreshLogCache scans the logs directory (or falls back to fixed paths) and
+// reads only bytes appended since the last tick. Driven by the dashboard tick
+// (~1 s) so rendering is never blocked by I/O. Allocates nothing when no new
+// data has been written.
+func (m *DashboardModel) refreshLogCache() {
+	if m.logFileOffsets == nil {
+		m.logFileOffsets = make(map[string]int64)
+	}
+	sources := collectTracePaths(m.info.LogsDir, m.info.RunTracePath, m.info.SubagentTracePath)
+	var added int
+	for _, tf := range sources {
+		off := m.logFileOffsets[tf.path]
+		newEntries := readTraceFile(tf.path, &off, tf.source)
+		m.logFileOffsets[tf.path] = off
+		if len(newEntries) > 0 {
+			m.logAllCache = append(m.logAllCache, newEntries...)
+			added += len(newEntries)
+		}
+	}
+	if added == 0 {
 		return
 	}
-	*cache = append(*cache, newEntries...)
-	if len(*cache) > logCacheMax {
-		copy(*cache, (*cache)[len(*cache)-logCacheMax:])
-		*cache = (*cache)[:logCacheMax]
-	}
-}
-
-// refreshLogCache reads any new trace entries from both the master and
-// sub-agent trace files. Driven by the dashboard tick so rendering is
-// never blocked by file I/O.
-func (m *DashboardModel) refreshLogCache() {
-	appendToCache(&m.logCache,
-		readIncrementalTrace(m.info.RunTracePath, &m.logOffset, &m.logCachePath))
-	appendToCache(&m.subLogCache,
-		readIncrementalTrace(m.info.SubagentTracePath, &m.subLogOffset, &m.subLogCachePath))
-}
-
-// mergedLogEntries returns the master and sub-agent caches merged in
-// chronological order. The T field is RFC3339Nano so lexicographic comparison
-// is correct.
-func mergedLogEntries(master, subagent []logEntry) []logEntry {
-	if len(subagent) == 0 {
-		return master
-	}
-	if len(master) == 0 {
-		return subagent
-	}
-	merged := make([]logEntry, len(master)+len(subagent))
-	copy(merged, master)
-	copy(merged[len(master):], subagent)
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].T < merged[j].T
+	// Sort merged cache by timestamp (RFC3339Nano → lexicographic order is correct).
+	sort.Slice(m.logAllCache, func(i, j int) bool {
+		return m.logAllCache[i].T < m.logAllCache[j].T
 	})
-	return merged
+	// Trim to cap, keeping the most recent entries.
+	if len(m.logAllCache) > logCacheMax {
+		copy(m.logAllCache, m.logAllCache[len(m.logAllCache)-logCacheMax:])
+		m.logAllCache = m.logAllCache[:logCacheMax]
+	}
 }
 
 // ── Agents tab ────────────────────────────────────────────────────────────────
@@ -668,6 +724,8 @@ type logEntry struct {
 	Finish        string   `json:"finish_reason"`
 	ToolsOffered  []string `json:"tools_offered"`
 	SkillsEnabled []string `json:"skills_enabled"`
+	// Source is NOT from JSON — populated by readTraceFile from the file path.
+	Source string `json:"-"`
 }
 
 // renderLogsTab renders the Logs tab purely from the in-memory cache — zero
@@ -693,10 +751,10 @@ func (m *DashboardModel) renderLogsTab(query string) string {
 	sb.WriteString("\n\n")
 
 	// Header row
-	sb.WriteString(dim.Render(fmt.Sprintf("%-8s  %-8s  %-18s  %s\n", "TIME", "ROLE", "EVENT", "DETAIL")))
+	sb.WriteString(dim.Render(fmt.Sprintf("%-8s  %-12s  %-18s  %s\n", "TIME", "ROLE/SOURCE", "EVENT", "DETAIL")))
 	sb.WriteString(dim.Render(strings.Repeat("─", 70)) + "\n")
 
-	entries := mergedLogEntries(m.logCache, m.subLogCache)
+	entries := m.logAllCache
 	if len(entries) == 0 {
 		sb.WriteString(dim.Render("No trace events yet. Send a message to the agent to start."))
 		return sb.String()
@@ -753,10 +811,24 @@ func (m *DashboardModel) renderLogsTab(query string) string {
 			ts = ts[11:19]
 		}
 
-		// Role badge
-		roleBadge := cyan.Render("master  ")
-		if e.RunnerRole == "subagent" {
-			roleBadge = orange.Render("agent   ")
+		// Role badge — use Source when available (more specific than RunnerRole).
+		roleLabel := e.Source
+		if roleLabel == "" {
+			roleLabel = e.RunnerRole
+		}
+		if len(roleLabel) > 12 {
+			roleLabel = roleLabel[:12]
+		}
+		var roleBadge string
+		switch {
+		case e.RunnerRole == "master" || e.Source == "master":
+			roleBadge = cyan.Render(fmt.Sprintf("%-12s", "master"))
+		case strings.HasPrefix(e.RunnerRole, "repointel") || strings.HasPrefix(e.Source, "repointel"):
+			roleBadge = lipgloss.NewStyle().Foreground(ColorCyan).Render(fmt.Sprintf("%-12s", roleLabel))
+		case strings.HasPrefix(e.RunnerRole, "specialist"):
+			roleBadge = lipgloss.NewStyle().Foreground(ColorAccentLavender).Render(fmt.Sprintf("%-12s", roleLabel))
+		default:
+			roleBadge = orange.Render(fmt.Sprintf("%-12s", roleLabel))
 		}
 
 		// Kind color
@@ -786,6 +858,7 @@ func (m *DashboardModel) renderLogsTab(query string) string {
 
 		sb.WriteString(fmt.Sprintf("%s  %s  %s  %s\n",
 			dim.Render(ts), roleBadge, kindStr, dim.Render(detail)))
+		_ = white
 	}
 
 	if matched == 0 && query != "" {

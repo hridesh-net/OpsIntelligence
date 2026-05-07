@@ -441,6 +441,17 @@ func (r *Runner) WithPRReview(h PRReviewDispatcher) *Runner {
 // SessionID returns the current session ID.
 func (r *Runner) SessionID() string { return r.sessionID }
 
+// Cleanup releases the working memory and episodic records for this runner's
+// session. Call once after the last Run/RunStream completes — only for
+// short-lived runners (sub-agents, specialists). Never call on a persistent
+// REPL or channel runner.
+func (r *Runner) Cleanup(ctx context.Context) {
+	if r.memory == nil || r.sessionID == "" {
+		return
+	}
+	_ = r.memory.DeleteSession(ctx, r.sessionID)
+}
+
 func (r *Runner) logFields(ctx context.Context, extra ...zap.Field) []zap.Field {
 	fields := correlation.Fields(ctx)
 	if correlation.SessionID(ctx) == "" && r.sessionID != "" {

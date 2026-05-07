@@ -87,6 +87,8 @@ func (o *Orchestrator) Route(ctx context.Context, query string) (RouteResult, er
 
 	taskID, err := o.tasks.SubmitDirect(ctx, def.Name, query, func(taskCtx context.Context) (string, error) {
 		result, runErr := runner.Run(taskCtx, msg)
+		// Free working + episodic memory for this specialist session.
+		runner.Cleanup(context.Background())
 		if runErr != nil {
 			return "", runErr
 		}

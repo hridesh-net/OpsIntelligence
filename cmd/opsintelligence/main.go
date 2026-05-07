@@ -42,6 +42,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/mcp"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/mempalace"
+	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
@@ -63,7 +64,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.10" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.11" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -400,6 +401,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		Tasks:             tasks,
 		RunTracePath:      cfg.Agent.RunTraceFile,
 		SubagentTracePath: cfg.Agent.RunTraceSubagentFile,
+		LogsDir:           cfg.Dirs().Logs,
 		DatastoreKind:     cfg.Datastore.Driver,
 	}
 }
@@ -1758,6 +1760,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		ActiveSkillsContext:     skillsCtx,
 		EnabledSkillNames:       activeSkillNames,
 		RunTracePath:            childRunTrace,
+		LogsSubagentsDir:        layout.LogsSubagents,
 		ProviderName:            providerNameForCaps,
 		GatewayPublicBaseURL:    effectiveGatewayOrigin(cfg),
 		ExtensionPromptAppend:   extPrompt,
@@ -1908,9 +1911,10 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		if extPrompt != "" {
 			focus = extPrompt + "\n\n" + focus
 		}
-		// Give each specialist its own trace file so the dashboard can filter
-		// events by agent name (logs/subagents/<name>/runtrace.ndjson).
-		agentTraceDir := filepath.Join(layout.LogsSubagents, def.Name)
+		// Each specialist invocation gets its own trace directory so parallel
+		// runs of the same agent type don't interleave: logs/subagents/<name>/<run-id>/runtrace.ndjson
+		runID := uuid.New().String()[:8]
+		agentTraceDir := filepath.Join(layout.LogsSubagents, def.Name, runID)
 		agentTracePath := childRunTrace // fallback to shared subagent trace
 		if err := os.MkdirAll(agentTraceDir, 0o755); err == nil {
 			agentTracePath = filepath.Join(agentTraceDir, "runtrace.ndjson")
@@ -2035,6 +2039,28 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 				riMgrCfg.Embedder = e
 				riMgrCfg.EmbeddingDimensions = dims
 			}
+			// Forward repo intel trace events to the master run trace file so
+			// indexing/scanning activity appears in the dashboard logs.
+			// Each repo gets its own trace file: logs/repointel/<id>/runtrace.ndjson
+			logsRepointel := layout.LogsRepointel
+			riMgrCfg.TraceFunc = func(kind string, fields map[string]any) {
+				repoID, _ := fields["repo_id"].(string)
+				ev := make(map[string]any, len(fields)+1)
+				for k, v := range fields {
+					ev[k] = v
+				}
+				ev["kind"] = kind
+				tracePath := masterRunTrace // fallback to master trace
+				if logsRepointel != "" && repoID != "" {
+					repoDir := filepath.Join(logsRepointel, repointel.SanitiseID(repoID))
+					if err := os.MkdirAll(repoDir, 0o755); err == nil {
+						tracePath = filepath.Join(repoDir, "runtrace.ndjson")
+					}
+				}
+				if tracePath != "" {
+					runtrace.Append(tracePath, ev)
+				}
+			}
 
 			mgr, mgrErr := repointel.NewManager(riMgrCfg, idxr, scnr, runnerLog)
 			if mgrErr != nil {
@@ -2057,10 +2083,20 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	// slots free. The handler is stored in the server so the gateway API
 	// and dashboard can inspect and cancel tasks.
 	var prReviewHandler *tools.PRReviewCmdHandler
+	var prPromptRunner *prompts.Runner
+	if promptLibrary != nil {
+		prPromptRunner = &prompts.Runner{
+			Provider:     p,
+			Lib:          promptLibrary,
+			DefaultModel: modelInfo.ID,
+		}
+	}
 	if reviewFn := tools.NewReviewFn(ctx, cfg.DevOps, p, modelInfo.ID, tools.ReviewFnOptions{
-		StateDir:    cfg.StateDir,
-		Log:         runnerLog,
-		RepoManager: repoMgr,
+		StateDir:        cfg.StateDir,
+		Log:             runnerLog,
+		RepoManager:     repoMgr,
+		PromptRunner:    prPromptRunner,
+		MethodologyPath: layout.PRReviewMethodology(),
 	}); reviewFn != nil {
 		workers := cfg.DevOps.GitHub.PRReviewWorkers
 		if workers <= 0 {

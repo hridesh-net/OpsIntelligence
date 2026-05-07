@@ -179,7 +179,7 @@ func NewTaskManager(exec ExecFn) *TaskManager {
 	m := &TaskManager{
 		tasks:            make(map[string]*Task),
 		exec:             exec,
-		MaxConcurrent:    8,
+		MaxConcurrent:    2,
 		RetainLimit:      256,
 		DefaultTimeout:   30 * time.Minute,
 		MaxEventsPerTask: 128,

@@ -59,11 +59,12 @@ type Layout struct {
 	LocalIntel  string
 
 	// Logs — structured operational logs.
-	Logs          string
-	LogsAgent     string
-	LogsSubagents string
-	LogsPipeline  string
-	LogsAudit     string
+	Logs           string
+	LogsAgent      string
+	LogsSubagents  string
+	LogsRepointel  string // per-repo indexing/scan traces
+	LogsPipeline   string
+	LogsAudit      string
 
 	// Runtime — ephemeral operational files (PID, job state).
 	Runtime  string
@@ -118,6 +119,7 @@ func New(root string) *Layout {
 		Logs:            j("logs"),
 		LogsAgent:       j("logs", "agent"),
 		LogsSubagents:   j("logs", "subagents"),
+		LogsRepointel:   j("logs", "repointel"),
 		LogsPipeline:    j("logs", "pipeline"),
 		LogsAudit:       j("logs", "audit"),
 		Runtime:         j("runtime"),
@@ -198,6 +200,7 @@ func (l *Layout) AllDirs() []string {
 		l.Logs,
 		l.LogsAgent,
 		l.LogsSubagents,
+		l.LogsRepointel,
 		l.LogsPipeline,
 		l.LogsAudit,
 		l.Runtime,

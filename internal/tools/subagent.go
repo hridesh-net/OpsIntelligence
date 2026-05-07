@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,9 +42,12 @@ type SubAgentSvc struct {
 	Guardrail *security.Guardrail
 	AuditLog  *security.AuditLog
 
-	// RunTracePath is the NDJSON path for child runs: agent.run_trace_subagent_file
-	// when set, otherwise the same path as the master agent.run_trace_file.
+	// RunTracePath is the fallback NDJSON path for child runs (shared subagent file).
 	RunTracePath string
+	// LogsSubagentsDir, when set, gives each task its own trace directory:
+	// <LogsSubagentsDir>/<task-id>/runtrace.ndjson. Takes priority over RunTracePath
+	// for tracked (async) tasks so runs are individually isolatable.
+	LogsSubagentsDir string
 	// RunTraceMode is the resolved agent.run_trace_mode (copied for run_trace.task_start).
 	RunTraceMode string
 	// EnabledSkillNames is copied from the parent agent for run_trace.task_start.
@@ -138,6 +143,10 @@ func (s *SubAgentSvc) runSyncWithTask(ctx context.Context, taskID, subAgentID, t
 		Content:   strings.TrimSpace(task),
 		CreatedAt: time.Now(),
 	})
+	// Release working memory and episodic records for this short-lived session
+	// regardless of success or failure. Use a fresh background context so
+	// cleanup is not skipped when the run context was already cancelled.
+	runner.Cleanup(context.Background())
 	if err != nil {
 		return "", 0, err
 	}
@@ -196,6 +205,15 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		childReg.Register(SupervisorReportTool{Tasks: s.Tasks, TaskID: taskID})
 	}
 
+	// Derive a per-task trace path so each run has its own log directory.
+	runTracePath := s.RunTracePath
+	if s.LogsSubagentsDir != "" && taskID != "" {
+		taskDir := filepath.Join(s.LogsSubagentsDir, taskID)
+		if err := os.MkdirAll(taskDir, 0o755); err == nil {
+			runTracePath = filepath.Join(taskDir, "runtrace.ndjson")
+		}
+	}
+
 	catalog := NewCatalog(childReg, s.ToolGraph)
 	prof := toolsProfile
 	if prof != "coding" {
@@ -207,7 +225,7 @@ func (s *SubAgentSvc) buildChildRunner(maxIterations int, toolsProfile, workspac
 		Model:                   s.Model,
 		ActiveSkillsContext:     s.ActiveSkillsContext,
 		EnabledSkillNames:       s.EnabledSkillNames,
-		RunTracePath:            s.RunTracePath,
+		RunTracePath:            runTracePath,
 		RunnerRole:              "subagent",
 		RunTraceMode:            s.RunTraceMode,
 		ProviderName:            s.ProviderName,

@@ -19,6 +19,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sandbox"
 	"github.com/opsintelligence/opsintelligence/internal/devops/sonar"
+	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	toolcloud "github.com/opsintelligence/opsintelligence/internal/tools/cloud"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
@@ -45,6 +46,18 @@ type ReviewFnOptions struct {
 	// RepoManager is the optional Repo Intelligence manager. When set,
 	// per-repo indexed memory is injected into each PR review prompt.
 	RepoManager *repointel.Manager
+
+	// PromptRunner, when non-nil and its library contains the "pr-review" chain,
+	// routes reviews through the chain-of-thought pipeline
+	// (gather → analyze → critique → render → post) instead of the internal
+	// Go stage coordinator. The chain uses methodology injection, repo intel
+	// context, and structured XML reasoning before rendering the final verdict.
+	PromptRunner *prompts.Runner
+
+	// MethodologyPath is the absolute path to the PR review methodology markdown
+	// file. When set and the file exists, its contents are injected into every
+	// chain step that declares a {{.methodology}} template variable.
+	MethodologyPath string
 }
 
 // NewReviewFn returns a ReviewFn backed by the enterprise pipeline Coordinator.
@@ -63,6 +76,16 @@ func NewReviewFn(ctx context.Context, cfg config.DevOpsConfig, prov provider.Pro
 		BaseURL:    cfg.GitHub.BaseURL,
 		DefaultOrg: cfg.GitHub.DefaultOrg,
 	}, httpc)
+
+	// Chain-of-thought path: when the prompt library has the pr-review chain,
+	// use the multi-step gather → analyze → critique → render → post pipeline
+	// with methodology injection and repo intel context instead of the internal
+	// Go stage coordinator.
+	if opts.PromptRunner != nil {
+		if _, ok := opts.PromptRunner.Lib.Chain(prReviewChainID); ok {
+			return newChainReviewFn(gh, opts.PromptRunner, opts)
+		}
+	}
 
 	// Build sandbox components (optional).
 	var sbRunner *sandbox.Runner
