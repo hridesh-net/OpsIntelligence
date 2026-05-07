@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] — 2026-05-07
+
+### Added
+
+- **RAG Chat endpoint** (`internal/gateway/rag_chat_api.go`, `internal/gateway/server.go`): new `POST /api/rag-chat` streams LLM responses grounded in indexed repository knowledge. Searches the repointel hybrid FTS5 store first; falls back to loading repo memory JSON files directly when the store has no chunks yet (no embeddings required — keyword search only). Emits a `sources` SSE event with attribution metadata before the token stream so the UI can render source pills immediately. Same SSE wire format as `/api/chat`.
+- **`RepoIntelAdapter` search helpers** (`internal/gateway/rag_chat_api.go`): added `SearchRepos`, `SearchRepo`, `LoadRepoMemory`, and `ListRepoIDs` methods to expose the repointel manager to the new RAG chat handler without coupling it directly to the manager type.
+- **ChatGPT-style web UI** (`internal/webui/assets/index.html`, `app.js`, `style.css`): redesigned chat interface with a mode toggle (RAG Chat / Agent Chat), a repo selector sidebar that lists all indexed repos from `/api/v1/repos`, source attribution pills rendered below each assistant reply, and example prompt buttons on the empty state. RAG mode sends to `/api/rag-chat` with the selected repo IDs; Agent mode continues using `/api/chat`.
+
+### Fixed
+
+- **Hybrid FTS5 store always empty after indexing** (`internal/repointel/hybridstore.go`): `UpsertChunks` used `ON CONFLICT(chunk_id) DO UPDATE SET …` on the `vec0` virtual table. `sqlite-vec`'s `vec0` does not implement the upsert syntax — the error caused the entire transaction to roll back on every re-index, leaving both `repo_chunks` (metadata) and `fts_repo_chunks` (FTS5 keyword index) empty. Fixed by switching vec0 to DELETE + INSERT, matching the pattern already used for FTS5. Vec insert failures are now non-fatal so FTS5 search keeps working even when no embedding is provided.
+- **Clone skipped silently for GitHub repos with token** (`internal/repointel/indexer.go`): `shouldUseClone` returned `false` for GitHub repos whenever a token was configured, falling back to the GitHub REST API and leaving `data/repointel/clones/` always empty. The correct default is to clone whenever `ClonesDir` is set — the token is embedded in the authenticated clone URL (`https://TOKEN@github.com/…`). Cloning is now the default; operators can opt out by setting `repo_intel.disable_clone: true`.
+
+### Changed
+
+- **`shouldUseClone` logic inverted** (`internal/repointel/indexer.go`): clone is now the default when `ClonesDir` is configured (including the layout default `data/repointel/clones`), regardless of platform or token. Previously only non-GitHub repos or token-less GitHub repos were cloned; now all repos are cloned unless the operator sets `repo_intel.disable_clone: true`.
+- **`IndexerConfig.ForceClone` deprecated** (`internal/repointel/indexer.go`, `internal/config/config.go`): `force_clone` is now a no-op — cloning is already the default. The field is retained for backward compatibility and will be removed in a future release. Replace with `disable_clone: true` to revert to API-only behaviour.
+- **`repo_intel.disable_clone` config field added** (`internal/config/config.go`, `cmd/opsintelligence/main.go`): explicit opt-out for git clone. When `true`, indexing uses the GitHub REST API for GitHub repos (non-GitHub platforms always clone regardless of this flag).
+
 ## [1.0.11] — 2026-05-06
 
 ### Added
