@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.13] — 2026-05-08
+
+### Added
+
+- **Multi-tenant GitHub App** (`internal/githubapp/`): any GitHub organisation can install a single registered GitHub App and have all their events routed to their own self-hosted OpsIntelligence instance. Core components:
+  - `config.go` — operator-level config (`app_id`, `private_key_path`, `webhook_secret`, `public_url`).
+  - `auth.go` — RS256 JWT signing and cached per-installation access tokens via the GitHub App API. Includes `VerifyInstallation` to confirm an installation belongs to the App before saving config.
+  - `store.go` — `Installation` type and `InstallationRepo` interface for persisting per-org installation records.
+  - `conntoken.go` — `ConnectToken` type and `ConnectTokenRepo` interface for one-time WebSocket authentication tokens.
+  - `hub.go` — server-side WebSocket hub that tracks active client connections keyed by `installation_id` and pushes `EventEnvelope` messages; includes ping/pong keepalive and graceful disconnect handling.
+  - `connector.go` — client-side outbound WebSocket connector (`Connector`) that dials the relay from the org's OpsIntelligence instance with automatic exponential-backoff reconnection; no public IP or inbound firewall rules required.
+  - `relay.go` — HTTP relay that re-signs payloads with the org's configured webhook secret and forwards to their `/api/webhook/github` endpoint (fallback when no WebSocket is connected).
+  - `handler.go` — HTTP handler mounting `POST /api/github-app/webhook` (GitHub event receiver), `GET/POST /api/github-app/setup` (post-install setup page), `GET /api/github-app/connect` (WebSocket upgrade endpoint), and `GET /api/github-app/installations` (JSON list for dashboard/CLI).
+- **Event dispatch priority** (`internal/githubapp/handler.go`): events are delivered in order — (1) active WebSocket connection push, (2) HTTP relay to configured public endpoint, (3) local agent runner — so on-premise deployments with no public URL still receive all GitHub events.
+- **Post-install setup page** (`internal/githubapp/handler.go`): after installing the GitHub App, org admins are redirected to a setup page that verifies the installation via the GitHub API, generates a unique connect token, and renders a ready-to-paste `github_app_connector:` YAML snippet with the relay URL, installation ID, and token.
+- **`github_app_connector` config** (`internal/config/config.go`): new client-side config block enabling the outbound WebSocket connector on a self-hosted instance (`relay_url`, `installation_id`, `connect_token`, `reconnect_interval`).
+- **`github_app` config** (`internal/config/config.go`): new relay-side config block (`app_id`, `private_key_path`, `private_key_pem`, `webhook_secret`, `public_url`, `github_api_url` for GitHub Enterprise Server).
+- **`github_app_installations` and `github_app_connect_tokens` tables** (`internal/datastore/migrations/sqlite/0002_github_app.sql`, `…/postgres/0002_github_app.sql`): new migration adding installation registry and connect token tables to the ops-plane datastore.
+- **`GitHubAppInstallations()` and `GitHubAppConnectTokens()` repo accessors** (`internal/datastore/repos.go`, `internal/datastore/sqlstore/`): SQL implementations of `InstallationRepo` and `ConnectTokenRepo` using the shared `sqlstore.Store`.
+- **Gateway `GitHubApp` field** (`internal/gateway/server.go`): `Server` now accepts a `gitHubAppMounter` interface that is mounted during `Start()` at `/api/github-app/*`. Uses an interface to keep the gateway package free of a direct import on `internal/githubapp`.
+- **`attachGitHubAppToGateway` and `StartGitHubAppConnector`** (`cmd/opsintelligence/gateway_auth.go`): wiring helpers called at gateway boot. `attachGitHubAppToGateway` loads the private key, opens the datastore, and mounts the handler. `StartGitHubAppConnector` starts the outbound WebSocket connector as a background goroutine.
+- **`opsintelligence github-app` command group** (`cmd/opsintelligence/github_app_cmd.go`): CLI for managing installation records — `installations list`, `installations show <id>`, `installations set-endpoint <id> <url> [--webhook-secret]`, `installations clear-endpoint <id>`.
+- **`.opsintelligence.yaml.example`**: documented `github_app:` (relay) and `github_app_connector:` (client) config sections with inline setup instructions.
+
 ## [1.0.12] — 2026-05-07
 
 ### Added

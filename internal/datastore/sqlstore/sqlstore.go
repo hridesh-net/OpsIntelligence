@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
+	"github.com/opsintelligence/opsintelligence/internal/githubapp"
 )
 
 // Dialect abstracts the SQL flavour differences we care about. It is
@@ -79,13 +80,15 @@ func (s *Store) MigrationStatus(ctx context.Context) (applied, latest int, err e
 
 // ─── repo accessors ─────────────────────────────────────────────────
 
-func (s *Store) Users() datastore.UserRepo              { return &userRepo{s: s} }
-func (s *Store) Roles() datastore.RoleRepo              { return &roleRepo{s: s} }
-func (s *Store) APIKeys() datastore.APIKeyRepo          { return &apiKeyRepo{s: s} }
-func (s *Store) Sessions() datastore.SessionRepo        { return &sessionRepo{s: s} }
-func (s *Store) Audit() datastore.AuditRepo             { return &auditRepo{s: s} }
-func (s *Store) TaskHistory() datastore.TaskHistoryRepo { return &taskHistoryRepo{s: s} }
-func (s *Store) OIDCState() datastore.OIDCStateRepo     { return &oidcStateRepo{s: s} }
+func (s *Store) Users() datastore.UserRepo                          { return &userRepo{s: s} }
+func (s *Store) Roles() datastore.RoleRepo                          { return &roleRepo{s: s} }
+func (s *Store) APIKeys() datastore.APIKeyRepo                      { return &apiKeyRepo{s: s} }
+func (s *Store) Sessions() datastore.SessionRepo                    { return &sessionRepo{s: s} }
+func (s *Store) Audit() datastore.AuditRepo                         { return &auditRepo{s: s} }
+func (s *Store) TaskHistory() datastore.TaskHistoryRepo             { return &taskHistoryRepo{s: s} }
+func (s *Store) OIDCState() datastore.OIDCStateRepo                 { return &oidcStateRepo{s: s} }
+func (s *Store) GitHubAppInstallations() githubapp.InstallationRepo  { return &githubAppRepo{s: s} }
+func (s *Store) GitHubAppConnectTokens() githubapp.ConnectTokenRepo { return &connectTokenRepo{s: s} }
 
 // ─── shared helpers ─────────────────────────────────────────────────
 

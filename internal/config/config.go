@@ -72,6 +72,18 @@ type Config struct {
 	// Webhooks configures generic incoming webhook handlers.
 	Webhooks WebhookConfig `yaml:"webhooks"`
 
+	// GitHubApp configures the multi-tenant GitHub App integration that
+	// allows any organisation to install OpsIntelligence from the GitHub
+	// Marketplace (or as a private app) and optionally route events to
+	// their own on-premise OpsIntelligence endpoint.
+	GitHubApp GitHubAppConfig `yaml:"github_app"`
+
+	// GitHubAppConnector configures the outbound WebSocket connection from
+	// THIS instance back to a GitHub App relay. Set this on self-hosted
+	// OpsIntelligence instances that receive events via WebSocket rather than
+	// exposing a public webhook URL.
+	GitHubAppConnector GitHubAppConnectorConfig `yaml:"github_app_connector"`
+
 	// Gmail configures Gmail Pub/Sub watcher settings.
 	Gmail GmailConfig `yaml:"gmail"`
 
@@ -682,6 +694,57 @@ type GitHubWebhookConfig struct {
 	// requiring explicit per-event YAML prompts. The agent will fetch the diff,
 	// run LLM analysis, and post a formal GitHub review for every configured repo.
 	AutoReview bool `yaml:"auto_review,omitempty"`
+}
+
+// GitHubAppConnectorConfig is the client-side config for the outbound
+// WebSocket connector. Set this on a self-hosted OpsIntelligence instance
+// to receive GitHub events pushed from the relay without exposing a public URL.
+type GitHubAppConnectorConfig struct {
+	// Enabled activates the outbound connector. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// RelayURL is the base URL of the OpsIntelligence relay host
+	// (e.g. "https://relay.opsintelligence.example.com").
+	RelayURL string `yaml:"relay_url"`
+
+	// InstallationID is the numeric GitHub App installation_id shown on
+	// the relay's setup page.
+	InstallationID int64 `yaml:"installation_id"`
+
+	// ConnectToken is the one-time token from the relay setup page.
+	// Store in an environment variable and reference via ${MY_VAR}.
+	ConnectToken string `yaml:"connect_token"`
+
+	// ReconnectInterval is the base wait between reconnect attempts
+	// (e.g. "10s"). Default: 10s.
+	ReconnectInterval string `yaml:"reconnect_interval"`
+}
+
+// GitHubAppConfig configures the multi-tenant GitHub App subsystem.
+// See internal/githubapp for the implementation.
+type GitHubAppConfig struct {
+	// Enabled activates the GitHub App subsystem. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// AppID is the numeric GitHub App ID from the App settings page.
+	AppID int64 `yaml:"app_id"`
+
+	// PrivateKeyPath is the path to the App's RSA private key PEM file.
+	PrivateKeyPath string `yaml:"private_key_path"`
+
+	// PrivateKeyPEM is an optional inline RSA private key PEM (use PrivateKeyPath for secrets).
+	PrivateKeyPEM string `yaml:"private_key_pem"`
+
+	// WebhookSecret is the HMAC secret set on the GitHub App webhook settings.
+	WebhookSecret string `yaml:"webhook_secret"`
+
+	// PublicURL is the externally-reachable base URL of this instance.
+	// GitHub redirects org admins to <PublicURL>/api/github-app/setup after install.
+	PublicURL string `yaml:"public_url"`
+
+	// GitHubAPIURL allows overriding the GitHub API base (for GitHub Enterprise Server).
+	// Default: "https://api.github.com".
+	GitHubAPIURL string `yaml:"github_api_url"`
 }
 
 // GmailConfig holds settings for the Gmail Pub/Sub integration.

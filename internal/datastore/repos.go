@@ -1,6 +1,10 @@
 package datastore
 
-import "context"
+import (
+	"context"
+
+	"github.com/opsintelligence/opsintelligence/internal/githubapp"
+)
 
 // Store is the aggregator every driver implements. It exposes each
 // repo plus lifecycle hooks (Ping / Close / Migrate). Upstream code
@@ -33,6 +37,14 @@ type Store interface {
 	Audit() AuditRepo
 	TaskHistory() TaskHistoryRepo
 	OIDCState() OIDCStateRepo
+
+	// GitHubAppInstallations manages GitHub App installation records
+	// (multi-tenant relay registry).
+	GitHubAppInstallations() githubapp.InstallationRepo
+
+	// GitHubAppConnectTokens manages one-time connection tokens used by the
+	// client's OpsIntelligence to authenticate its outbound WebSocket to the relay.
+	GitHubAppConnectTokens() githubapp.ConnectTokenRepo
 }
 
 // UserRepo manages User rows.

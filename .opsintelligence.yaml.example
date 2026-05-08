@@ -432,6 +432,63 @@ auth:
   allow_anonymous_bootstrap: true # auto-disabled after first user
 
 # ─────────────────────────────────────────────
+# GitHub App — multi-tenant automation
+# ─────────────────────────────────────────────
+#
+# Register a GitHub App at https://github.com/settings/apps/new (or at the
+# org level under Settings → GitHub Apps → New GitHub App). Configure:
+#
+#   Webhook URL     : https://<your-host>/api/github-app/webhook
+#   Webhook secret  : the value of OPSINTEL_GITHUB_APP_WEBHOOK_SECRET below
+#   Post-install URL: https://<your-host>/api/github-app/setup
+#   Permissions     : Pull requests (read), Issues (read), Metadata (read),
+#                     Contents (read), Checks (read), Workflows (read)
+#   Events          : Pull requests, Issues, Push, Workflow runs, Check runs,
+#                     Check suites, Installation, Installation repositories
+#
+# After saving, generate a private key from the App settings page (a .pem
+# file). Set OPSINTEL_GITHUB_APP_PRIVATE_KEY_PATH to its path.
+#
+# Organisations that install your App will be redirected to the setup page
+# where they can provide their own on-premise OpsIntelligence endpoint URL
+# and webhook secret. The App then relays every GitHub event to that endpoint.
+# If they skip the setup step, events are handled by this OpsIntelligence instance.
+#
+github_app:
+  enabled: false
+  # Numeric App ID from the GitHub App settings page.
+  app_id: 0
+  # Path to the RSA private key PEM downloaded from the App settings.
+  private_key_path: "${OPSINTEL_GITHUB_APP_PRIVATE_KEY_PATH}"
+  # HMAC secret set on the GitHub App webhook settings page.
+  webhook_secret: "${OPSINTEL_GITHUB_APP_WEBHOOK_SECRET}"
+  # Externally-reachable base URL of THIS instance (used to build the setup URL).
+  public_url: "https://your-opsintelligence-host.example.com"
+  # Optional: override for GitHub Enterprise Server.
+  # github_api_url: "https://github.example.com/api/v3"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub App Connector — client-side (on-premise OpsIntelligence)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Set this on YOUR self-hosted OpsIntelligence instance to receive GitHub events
+# from the relay without exposing a public webhook URL.
+#
+# After installing the GitHub App and completing the setup page, you will receive
+# a connect token and installation_id. Paste them here and restart.
+#
+# Your OpsIntelligence will dial out to the relay over WebSocket (outbound only —
+# no inbound firewall rules needed). GitHub events are pushed to your instance
+# and processed entirely by your local agent.
+#
+github_app_connector:
+  enabled: false
+  relay_url: "https://relay.opsintelligence.example.com"  # the relay host URL
+  installation_id: 0                                        # from the setup page
+  connect_token: "${OPSINTEL_GITHUB_APP_CONNECT_TOKEN}"    # from the setup page
+  reconnect_interval: "10s"
+
+# ─────────────────────────────────────────────
 # Tracing (off by default)
 # ─────────────────────────────────────────────
 tracing:

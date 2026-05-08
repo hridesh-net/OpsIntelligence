@@ -105,6 +105,18 @@ type Server struct {
 	// The gateway's public URL (Tailscale Funnel, TLS, LAN) is inherited automatically.
 	TeamsChannel        *msteams.Channel
 	TeamsMessageHandler channels.MessageHandler
+
+	// GitHubApp, when non-nil, mounts the multi-tenant GitHub App webhook and
+	// setup endpoints. Populate this from cmd/opsintelligence before Start() when
+	// github_app.enabled is true.
+	GitHubApp gitHubAppMounter
+}
+
+// gitHubAppMounter is the minimal interface the gateway needs from the GitHub
+// App handler. Using an interface keeps the gateway package free of a direct
+// import on internal/githubapp.
+type gitHubAppMounter interface {
+	Mount(mux *http.ServeMux)
 }
 
 // NewServer initializes a new Gateway server on the specified port.
@@ -337,6 +349,12 @@ func (s *Server) Start() error {
 		teamsHandler := s.TeamsChannel.GatewayHandler(teamsCtx, s.TeamsMessageHandler)
 		mux.Handle("/teams/", http.StripPrefix("/teams", teamsHandler))
 		log.Printf("channels/msteams: gateway-mounted at /teams/api/messages")
+	}
+
+	// ── GitHub App multi-tenant webhook + setup endpoints ────────────────────
+	if s.GitHubApp != nil {
+		s.GitHubApp.Mount(mux)
+		log.Printf("github-app: webhook mounted at /api/github-app/webhook")
 	}
 
 	if s.Gmail != nil {

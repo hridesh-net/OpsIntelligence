@@ -64,7 +64,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.12" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.13" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -234,6 +234,7 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		localgemmaCmd(flags),
 		prReviewsCmd(flags), // pr-review pool monitoring + control
 		reposCmd(flags),     // repo intelligence: index, scan, users, TUI
+		githubAppCmd(flags), // multi-tenant GitHub App management
 	)
 	return root
 }
@@ -2355,6 +2356,18 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 		if srv.AuthService != nil {
 			srv.AuthService.Tasks = tasks
+		}
+
+		// ── GitHub App relay (this instance IS the relay) ────────────────────────
+		if cfg.GitHubApp.Enabled {
+			if err := attachGitHubAppToGateway(cfg, srv, runner, log); err != nil {
+				log.Warn("github-app: failed to initialize, GitHub App disabled", zap.Error(err))
+			}
+		}
+
+		// ── GitHub App connector (this instance connects TO a relay) ─────────────
+		if cfg.GitHubAppConnector.Enabled {
+			StartGitHubAppConnector(ctx, cfg, runner, log)
 		}
 
 		// Determine public-facing address for the web UI

@@ -8,10 +8,13 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	_ "github.com/opsintelligence/opsintelligence/internal/datastore/drivers" // register sqlite+postgres
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
+	"github.com/opsintelligence/opsintelligence/internal/githubapp"
+	"github.com/opsintelligence/opsintelligence/internal/memory"
 )
 
 // attachAuthToGateway opens the ops-plane datastore, auto-applies
@@ -89,4 +92,112 @@ func openDatastoreForGateway(ctx context.Context, cfg *config.Config) (datastore
 		ConnMaxLifetime: lifetime,
 		Migrations:      "auto",
 	})
+}
+
+// attachGitHubAppToGateway wires the multi-tenant GitHub App handler onto the
+// gateway server. It loads the App's private key, opens the installation store
+// (reusing the datastore already opened for auth when available), and mounts
+// the handler. Safe to call only when cfg.GitHubApp.Enabled is true.
+func attachGitHubAppToGateway(cfg *config.Config, srv *gateway.Server, runner *agent.Runner, log *zap.Logger) error {
+	appCfg := githubapp.Config{
+		Enabled:        cfg.GitHubApp.Enabled,
+		AppID:          cfg.GitHubApp.AppID,
+		PrivateKeyPath: cfg.GitHubApp.PrivateKeyPath,
+		PrivateKeyPEM:  cfg.GitHubApp.PrivateKeyPEM,
+		WebhookSecret:  cfg.GitHubApp.WebhookSecret,
+		PublicURL:      cfg.GitHubApp.PublicURL,
+		GitHubAPIURL:   cfg.GitHubApp.GitHubAPIURL,
+	}
+
+	// Open a dedicated datastore for the GitHub App installations table.
+	// This is kept separate from the auth store closer so the auth path
+	// is not affected if the GitHub App store fails.
+	store, err := openDatastoreForGateway(context.Background(), cfg)
+	if err != nil {
+		return fmt.Errorf("github-app: open datastore: %w", err)
+	}
+	if err := store.Migrate(context.Background()); err != nil {
+		_ = store.Close()
+		return fmt.Errorf("github-app: migrate datastore: %w", err)
+	}
+
+	// Build the AppClient (JWT signer + installation token cache) when a
+	// private key is configured. Used by the setup page to verify installations.
+	var appClient *githubapp.AppClient
+	if cfg.GitHubApp.AppID > 0 && (cfg.GitHubApp.PrivateKeyPath != "" || cfg.GitHubApp.PrivateKeyPEM != "") {
+		key, err := githubapp.LoadPrivateKey(cfg.GitHubApp.PrivateKeyPath, cfg.GitHubApp.PrivateKeyPEM)
+		if err != nil {
+			_ = store.Close()
+			return fmt.Errorf("github-app: load private key: %w", err)
+		}
+		appClient = githubapp.NewAppClient(cfg.GitHubApp.AppID, key, cfg.GitHubApp.GitHubAPIURL)
+	}
+
+	// localRunner bridges the GitHub App handler to the existing agent runner.
+	// Called for installations without a configured on-premise endpoint.
+	var localRunner func(context.Context, string, string, []byte) error
+	if runner != nil {
+		localRunner = func(ctx context.Context, event, deliveryID string, payload []byte) error {
+			prompt := fmt.Sprintf(
+				"GitHub App event: %s (delivery %s)\nProcess this event appropriately for DevOps automation.",
+				event, deliveryID,
+			)
+			msg := memory.Message{
+				Role:    memory.RoleUser,
+				Content: prompt,
+			}
+			_, err := runner.Run(ctx, msg)
+			return err
+		}
+	}
+
+	h := githubapp.New(appCfg,
+		store.GitHubAppInstallations(),
+		store.GitHubAppConnectTokens(),
+		appClient,
+		localRunner,
+		log,
+	)
+	srv.GitHubApp = h
+
+	log.Info("github-app: relay handler initialized",
+		zap.Int64("app_id", cfg.GitHubApp.AppID),
+		zap.String("public_url", cfg.GitHubApp.PublicURL),
+	)
+	return nil
+}
+
+// StartGitHubAppConnector starts the outbound WebSocket connector on this
+// instance so it receives events pushed from a remote relay. Call this when
+// cfg.GitHubAppConnector.Enabled is true. The connector runs until ctx is
+// cancelled (typically on process shutdown).
+func StartGitHubAppConnector(ctx context.Context, cfg *config.Config, runner *agent.Runner, log *zap.Logger) {
+	cc := cfg.GitHubAppConnector
+	connCfg := githubapp.ConnectorConfig{
+		Enabled:           cc.Enabled,
+		RelayURL:          cc.RelayURL,
+		InstallationID:    cc.InstallationID,
+		ConnectToken:      cc.ConnectToken,
+		ReconnectInterval: cc.ReconnectInterval,
+	}
+
+	handler := func(ctx context.Context, env *githubapp.EventEnvelope) error {
+		if runner == nil {
+			return nil
+		}
+		prompt := fmt.Sprintf(
+			"GitHub App event: %s (delivery %s, repo %s)\nProcess this event appropriately.",
+			env.Event, env.DeliveryID, env.Repository,
+		)
+		msg := memory.Message{Role: memory.RoleUser, Content: prompt}
+		_, err := runner.Run(ctx, msg)
+		return err
+	}
+
+	conn := githubapp.NewConnector(connCfg, handler, log)
+	log.Info("github-app connector: starting outbound WebSocket",
+		zap.String("relay", cc.RelayURL),
+		zap.Int64("installation_id", cc.InstallationID),
+	)
+	go conn.Run(ctx)
 }
