@@ -286,7 +286,7 @@ func BuildOnboardSteps(configPath string, existing *config.Config) ([]tui.Onboar
 						huh.NewOption("Google Generative AI", "google"),
 						huh.NewOption("Voyage AI", "voyage"),
 						huh.NewOption("Mistral Native", "mistral"),
-						huh.NewOption("Google Vertex AI", "vertex"),
+						huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 					).
 					Value(&s.embed.provider),
 			))
@@ -905,7 +905,7 @@ func providerSteps(
 		huh.NewOption("OpenAI", "openai"),
 		huh.NewOption("Ollama (Local / Free)", "ollama"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
-		huh.NewOption("Google Vertex AI", "vertex"),
+		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("Groq", "groq"),
 		huh.NewOption("Mistral", "mistral"),
 		huh.NewOption("DeepSeek", "deepseek"),
@@ -932,7 +932,7 @@ func providerSteps(
 		huh.NewOption("xAI (Grok)", "xai"),
 		huh.NewOption("Perplexity", "perplexity"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
-		huh.NewOption("Google Vertex AI", "vertex"),
+		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("NVIDIA NIM", "nvidia"),
 		huh.NewOption("Together AI", "together"),
 		huh.NewOption("HuggingFace (Inference API)", "huggingface"),

@@ -1690,7 +1690,7 @@
     { key: "openrouter", label: "OpenRouter", kind: "openrouter" },
     { key: "huggingface", label: "HuggingFace", kind: "huggingface" },
     { key: "bedrock", label: "AWS Bedrock", kind: "bedrock" },
-    { key: "vertex", label: "Google Vertex", kind: "vertex" },
+    { key: "vertex", label: "Google Vertex / Gemini", kind: "vertex" }
     { key: "ollama", label: "Ollama (local)", kind: "local" },
     { key: "vllm", label: "vLLM (local)", kind: "local" },
     { key: "lm_studio", label: "LM Studio (local)", kind: "local" },
@@ -1782,7 +1782,7 @@
           { key: "project_id", label: "Project ID", type: "text" },
           { key: "location", label: "Location", type: "text" },
           { key: "credentials", label: "Service account JSON path", type: "text" },
-          { key: "default_model", label: "Default model", type: "text" },
+          { key: "default_model", label: "Default model", type: "text", help: "e.g. gemini-2.5-flash, gemini-2.5-pro" },
         ];
       case "local":
       default:
