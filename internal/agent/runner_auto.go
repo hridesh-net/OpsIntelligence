@@ -160,25 +160,24 @@ func (r *Runner) RunAutonomous(ctx context.Context, goal string) (*RunResult, er
 			continue
 		}
 
-		// Execute tool calls
+		// Execute tool calls with bounded concurrency.
 		finished := false
-		for _, tc := range toolCalls {
-			if tc.ToolName == "finish_task" {
+		toolResults := r.executeToolCallsParallel(ctx, toolCalls, new(int)) // no budget limit in auto mode
+		for _, tr := range toolResults {
+			if tr.tc.ToolName == "finish_task" {
 				finished = true
 			}
-
-			result := r.executeTool(ctx, tc)
 
 			toolResultMsg := memory.Message{
 				ID:        uuid.New().String(),
 				SessionID: r.sessionID,
 				Role:      memory.RoleTool,
-				Content:   result,
+				Content:   tr.result,
 				Parts: []provider.ContentPart{
 					{
 						Type:              provider.ContentTypeToolResult,
-						ToolResultID:      tc.ToolUseID,
-						ToolResultContent: result,
+						ToolResultID:      tr.tc.ToolUseID,
+						ToolResultContent: tr.result,
 					},
 				},
 				CreatedAt: time.Now(),

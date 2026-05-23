@@ -103,6 +103,7 @@ type Task struct {
 	SharedNotes []SharedNote
 
 	cancel context.CancelFunc
+	done   chan struct{} // closed when task reaches a terminal status
 }
 
 // Elapsed returns how long the task has run (or ran, if terminal).
@@ -134,6 +135,20 @@ func (t Task) LastEvent() ProgressEvent {
 	return t.Events[len(t.Events)-1]
 }
 
+// TaskEvent is a serializable snapshot of a task lifecycle event.
+type TaskEvent struct {
+	TaskID       string    `json:"task_id"`
+	SubAgentID   string    `json:"sub_agent_id"`
+	SubAgentName string    `json:"sub_agent_name"`
+	Status       string    `json:"status"`
+	Phase        string    `json:"phase,omitempty"`
+	Message      string    `json:"message,omitempty"`
+	Iterations   int       `json:"iterations,omitempty"`
+	Result       string    `json:"result,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	At           time.Time `json:"at"`
+}
+
 // ExecFn runs a sub-agent task synchronously. Implementations should honour
 // ctx cancellation. The first return is the sub-agent's final text
 // response; the second is the number of runner iterations consumed.
@@ -157,7 +172,7 @@ type TaskManager struct {
 	running int
 
 	// MaxConcurrent caps how many async tasks run at once. Requests beyond
-	// the cap block in RunAsync until a slot frees. Values <= 0 default to 8.
+	// the cap block in RunAsync until a slot frees. Values <= 0 default to 4.
 	MaxConcurrent int
 	// RetainLimit bounds how many completed tasks the manager keeps in memory.
 	// Oldest-first eviction; running tasks are never evicted. Values <= 0
@@ -171,6 +186,15 @@ type TaskManager struct {
 	MaxEventsPerTask int
 
 	exec ExecFn
+
+	// taskDone is a broadcast channel that receives a task ID whenever any
+	// task reaches a terminal status. It allows Wait() to block efficiently
+	// instead of polling.
+	taskDone chan string
+
+	// TaskEvents, when set, publishes task lifecycle events to Redis (or
+	// another external observer) so that progress is visible across instances.
+	TaskEvents func(ctx context.Context, ev TaskEvent)
 }
 
 // NewTaskManager returns a manager that uses exec to run each task. exec is
@@ -179,10 +203,11 @@ func NewTaskManager(exec ExecFn) *TaskManager {
 	m := &TaskManager{
 		tasks:            make(map[string]*Task),
 		exec:             exec,
-		MaxConcurrent:    2,
+		MaxConcurrent:    4,
 		RetainLimit:      256,
 		DefaultTimeout:   30 * time.Minute,
 		MaxEventsPerTask: 128,
+		taskDone:         make(chan string, 16),
 	}
 	m.cond = sync.NewCond(&m.mu)
 	return m
@@ -216,6 +241,7 @@ func (m *TaskManager) RunAsync(subAgentID, subAgentName, taskPrompt string, time
 		SubAgentNm: subAgentName,
 		Task:       taskPrompt,
 		Status:     StatusPending,
+		done:       make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -253,6 +279,19 @@ func (m *TaskManager) run(t *Task, timeout time.Duration) {
 	})
 	m.mu.Unlock()
 
+	// Publish start event to external observers.
+	if m.TaskEvents != nil {
+		m.TaskEvents(ctx, TaskEvent{
+			TaskID:       t.ID,
+			SubAgentID:   t.SubAgentID,
+			SubAgentName: t.SubAgentNm,
+			Status:       string(t.Status),
+			Phase:        "start",
+			Message:      "task started",
+			At:           t.StartedAt,
+		})
+	}
+
 	// Cleanup runs second (LIFO): decrements the slot and signals waiters.
 	defer func() {
 		m.mu.Lock()
@@ -265,8 +304,33 @@ func (m *TaskManager) run(t *Task, timeout time.Duration) {
 			Kind:    KindLifecycle,
 			Message: "task " + string(t.Status),
 		})
+		status := t.Status
+		iterations := t.Iterations
+		result := t.Result
+		errMsg := t.Error
 		m.mu.Unlock()
 		cancel()
+		// Notify any Wait() callers that this task is done.
+		close(t.done)
+		select {
+		case m.taskDone <- t.ID:
+		default:
+		}
+		// Publish terminal event to external observers.
+		if m.TaskEvents != nil {
+			m.TaskEvents(context.Background(), TaskEvent{
+				TaskID:       t.ID,
+				SubAgentID:   t.SubAgentID,
+				SubAgentName: t.SubAgentNm,
+				Status:       string(status),
+				Phase:        "terminal",
+				Message:      "task " + string(status),
+				Iterations:   iterations,
+				Result:       result,
+				Error:        errMsg,
+				At:           time.Now(),
+			})
+		}
 	}()
 
 	// Panic recovery runs first (LIFO): stops the panic from crashing the
@@ -321,6 +385,7 @@ func (m *TaskManager) SubmitDirect(ctx context.Context, agentName, taskPrompt st
 		SubAgentNm: agentName,
 		Task:       taskPrompt,
 		Status:     StatusPending,
+		done:       make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -358,6 +423,19 @@ func (m *TaskManager) runDirect(t *Task, fn func(context.Context) (string, error
 	})
 	m.mu.Unlock()
 
+	// Publish start event to external observers.
+	if m.TaskEvents != nil {
+		m.TaskEvents(ctx, TaskEvent{
+			TaskID:       t.ID,
+			SubAgentID:   t.SubAgentID,
+			SubAgentName: t.SubAgentNm,
+			Status:       string(t.Status),
+			Phase:        "start",
+			Message:      "specialist task started",
+			At:           t.StartedAt,
+		})
+	}
+
 	defer func() {
 		m.mu.Lock()
 		m.running--
@@ -369,8 +447,31 @@ func (m *TaskManager) runDirect(t *Task, fn func(context.Context) (string, error
 			Kind:    KindLifecycle,
 			Message: "specialist task " + string(t.Status),
 		})
+		status := t.Status
+		result := t.Result
+		errMsg := t.Error
 		m.mu.Unlock()
 		cancel()
+		// Notify any Wait() callers that this task is done.
+		close(t.done)
+		select {
+		case m.taskDone <- t.ID:
+		default:
+		}
+		// Publish terminal event to external observers.
+		if m.TaskEvents != nil {
+			m.TaskEvents(context.Background(), TaskEvent{
+				TaskID:       t.ID,
+				SubAgentID:   t.SubAgentID,
+				SubAgentName: t.SubAgentNm,
+				Status:       string(status),
+				Phase:        "terminal",
+				Message:      "specialist task " + string(status),
+				Result:       result,
+				Error:        errMsg,
+				At:           time.Now(),
+			})
+		}
 	}()
 
 	defer func() {
@@ -483,6 +584,9 @@ func (m *TaskManager) Active() []Task {
 // elapses, or ctx is cancelled. It returns snapshots of all requested tasks
 // (even unknown ones, marked Status=="" so callers can detect them). Waits
 // with timeout <= 0 default to 5 minutes.
+//
+// Instead of busy-polling, Wait uses a channel-based notification from the
+// task goroutines to sleep efficiently between status checks.
 func (m *TaskManager) Wait(ctx context.Context, ids []string, timeout time.Duration) ([]Task, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("subagents.TaskManager: ids is required")
@@ -491,37 +595,41 @@ func (m *TaskManager) Wait(ctx context.Context, ids []string, timeout time.Durat
 		timeout = 5 * time.Minute
 	}
 	deadline := time.Now().Add(timeout)
-	poll := 100 * time.Millisecond
+
+	pending := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		pending[id] = true
+	}
+	out := make([]Task, 0, len(ids))
 
 	for {
 		m.mu.Lock()
-		out := make([]Task, 0, len(ids))
-		allDone := true
-		for _, id := range ids {
+		for id := range pending {
 			if t, ok := m.tasks[id]; ok {
-				out = append(out, copyTask(t))
-				if !t.Terminal() {
-					allDone = false
+				if t.Terminal() {
+					out = append(out, copyTask(t))
+					delete(pending, id)
 				}
-			} else {
-				out = append(out, Task{ID: id})
-				allDone = false
 			}
+			// Unknown IDs remain in pending and will timeout naturally.
 		}
 		m.mu.Unlock()
-		if allDone {
+
+		if len(pending) == 0 {
 			return out, nil
 		}
+
 		select {
 		case <-ctx.Done():
 			return out, ctx.Err()
-		case <-time.After(poll):
-		}
-		if time.Now().After(deadline) {
+		case <-time.After(time.Until(deadline)):
 			return out, fmt.Errorf("subagents.TaskManager: wait timed out after %s", timeout)
-		}
-		if poll < 2*time.Second {
-			poll *= 2
+		case id := <-m.taskDone:
+			if pending[id] {
+				// Task reached terminal status; loop to collect it.
+				continue
+			}
+			// Another task finished; keep waiting.
 		}
 	}
 }
@@ -659,6 +767,26 @@ func (m *TaskManager) Events(taskID string, sinceIndex int) []ProgressEvent {
 	return out
 }
 
+// ReadContext returns shared notes + applied interventions for a task,
+// formatted as a single string suitable for injection into the child's
+// system prompt or the master's dashboard.
+func (m *TaskManager) ReadContext(taskID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tasks[taskID]
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, n := range t.SharedNotes {
+		parts = append(parts, fmt.Sprintf("[shared-note from=%s at=%s]\n%s", n.From, n.At.Format(time.RFC3339), n.Message))
+	}
+	for _, i := range t.AppliedInterventions {
+		parts = append(parts, fmt.Sprintf("[intervention from=%s at=%s]\n%s", i.From, i.At.Format(time.RFC3339), i.Message))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // Dashboard returns a compact human-readable summary of all currently
 // active tasks (pending + running). Injected into the master agent's
 // system prompt on every iteration so oversight is ambient, not polled.
@@ -696,7 +824,7 @@ func (m *TaskManager) Dashboard() string {
 
 func (m *TaskManager) maxConcurrent() int {
 	if m.MaxConcurrent <= 0 {
-		return 8
+		return 4
 	}
 	return m.MaxConcurrent
 }

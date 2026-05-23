@@ -13,6 +13,7 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/agent"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
+	"github.com/opsintelligence/opsintelligence/internal/redis"
 )
 
 // Job defines a cron task.
@@ -32,6 +33,10 @@ type Daemon struct {
 	log             *zap.Logger
 	persistencePath string
 
+	// Lock provides distributed locking so only one instance runs a job.
+	// Nil = no distributed locking (local-only cron, legacy behavior).
+	Lock *redis.CronLock
+
 	mu sync.Mutex
 }
 
@@ -44,7 +49,10 @@ func NewDaemon(
 	persistencePath string,
 ) *Daemon {
 	return &Daemon{
-		cron:            cron.New(cron.WithSeconds()),
+		cron: cron.New(
+			cron.WithSeconds(),
+			cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
+		),
 		jobs:            jobs,
 		template:        template,
 		log:             logger,
@@ -52,7 +60,9 @@ func NewDaemon(
 	}
 }
 
-func (d *Daemon) Start() error {
+// Start schedules all configured jobs and begins executing them.
+// ctx controls the lifecycle of all jobs: cancelling it stops new job runs.
+func (d *Daemon) Start(ctx context.Context) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -69,10 +79,27 @@ func (d *Daemon) Start() error {
 	}
 
 	for _, j := range allJobs {
-		job := j // Capture variable for closure
+		job := j // capture loop variable
 		_, err := d.cron.AddFunc(job.Schedule, func() {
+			if ctx.Err() != nil {
+				return
+			}
+			// Distributed lock: skip if another instance is running this job.
+			if d.Lock != nil && d.Lock.Enabled() {
+				lockCtx, lockCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer lockCancel()
+				if !d.Lock.Lock(lockCtx, job.ID, 15*time.Minute) {
+					d.log.Info("cron: job skipped (held by another instance)", zap.String("id", job.ID))
+					return
+				}
+				defer func() {
+					unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer unlockCancel()
+					d.Lock.Unlock(unlockCtx, job.ID)
+				}()
+			}
 			d.log.Info("cron: executing job", zap.String("id", job.ID))
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			jobCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 			defer cancel()
 
 			if d.template == nil {
@@ -82,8 +109,7 @@ func (d *Daemon) Start() error {
 			sid := "cron:" + job.ID
 			runner := d.template.WithSession(sid)
 
-			// Run in background without streaming to UI
-			res, err := runner.Run(ctx, memory.Message{
+			res, err := runner.Run(jobCtx, memory.Message{
 				ID:        uuid.New().String(),
 				SessionID: sid,
 				Role:      memory.RoleUser,

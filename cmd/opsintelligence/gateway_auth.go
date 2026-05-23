@@ -15,6 +15,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
+	"github.com/opsintelligence/opsintelligence/internal/redis"
 )
 
 // attachAuthToGateway opens the ops-plane datastore, auto-applies
@@ -28,7 +29,7 @@ import (
 //
 // Errors are fatal for gateway boot — if auth was requested, failing
 // to wire it loudly is safer than silently serving without RBAC.
-func attachAuthToGateway(ctx context.Context, cfg *config.Config, configPath string, log *zap.Logger, srv *gateway.Server) (func() error, error) {
+func attachAuthToGateway(ctx context.Context, cfg *config.Config, configPath string, log *zap.Logger, srv *gateway.Server, redisCache *redis.Cache) (func() error, error) {
 	if cfg == nil || srv == nil {
 		return nil, nil
 	}
@@ -51,7 +52,18 @@ func attachAuthToGateway(ctx context.Context, cfg *config.Config, configPath str
 		return nil, fmt.Errorf("gateway auth: migrate datastore: %w", err)
 	}
 
-	svc, err := gateway.BuildAuthService(ctx, cfg, store, log)
+	// Optionally wrap sessions with Redis cache for fast lookups.
+	var sessionRepo datastore.SessionRepo
+	if redisCache != nil && redisCache.Enabled() {
+		ttl := 5 * time.Minute
+		if d, err := time.ParseDuration(cfg.Redis.CacheTTL); err == nil && d > 0 {
+			ttl = d
+		}
+		sessionRepo = redis.NewSessionCache(store.Sessions(), redisCache, ttl, log)
+		log.Info("redis session cache enabled", zap.Duration("ttl", ttl))
+	}
+
+	svc, err := gateway.BuildAuthService(ctx, cfg, store, sessionRepo, log)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("gateway auth: build auth service: %w", err)

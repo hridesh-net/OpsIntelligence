@@ -118,6 +118,10 @@ type Config struct {
 	// RepoIntel configures the Repo Intelligence feature: per-repo memory,
 	// CVE/bottleneck scanning, and user management.
 	RepoIntel RepoIntelConfig `yaml:"repo_intel"`
+
+	// Redis configures the optional Redis integration for caching,
+	// pub/sub, distributed sessions, and cross-instance coordination.
+	Redis RedisConfig `yaml:"redis"`
 }
 
 // RepoIntelConfig configures the Repo Intelligence subsystem.
@@ -176,6 +180,45 @@ type RepoIntelConfig struct {
 	// ForceClone is deprecated and has no effect. Cloning is now the default
 	// when ClonesDir is configured. Will be removed in a future release.
 	ForceClone bool `yaml:"force_clone"`
+}
+
+// RedisConfig configures the optional Redis integration.
+// When Enabled is false (the default), all Redis features are bypassed
+// and OpsIntelligence runs entirely in-process as before.
+type RedisConfig struct {
+	// Enabled turns on Redis integration. Default: false.
+	Enabled bool `yaml:"enabled"`
+
+	// Addr is a single Redis server address, e.g. "localhost:6379".
+	// Used for standalone Redis. Ignored when Addrs is set.
+	Addr string `yaml:"addr"`
+
+	// Password for Redis AUTH. Empty = no auth.
+	Password string `yaml:"password"`
+
+	// DB selects the Redis logical database (0-15). Default: 0.
+	DB int `yaml:"db"`
+
+	// Addrs is a list of seed addresses for Redis Cluster or Sentinel.
+	// When non-empty, Addr is ignored and cluster/sentinel mode is used.
+	Addrs []string `yaml:"addrs"`
+
+	// MasterName is the Sentinel master name. When set, Sentinel mode is used.
+	MasterName string `yaml:"master_name"`
+
+	// KeyPrefix is prepended to all Redis keys used by OpsIntelligence.
+	// Default: "opsintelligence:".
+	KeyPrefix string `yaml:"key_prefix"`
+
+	// CacheTTL is the default TTL for cached entries. Default: 5m.
+	CacheTTL string `yaml:"cache_ttl"`
+
+	// PubSubChannel is the Redis pub/sub channel name for cross-instance
+	// gateway broadcasts and agent events. Default: "opsintelligence:events".
+	PubSubChannel string `yaml:"pubsub_channel"`
+
+	// MaxRetries is the max retry attempts for Redis commands. Default: 3.
+	MaxRetries int `yaml:"max_retries"`
 }
 
 // DatastoreConfig configures the ops-plane persistence backend.
@@ -1657,6 +1700,11 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Tracing.SampleRatio < 0 || cfg.Tracing.SampleRatio > 1 {
 		issues = append(issues, "tracing.sample_ratio must be between 0 and 1")
+	}
+	if cfg.Redis.Enabled {
+		if strings.TrimSpace(cfg.Redis.Addr) == "" && len(cfg.Redis.Addrs) == 0 {
+			issues = append(issues, "redis.addr or redis.addrs is required when redis.enabled is true")
+		}
 	}
 
 	if len(issues) > 0 {

@@ -762,20 +762,19 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			}, nil
 		}
 
-		// Execute tool calls and collect results.
-		for _, tc := range toolCalls {
-			result := r.boundedToolExecute(ctx, tc, &toolBudgetUsed)
-
+		// Execute tool calls with bounded concurrency and collect results.
+		toolResults := r.executeToolCallsParallel(ctx, toolCalls, &toolBudgetUsed)
+		for _, tr := range toolResults {
 			toolResultMsg := memory.Message{
 				ID:        uuid.New().String(),
 				SessionID: r.sessionID,
 				Role:      memory.RoleTool,
-				Content:   result,
+				Content:   tr.result,
 				Parts: []provider.ContentPart{
 					{
 						Type:              provider.ContentTypeToolResult,
-						ToolResultID:      tc.ToolUseID,
-						ToolResultContent: result,
+						ToolResultID:      tr.tc.ToolUseID,
+						ToolResultContent: tr.result,
 					},
 				},
 				CreatedAt: time.Now(),
@@ -909,6 +908,47 @@ func (r *Runner) boundedToolExecute(ctx context.Context, tc provider.ContentPart
 		*toolBudgetUsed++
 	}
 	return r.executeTool(ctx, tc)
+}
+
+// toolCallResult pairs a tool call with its execution result.
+type toolCallResult struct {
+	tc     provider.ContentPart
+	result string
+}
+
+// executeToolCallsParallel runs tool calls with bounded concurrency (up to 4
+// at a time) and returns results in the same order as the input slice. This
+// preserves the message ordering that the LLM expects while reducing wall-
+// clock time when multiple independent tools are requested in one turn.
+func (r *Runner) executeToolCallsParallel(ctx context.Context, toolCalls []provider.ContentPart, toolBudgetUsed *int) []toolCallResult {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	// Fast path: single tool call doesn't need goroutines.
+	if len(toolCalls) == 1 {
+		return []toolCallResult{{tc: toolCalls[0], result: r.boundedToolExecute(ctx, toolCalls[0], toolBudgetUsed)}}
+	}
+
+	const maxParallel = 4
+	results := make([]toolCallResult, len(toolCalls))
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	var budgetMu sync.Mutex
+
+	for i, tc := range toolCalls {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, tc provider.ContentPart) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			budgetMu.Lock()
+			res := r.boundedToolExecute(ctx, tc, toolBudgetUsed)
+			budgetMu.Unlock()
+			results[idx] = toolCallResult{tc: tc, result: res}
+		}(i, tc)
+	}
+	wg.Wait()
+	return results
 }
 
 // executeTool runs a single tool call and returns the result string.
@@ -1812,20 +1852,20 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 			return
 		}
 
-		for _, tc := range toolCalls {
-			inputJSON, _ := json.Marshal(tc.ToolInput)
-			handler.OnToolCall(tc.ToolName, inputJSON)
-			result := r.boundedToolExecute(ctx, tc, &toolBudgetUsed)
-			handler.OnToolResult(tc.ToolName, result)
+		toolResults := r.executeToolCallsParallel(ctx, toolCalls, &toolBudgetUsed)
+		for _, tr := range toolResults {
+			inputJSON, _ := json.Marshal(tr.tc.ToolInput)
+			handler.OnToolCall(tr.tc.ToolName, inputJSON)
+			handler.OnToolResult(tr.tc.ToolName, tr.result)
 
 			toolMsg := memory.Message{
 				ID: uuid.New().String(), SessionID: r.sessionID, Role: memory.RoleTool,
-				Content: result,
+				Content: tr.result,
 				Parts: []provider.ContentPart{
 					{
 						Type:              provider.ContentTypeToolResult,
-						ToolResultID:      tc.ToolUseID,
-						ToolResultContent: result,
+						ToolResultID:      tr.tc.ToolUseID,
+						ToolResultContent: tr.result,
 					},
 				},
 				CreatedAt: time.Now(),
@@ -2298,10 +2338,10 @@ func (r *Runner) HandleChatCommand(ctx context.Context, text string, replyFn cha
 			return true
 		}
 		_ = replyFn(fmt.Sprintf("🚀 Starting autonomous agent in background. Goal: %s", goal))
-		// Fork a child runner so the goroutine has its own per-turn scratch fields
-		// (localIntelScratch, localIntelRoutingTools, turnAuditPolicyHash, etc.).
-		// Shared state (provider, tools, memory) is safe for concurrent use.
-		child := r.WithSession(r.sessionID)
+		// Use a dedicated session ID so the autonomous loop does not race
+		// with the interactive runner on working memory.
+		autoSessionID := r.sessionID + ":auto:" + uuid.New().String()[:8]
+		child := r.WithSession(autoSessionID)
 		go func() {
 			res, err := child.RunAutonomous(context.Background(), goal)
 			if err != nil {

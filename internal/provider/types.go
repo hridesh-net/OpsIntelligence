@@ -305,46 +305,44 @@ func CollectStream(ctx context.Context, ch <-chan StreamEvent) (*CompletionRespo
 	var usage *TokenUsage
 	var finishReason FinishReason
 
-	for event := range ch {
+	for {
 		select {
 		case <-ctx.Done():
-			// Drain remaining events
 			go DrainStream(ch)
 			return nil, ctx.Err()
-		default:
-		}
-
-		switch event.Type {
-		case StreamEventText:
-			text += event.Text
-		case StreamEventToolUse:
-			if event.ToolUse != nil {
-				toolCalls = append(toolCalls, *event.ToolUse)
+		case event, ok := <-ch:
+			if !ok {
+				content := []ContentPart{}
+				if text != "" {
+					content = append(content, ContentPart{Type: ContentTypeText, Text: text})
+				}
+				content = append(content, toolCalls...)
+				resp := &CompletionResponse{
+					Content:      content,
+					FinishReason: finishReason,
+				}
+				if usage != nil {
+					resp.Usage = *usage
+				}
+				return resp, nil
 			}
-		case StreamEventDone:
-			if event.Usage != nil {
-				usage = event.Usage
+			switch event.Type {
+			case StreamEventText:
+				text += event.Text
+			case StreamEventToolUse:
+				if event.ToolUse != nil {
+					toolCalls = append(toolCalls, *event.ToolUse)
+				}
+			case StreamEventDone:
+				if event.Usage != nil {
+					usage = event.Usage
+				}
+				finishReason = event.FinishReason
+			case StreamEventError:
+				return nil, event.Err
 			}
-			finishReason = event.FinishReason
-		case StreamEventError:
-			return nil, event.Err
 		}
 	}
-
-	content := []ContentPart{}
-	if text != "" {
-		content = append(content, ContentPart{Type: ContentTypeText, Text: text})
-	}
-	content = append(content, toolCalls...)
-
-	resp := &CompletionResponse{
-		Content:      content,
-		FinishReason: finishReason,
-	}
-	if usage != nil {
-		resp.Usage = *usage
-	}
-	return resp, nil
 }
 
 // StreamToWriter streams text events to the provided writer.
@@ -355,47 +353,46 @@ func StreamToWriter(ctx context.Context, ch <-chan StreamEvent, w io.Writer) (*C
 	var usage *TokenUsage
 	var finishReason FinishReason
 
-	for event := range ch {
+	for {
 		select {
 		case <-ctx.Done():
 			go DrainStream(ch)
 			return nil, ctx.Err()
-		default:
+		case event, ok := <-ch:
+			if !ok {
+				content := []ContentPart{}
+				if text != "" {
+					content = append(content, ContentPart{Type: ContentTypeText, Text: text})
+				}
+				content = append(content, toolCalls...)
+				resp := &CompletionResponse{
+					Content:      content,
+					FinishReason: finishReason,
+				}
+				if usage != nil {
+					resp.Usage = *usage
+				}
+				return resp, nil
+			}
+			switch event.Type {
+			case StreamEventText:
+				text += event.Text
+				if _, err := io.WriteString(w, event.Text); err != nil {
+					go DrainStream(ch)
+					return nil, err
+				}
+			case StreamEventToolUse:
+				if event.ToolUse != nil {
+					toolCalls = append(toolCalls, *event.ToolUse)
+				}
+			case StreamEventDone:
+				if event.Usage != nil {
+					usage = event.Usage
+				}
+				finishReason = event.FinishReason
+			case StreamEventError:
+				return nil, event.Err
+			}
 		}
-
-		switch event.Type {
-		case StreamEventText:
-			text += event.Text
-			if _, err := io.WriteString(w, event.Text); err != nil {
-				go DrainStream(ch)
-				return nil, err
-			}
-		case StreamEventToolUse:
-			if event.ToolUse != nil {
-				toolCalls = append(toolCalls, *event.ToolUse)
-			}
-		case StreamEventDone:
-			if event.Usage != nil {
-				usage = event.Usage
-			}
-			finishReason = event.FinishReason
-		case StreamEventError:
-			return nil, event.Err
-		}
 	}
-
-	content := []ContentPart{}
-	if text != "" {
-		content = append(content, ContentPart{Type: ContentTypeText, Text: text})
-	}
-	content = append(content, toolCalls...)
-
-	resp := &CompletionResponse{
-		Content:      content,
-		FinishReason: finishReason,
-	}
-	if usage != nil {
-		resp.Usage = *usage
-	}
-	return resp, nil
 }

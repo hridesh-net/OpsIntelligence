@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -39,7 +38,22 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Gateway handles local/remote auth via Bearer token
+		// Allow same-origin and localhost connections. In production,
+		// the gateway Bearer token check provides the real auth boundary,
+		// but restricting origins prevents trivial CSRF-style WS probes.
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		// Allow localhost origins for development.
+		if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "https://localhost:") {
+			return true
+		}
+		// Allow same-origin (no origin header or matches host).
+		if strings.Contains(origin, r.Host) {
+			return true
+		}
+		return false
 	},
 }
 
@@ -110,6 +124,10 @@ type Server struct {
 	// setup endpoints. Populate this from cmd/opsintelligence before Start() when
 	// github_app.enabled is true.
 	GitHubApp gitHubAppMounter
+
+	// serverCtx is cancelled by Stop() to signal all background goroutines.
+	serverCtx    context.Context
+	serverCancel context.CancelFunc
 }
 
 // gitHubAppMounter is the minimal interface the gateway needs from the GitHub
@@ -122,10 +140,13 @@ type gitHubAppMounter interface {
 // NewServer initializes a new Gateway server on the specified port.
 // maxWebSocketClients is passed to the hub (0 = unlimited concurrent WS clients).
 func NewServer(port, maxWebSocketClients int) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		Hub:      NewHub(maxWebSocketClients),
-		Port:     port,
-		A2ATasks: newA2ATaskStore(),
+		Hub:          NewHub(maxWebSocketClients),
+		Port:         port,
+		A2ATasks:     newA2ATaskStore(),
+		serverCtx:    ctx,
+		serverCancel: cancel,
 	}
 }
 
@@ -155,20 +176,9 @@ func (s *Server) withCorrelation(h http.HandlerFunc) http.HandlerFunc {
 
 // Start begins listening on the configured port.
 func (s *Server) Start() error {
-	go s.Hub.Run()
+	s.Hub.Logger = s.logger()
+	go s.Hub.Run(s.serverCtx)
 	metrics.Default().SetGatewayUp(true)
-
-	// Start automation workers if configured
-	if s.Config != nil && s.Config.Gmail.Enabled {
-		// NewGmailWatcher expects (config, logger) - we might need to pass the logger to Server
-		// For now, let's assume we can use a basic logger or pass it in later.
-		// Actually, let's just initialize it in main.go and set it on the Server.
-		if s.Gmail != nil {
-			if err := s.Gmail.Start(context.Background()); err != nil {
-				log.Printf("gmail: failed to start watcher: %v", err)
-			}
-		}
-	}
 
 	mux := http.NewServeMux()
 
@@ -178,7 +188,7 @@ func (s *Server) Start() error {
 	if s.Config != nil {
 		publicDir := filepath.Join(s.Config.StateDir, "workspace", "public")
 		if err := os.MkdirAll(publicDir, 0o755); err != nil {
-			log.Printf("gateway: workspace/public: %v", err)
+			s.logger().Warn("gateway: workspace/public mkdir failed", zap.Error(err))
 		} else {
 			mux.Handle("/workspace/", http.StripPrefix("/workspace/", http.FileServer(http.Dir(publicDir))))
 		}
@@ -345,21 +355,21 @@ func (s *Server) Start() error {
 	// webhooks share the same public HTTPS endpoint (Tailscale Funnel, TLS cert,
 	// or cloud LB). Teams webhook URL: <gateway-url>/teams/api/messages
 	if s.TeamsChannel != nil && s.TeamsMessageHandler != nil {
-		teamsCtx := context.Background()
-		teamsHandler := s.TeamsChannel.GatewayHandler(teamsCtx, s.TeamsMessageHandler)
+		teamsHandler := s.TeamsChannel.GatewayHandler(s.serverCtx, s.TeamsMessageHandler)
 		mux.Handle("/teams/", http.StripPrefix("/teams", teamsHandler))
-		log.Printf("channels/msteams: gateway-mounted at /teams/api/messages")
+		s.logger().Info("channels/msteams: gateway-mounted at /teams/api/messages")
 	}
 
 	// ── GitHub App multi-tenant webhook + setup endpoints ────────────────────
 	if s.GitHubApp != nil {
 		s.GitHubApp.Mount(mux)
-		log.Printf("github-app: webhook mounted at /api/github-app/webhook")
+		s.logger().Info("github-app: webhook mounted at /api/github-app/webhook")
 	}
 
+	// ── Automation workers ────────────────────────────────────────────────────
 	if s.Gmail != nil {
-		if err := s.Gmail.Start(context.Background()); err != nil {
-			log.Printf("Error starting Gmail watcher: %v", err)
+		if err := s.Gmail.Start(s.serverCtx); err != nil {
+			s.logger().Warn("gmail: failed to start watcher", zap.Error(err))
 		}
 	}
 
@@ -374,15 +384,16 @@ func (s *Server) Start() error {
 		// need an extra auth key — their existing Tailscale login is used instead.
 		hasAuthKey := strings.TrimSpace(os.Getenv("TS_AUTHKEY")) != ""
 		if !hasAuthKey && s.Tailscale.Mode == "funnel" {
-			log.Printf("gateway: TS_AUTHKEY not set — falling back to host Tailscale Funnel (embedded tsnet needs a separate auth key)")
-			log.Printf("gateway: binding on 0.0.0.0%s, then running `tailscale funnel %d` via host Tailscale", addr, s.Port)
+			s.logger().Warn("gateway: TS_AUTHKEY not set — falling back to host Tailscale Funnel (embedded tsnet needs a separate auth key)")
+			s.logger().Info("gateway: binding on loopback, running `tailscale funnel` via host Tailscale",
+				zap.Int("port", s.Port))
 			fullAddr := fmt.Sprintf("0.0.0.0%s", addr)
 			s.HTTPServer = &http.Server{
 				Addr:    fullAddr,
 				Handler: mux,
 			}
-			go s.startHostFunnel(s.Port)
-			log.Printf("OpsIntelligence gateway + web UI listening on http://%s", fullAddr)
+			go s.startHostFunnel(s.serverCtx, s.Port)
+			s.logger().Info("OpsIntelligence gateway listening", zap.String("addr", "http://"+fullAddr))
 			return s.HTTPServer.ListenAndServe()
 		}
 
@@ -411,7 +422,7 @@ func (s *Server) Start() error {
 		go func() {
 			lc, err := s.TS.LocalClient()
 			if err != nil {
-				log.Printf("OpsIntelligence gateway: could not get Tailscale local client: %v", err)
+				s.logger().Error("gateway: could not get Tailscale local client", zap.Error(err))
 				return
 			}
 			scheme := "http"
@@ -420,24 +431,38 @@ func (s *Server) Start() error {
 			}
 			deadline := time.Now().Add(60 * time.Second)
 			for time.Now().Before(deadline) {
-				st, err := lc.Status(context.Background())
-				if err == nil && st.CurrentTailnet != nil && st.CurrentTailnet.MagicDNSSuffix != "" {
+				st, err := lc.Status(s.serverCtx)
+				if err != nil {
+					if s.serverCtx.Err() != nil {
+						return
+					}
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				if st.CurrentTailnet != nil && st.CurrentTailnet.MagicDNSSuffix != "" {
 					suffix := st.CurrentTailnet.MagicDNSSuffix
 					publicURL := fmt.Sprintf("%s://%s.%s", scheme, tsHostname, suffix)
-					log.Printf("OpsIntelligence gateway public URL (Tailscale %s): %s", s.Tailscale.Mode, publicURL)
+					s.logger().Info("OpsIntelligence gateway public URL",
+						zap.String("mode", s.Tailscale.Mode),
+						zap.String("url", publicURL),
+					)
 					if s.Tailscale.Mode == "funnel" {
-						log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
-						log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+						s.logger().Info("  Teams webhook endpoint", zap.String("url", publicURL+"/teams/api/messages"))
+						s.logger().Info("  GitHub webhook endpoint", zap.String("url", publicURL+"/api/webhook/github"))
 					}
 					return
 				}
 				time.Sleep(2 * time.Second)
 			}
-			log.Printf("OpsIntelligence gateway: Tailscale %s mode active but MagicDNS suffix unavailable after 60s — check Tailscale auth", s.Tailscale.Mode)
+			s.logger().Warn("gateway: Tailscale MagicDNS suffix unavailable after 60s — check Tailscale auth",
+				zap.String("mode", s.Tailscale.Mode))
 		}()
 
 		s.HTTPServer = &http.Server{Handler: mux}
-		log.Printf("OpsIntelligence gateway + web UI listening via Tailscale (%s) on %s", s.Tailscale.Mode, addr)
+		s.logger().Info("OpsIntelligence gateway listening via Tailscale",
+			zap.String("mode", s.Tailscale.Mode),
+			zap.String("addr", addr),
+		)
 		return s.HTTPServer.Serve(ln)
 	}
 
@@ -457,16 +482,19 @@ func (s *Server) Start() error {
 	// so the host machine's Tailscale node exposes the port publicly over HTTPS.
 	// This avoids the embedded tsnet node and separate auth key requirement.
 	if s.Tailscale.Mode == "funnel" {
-		go s.startHostFunnel(s.Port)
+		go s.startHostFunnel(s.serverCtx, s.Port)
 	}
 
-	log.Printf("OpsIntelligence gateway + web UI listening on http://%s", fullAddr)
+	s.logger().Info("OpsIntelligence gateway listening", zap.String("addr", "http://"+fullAddr))
 	return s.HTTPServer.ListenAndServe()
 }
 
 // Stop safely shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
-	log.Printf("Stopping gateway...")
+	s.logger().Info("gateway: stopping")
+	if s.serverCancel != nil {
+		s.serverCancel()
+	}
 	metrics.Default().SetGatewayUp(false)
 	if s.TS != nil {
 		s.TS.Close()
@@ -496,10 +524,11 @@ func (s *Server) Stop(ctx context.Context) error {
 // Tailscale installation, then logs the resulting public HTTPS URL. This is
 // the non-embedded path: the gateway binds on loopback/LAN and the host
 // Tailscale node exposes it to the internet.
-func (s *Server) startHostFunnel(port int) {
+func (s *Server) startHostFunnel(ctx context.Context, port int) {
 	bin := resolveHostTailscaleBin()
 	if bin == "" {
-		log.Printf("gateway: tailscale.mode=funnel but Tailscale CLI not found — run `tailscale funnel %d` manually", port)
+		s.logger().Warn("gateway: Tailscale CLI not found — run manually",
+			zap.String("cmd", fmt.Sprintf("tailscale funnel %d", port)))
 		return
 	}
 
@@ -511,25 +540,31 @@ func (s *Server) startHostFunnel(port int) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		log.Printf("gateway: `tailscale funnel %s` failed to start: %v", portStr, err)
+		s.logger().Error("gateway: tailscale funnel failed to start", zap.String("port", portStr), zap.Error(err))
 		return
 	}
 	s.hostFunnelMu.Lock()
 	s.hostFunnelCmd = cmd
 	s.hostFunnelPort = port
 	s.hostFunnelMu.Unlock()
-	log.Printf("gateway: Tailscale Funnel child started on port %s (pid %d)", portStr, cmd.Process.Pid)
+	s.logger().Info("gateway: Tailscale Funnel child started",
+		zap.String("port", portStr),
+		zap.Int("pid", cmd.Process.Pid),
+	)
 	go func() {
-		if err := cmd.Wait(); err != nil {
-			log.Printf("gateway: tailscale funnel exited: %v", err)
+		if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+			s.logger().Warn("gateway: tailscale funnel exited", zap.Error(err))
 		}
 	}()
 
 	// Resolve and log the public URL from host Tailscale status.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		stCmd := exec.CommandContext(ctx, bin, "status", "--json")
+		if ctx.Err() != nil {
+			return
+		}
+		cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		stCmd := exec.CommandContext(cmdCtx, bin, "status", "--json")
 		stCmd.Env = hostTailscaleEnv(os.Environ(), bin)
 		stOut, stErr := stCmd.Output()
 		cancel()
@@ -545,14 +580,15 @@ func (s *Server) startHostFunnel(port int) {
 		if json.Unmarshal(stOut, &st) == nil && strings.TrimSpace(st.Self.DNSName) != "" {
 			host := strings.TrimSuffix(strings.TrimSpace(st.Self.DNSName), ".")
 			publicURL := fmt.Sprintf("https://%s", host)
-			log.Printf("OpsIntelligence gateway public URL (host Tailscale Funnel): %s", publicURL)
-			log.Printf("  Bot Framework Teams webhook: %s/teams/api/messages", publicURL)
-			log.Printf("  GitHub webhook:              %s/api/webhook/github", publicURL)
+			s.logger().Info("OpsIntelligence gateway public URL (host Tailscale Funnel)",
+				zap.String("url", publicURL))
+			s.logger().Info("  Teams webhook endpoint", zap.String("url", publicURL+"/teams/api/messages"))
+			s.logger().Info("  GitHub webhook endpoint", zap.String("url", publicURL+"/api/webhook/github"))
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	log.Printf("gateway: Tailscale Funnel started but could not resolve public hostname")
+	s.logger().Warn("gateway: Tailscale Funnel started but could not resolve public hostname")
 }
 
 // stopHostFunnel tears down the host `tailscale funnel` on the given port.
@@ -567,11 +603,18 @@ func (s *Server) stopHostFunnel(port int) {
 	off1 := exec.Command(bin, "funnel", "--https="+portStr, "off")
 	off1.Env = hostTailscaleEnv(os.Environ(), bin)
 	if out, err := off1.CombinedOutput(); err != nil {
-		log.Printf("gateway: `tailscale funnel --https=%s off` failed (%v: %s), trying `tailscale funnel off`", portStr, err, strings.TrimSpace(string(out)))
+		s.logger().Warn("gateway: tailscale funnel --https off failed, retrying",
+			zap.String("port", portStr),
+			zap.Error(err),
+			zap.String("output", strings.TrimSpace(string(out))),
+		)
 		off2 := exec.Command(bin, "funnel", "off")
 		off2.Env = hostTailscaleEnv(os.Environ(), bin)
 		if out2, err2 := off2.CombinedOutput(); err2 != nil {
-			log.Printf("gateway: `tailscale funnel off` failed: %v — %s", err2, strings.TrimSpace(string(out2)))
+			s.logger().Error("gateway: tailscale funnel off failed",
+				zap.Error(err2),
+				zap.String("output", strings.TrimSpace(string(out2))),
+			)
 		}
 	}
 }
@@ -775,46 +818,47 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	s.logger().Info("webhook receive",
 		append(correlation.Fields(ctx), zap.String("path", path))...,
 	)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
 
 	if s.Runner == nil {
 		http.Error(w, `{"error":"agent not initialised"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	sessionID := "webhook:" + path + ":" + uuid.New().String()
-	ctx = correlation.WithSessionID(ctx, sessionID)
-	runner := s.Runner.WithSession(sessionID)
+	// Background the agent execution so the HTTP response returns immediately.
+	// This prevents webhook callers (e.g. GitHub) from timing out and frees
+	// the HTTP handler pool under load.
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
 
-	res, err := runner.Run(ctx, memory.Message{
-		ID:        uuid.New().String(),
-		SessionID: sessionID,
-		Role:      memory.RoleUser,
-		Content:   prompt,
-		CreatedAt: time.Now(),
-	})
+		sessionID := "webhook:" + path + ":" + uuid.New().String()
+		ctx = correlation.WithSessionID(ctx, sessionID)
+		runner := s.Runner.WithSession(sessionID)
 
-	if err != nil {
-		s.logger().Error("webhook agent failed",
-			append(correlation.Fields(ctx), zap.Error(err))...,
-		)
-		http.Error(w, fmt.Sprintf(`{"error":"agent execution failed","details":"%v"}`, err), http.StatusInternalServerError)
-		return
-	}
+		res, err := runner.Run(ctx, memory.Message{
+			ID:        uuid.New().String(),
+			SessionID: sessionID,
+			Role:      memory.RoleUser,
+			Content:   prompt,
+			CreatedAt: time.Now(),
+		})
 
-	resp := map[string]interface{}{
-		"status":     "success",
-		"iterations": res.Iterations,
-	}
-
-	// If delivery is requested, the agent's response is already in memory/last message
-	// The implementation of 'deliver: true' usually involves the agent itself calling
-	// a message tool, but if we want it automatic, we'd trigger it here.
-	// For now, we return 200 OK.
+		if err != nil {
+			s.logger().Error("webhook agent failed",
+				append(correlation.Fields(ctx), zap.Error(err))...,
+			)
+		} else {
+			s.logger().Info("webhook agent finished",
+				append(correlation.Fields(ctx), zap.Int("iterations", res.Iterations))...,
+			)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "accepted",
+	})
 }
 
 // buildWebhookRouter wires a webhookadapter.Router when any adapter is
@@ -934,7 +978,9 @@ func (h *sseStreamHandler) OnError(err error) {
 func serveWs(hub *Hub, logger *zap.Logger, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("gateway/server upgrade error:", err)
+		if logger != nil {
+			logger.Error("gateway: websocket upgrade failed", zap.Error(err))
+		}
 		return
 	}
 

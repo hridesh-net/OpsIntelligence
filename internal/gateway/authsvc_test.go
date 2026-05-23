@@ -57,7 +57,7 @@ func newTestAuthService(t *testing.T, cfg *config.Config) (*gateway.AuthService,
 		t.Fatalf("write cfg: %v", err)
 	}
 
-	svc, err := gateway.BuildAuthService(context.Background(), cfg, store, nil)
+	svc, err := gateway.BuildAuthService(context.Background(), cfg, store, nil, nil)
 	if err != nil {
 		t.Fatalf("build auth service: %v", err)
 	}

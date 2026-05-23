@@ -1,7 +1,10 @@
 package gateway
 
 import (
-	"log"
+	"context"
+	"time"
+
+	"go.uber.org/zap"
 )
 
 // registerOp is a registration handshake: ok receives true when the client
@@ -15,6 +18,14 @@ type registerOp struct {
 type Hub struct {
 	// MaxWSClients caps concurrent registrations; 0 = unlimited.
 	MaxWSClients int
+
+	// Logger is the structured logger used by the hub. Falls back to nop when nil.
+	Logger *zap.Logger
+
+	// OnBroadcast is called synchronously for every message that is broadcast
+	// locally. Use it to forward messages to Redis pub/sub for cross-instance
+	// propagation. Nil = no hook.
+	OnBroadcast func([]byte)
 
 	// Registered clients.
 	clients map[*Client]bool
@@ -39,9 +50,35 @@ func NewHub(maxWebSocketClients int) *Hub {
 	}
 }
 
-func (h *Hub) Run() {
+func (h *Hub) log() *zap.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return zap.NewNop()
+}
+
+// Broadcast sends a message to all connected local clients.
+// If OnBroadcast is set, it is also invoked before local delivery.
+func (h *Hub) Broadcast(msg []byte) {
+	if h.OnBroadcast != nil {
+		h.OnBroadcast(msg)
+	}
+	select {
+	case h.broadcast <- msg:
+	default:
+		// Channel full — drop message rather than block caller.
+	}
+}
+
+// Run processes hub events until ctx is cancelled.
+func (h *Hub) Run(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			for client := range h.clients {
+				close(client.Send)
+			}
+			return
 		case op := <-h.register:
 			if h.MaxWSClients > 0 && len(h.clients) >= h.MaxWSClients {
 				op.ok <- false
@@ -49,20 +86,29 @@ func (h *Hub) Run() {
 			}
 			h.clients[op.client] = true
 			op.ok <- true
-			log.Printf("gateway/hub: client %s registered. Total active: %d", op.client.ID, len(h.clients))
+			h.log().Info("gateway/hub: client registered",
+				zap.String("client_id", op.client.ID),
+				zap.Int("total_active", len(h.clients)),
+			)
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.Send)
-				log.Printf("gateway/hub: client %s unregistered. Total active: %d", client.ID, len(h.clients))
+				h.log().Info("gateway/hub: client unregistered",
+					zap.String("client_id", client.ID),
+					zap.Int("total_active", len(h.clients)),
+				)
 			}
 		case message := <-h.broadcast:
 			for client := range h.clients {
 				select {
 				case client.Send <- message:
-				default:
-					close(client.Send)
-					delete(h.clients, client)
+				case <-time.After(100 * time.Millisecond):
+					// Client's send channel is back-pressured. Log and drop
+					// this message rather than closing the connection.
+					h.log().Warn("gateway/hub: client send back-pressured, dropping message",
+						zap.String("client_id", client.ID),
+					)
 				}
 			}
 		}

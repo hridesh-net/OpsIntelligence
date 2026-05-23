@@ -47,6 +47,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/provider/anthropic"
+	"github.com/opsintelligence/opsintelligence/internal/redis"
 	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
 	"github.com/opsintelligence/opsintelligence/internal/provider/catalogs"
 	"github.com/opsintelligence/opsintelligence/internal/provider/ollama"
@@ -1053,6 +1054,14 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 				return err
 			}
 
+			redisClient, redisCache, redisPubSub, err := initRedis(cfg, log)
+			if err != nil {
+				log.Warn("redis initialization failed", zap.Error(err))
+			}
+			if redisClient != nil {
+				defer redisClient.Close()
+			}
+
 			log.Info("Starting OpsIntelligence Gateway (foreground)...",
 				zap.String("host", cfg.Gateway.Host),
 				zap.Int("port", cfg.Gateway.Port),
@@ -1073,7 +1082,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 			}
 
 			authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv)
+			storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv, redisCache)
 			authCancel()
 			if err != nil {
 				return err
@@ -1084,6 +1093,20 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 						log.Warn("gateway datastore close", zap.Error(err))
 					}
 				}()
+			}
+
+			// Start Redis hub bridge for cross-instance WebSocket broadcasts.
+			if redisPubSub != nil {
+				hubBridge := redis.NewHubBridge(redisPubSub, log)
+				cancelBridge := hubBridge.Subscribe(context.Background(), func(msg []byte) {
+					srv.Hub.Broadcast(msg)
+				})
+				defer cancelBridge()
+				// Publish local broadcasts to Redis so other instances receive them.
+				srv.Hub.OnBroadcast = func(msg []byte) {
+					_ = hubBridge.Publish(context.Background(), redis.HubMessage{Payload: msg})
+				}
+				log.Info("redis hub bridge active")
 			}
 
 			if cfg.Gmail.Enabled {
@@ -1270,6 +1293,36 @@ func mcpClientConfigsFromYAML(in []config.MCPClientConfig) []mcp.ClientConfig {
 	return out
 }
 
+// initRedis creates the Redis client, cache, and pubsub from config.
+// Returns (nil, nil, nil, nil) when Redis is disabled. Errors are non-fatal
+// — the caller logs the error and continues without Redis.
+func initRedis(cfg *config.Config, log *zap.Logger) (*redis.Client, *redis.Cache, *redis.PubSub, error) {
+	if !cfg.Redis.Enabled {
+		return nil, nil, nil, nil
+	}
+	rc := redis.Config{
+		Enabled:       cfg.Redis.Enabled,
+		Addr:          cfg.Redis.Addr,
+		Password:      cfg.Redis.Password,
+		DB:            cfg.Redis.DB,
+		Addrs:         cfg.Redis.Addrs,
+		MasterName:    cfg.Redis.MasterName,
+		KeyPrefix:     cfg.Redis.KeyPrefix,
+		PubSubChannel: cfg.Redis.PubSubChannel,
+		MaxRetries:    cfg.Redis.MaxRetries,
+	}
+	if d, err := time.ParseDuration(cfg.Redis.CacheTTL); err == nil && d > 0 {
+		rc.CacheTTL = d
+	}
+	client, err := redis.NewClient(rc, log)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cache := redis.NewCache(client, log)
+	pubsub := redis.NewPubSub(client, log)
+	return client, cache, pubsub, nil
+}
+
 func loadConfig(path string, log *zap.Logger) (*config.Config, error) {
 	if log == nil {
 		log = zap.NewNop()
@@ -1315,6 +1368,15 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 	defer func() {
 		_ = shutdownTracing(context.Background())
 	}()
+
+	// ── Optional Redis integration ────────────────────────────────────────
+	redisClient, redisCache, redisPubSub, err := initRedis(cfg, log)
+	if err != nil {
+		log.Warn("redis initialization failed", zap.Error(err))
+	}
+	if redisClient != nil {
+		defer redisClient.Close()
+	}
 
 	// Seed workspace identity files (SOUL.md, IDENTITY.md, AGENTS.md, etc.)
 	// Use cfg.StateDir (already resolved to ~/.opsintelligence) not the raw configPath
@@ -1794,6 +1856,11 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 	}
 	tasks := subSvc.EnsureTaskManager(st.MaxConcurrent, st.RetainLimit, taskTimeout)
+		if redisPubSub != nil {
+			taskEvents := redis.NewTaskEvents(redisPubSub, log)
+			tasks.TaskEvents = taskEvents.Publish
+			log.Info("redis task events active")
+		}
 	toolReg.Register(tools.SubAgentCreateTool{S: subSvc})
 	toolReg.Register(tools.SubAgentListTool{S: subSvc})
 	toolReg.Register(tools.SubAgentRunTool{S: subSvc})
@@ -2177,7 +2244,11 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		runnerLog,
 		cfg.Dirs().CronJobs(),
 	)
-	if err := cronDaemon.Start(); err != nil {
+	if redisClient != nil {
+		cronDaemon.Lock = redis.NewCronLock(redisClient, log)
+		log.Info("redis cron distributed lock active")
+	}
+	if err := cronDaemon.Start(ctx); err != nil {
 		log.Warn("failed to start cron daemon", zap.Error(err))
 	} else {
 		log.Info("cron daemon started", zap.Int("static_jobs", len(cronJobs)))
@@ -2342,7 +2413,7 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 
 		authCtx, authCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv)
+		storeCloser, err := attachAuthToGateway(authCtx, cfg, gf.configPath, log, srv, redisCache)
 		authCancel()
 		if err != nil {
 			return err
@@ -2356,6 +2427,20 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 		if srv.AuthService != nil {
 			srv.AuthService.Tasks = tasks
+		}
+
+		// Start Redis hub bridge for cross-instance WebSocket broadcasts.
+		if redisPubSub != nil {
+			hubBridge := redis.NewHubBridge(redisPubSub, log)
+			cancelBridge := hubBridge.Subscribe(context.Background(), func(msg []byte) {
+				srv.Hub.Broadcast(msg)
+			})
+			defer cancelBridge()
+			// Publish local broadcasts to Redis so other instances receive them.
+			srv.Hub.OnBroadcast = func(msg []byte) {
+				_ = hubBridge.Publish(context.Background(), redis.HubMessage{Payload: msg})
+			}
+			log.Info("redis hub bridge active")
 		}
 
 		// ── GitHub App relay (this instance IS the relay) ────────────────────────

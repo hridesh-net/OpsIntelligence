@@ -5,207 +5,196 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 var histogramBuckets = []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 
 type latencyHistogram struct {
 	count   uint64
-	sum     float64
-	buckets []uint64
+	sum     uint64 // stored as atomic fixed-point (seconds * 1e6)
+	buckets []atomic.Uint64
+}
+
+func newLatencyHistogram() *latencyHistogram {
+	h := &latencyHistogram{buckets: make([]atomic.Uint64, len(histogramBuckets))}
+	return h
+}
+
+func (h *latencyHistogram) observe(seconds float64) {
+	atomic.AddUint64(&h.count, 1)
+	atomic.AddUint64(&h.sum, uint64(seconds*1e6))
+	for i, b := range histogramBuckets {
+		if seconds <= b {
+			h.buckets[i].Add(1)
+			break
+		}
+	}
 }
 
 // Store is a lightweight Prometheus-compatible in-process metric store.
 // Labels are intentionally constrained to low-cardinality dimensions only.
 type Store struct {
-	mu sync.RWMutex
+	messagesSentTotal      sync.Map // map[string]*atomic.Uint64
+	messagesFailedTotal    sync.Map // map[string]*atomic.Uint64
+	messagesReceivedTotal  sync.Map // map[string]*atomic.Uint64
+	adapterRetriesTotal    sync.Map // map[string]*atomic.Uint64
+	channelReconnectsTotal sync.Map // map[string]*atomic.Uint64
+	dlqDepth               sync.Map // map[string]*atomic.Uint64
+	messageLatency         sync.Map // map[string]*latencyHistogram
 
-	messagesSentTotal      map[string]uint64
-	messagesFailedTotal    map[string]uint64
-	messagesReceivedTotal  map[string]uint64
-	adapterRetriesTotal    map[string]uint64
-	channelReconnectsTotal map[string]uint64
-	dlqDepth               map[string]float64
-	messageLatency         map[string]*latencyHistogram
-	gatewayUp              float64
-	preflightFailuresTotal uint64
+	gatewayUp              atomic.Uint64
+	preflightFailuresTotal atomic.Uint64
 }
 
 func NewStore() *Store {
-	return &Store{
-		messagesSentTotal:      make(map[string]uint64),
-		messagesFailedTotal:    make(map[string]uint64),
-		messagesReceivedTotal:  make(map[string]uint64),
-		adapterRetriesTotal:    make(map[string]uint64),
-		channelReconnectsTotal: make(map[string]uint64),
-		dlqDepth:               make(map[string]float64),
-		messageLatency:         make(map[string]*latencyHistogram),
+	return &Store{}
+}
+
+func counterInc(m *sync.Map, key string) {
+	v, _ := m.LoadOrStore(key, new(atomic.Uint64))
+	v.(*atomic.Uint64).Add(1)
+}
+
+func counterGet(m *sync.Map, key string) uint64 {
+	v, ok := m.Load(key)
+	if !ok {
+		return 0
 	}
+	return v.(*atomic.Uint64).Load()
 }
 
 func (s *Store) IncMessagesSent(channel string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messagesSentTotal[channel]++
+	counterInc(&s.messagesSentTotal, channel)
 }
 
 func (s *Store) IncMessagesFailed(channel string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messagesFailedTotal[channel]++
+	counterInc(&s.messagesFailedTotal, channel)
 }
 
 func (s *Store) IncMessagesReceived(channel string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messagesReceivedTotal[channel]++
+	counterInc(&s.messagesReceivedTotal, channel)
 }
 
 func (s *Store) IncAdapterRetries(channel string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.adapterRetriesTotal[channel]++
+	counterInc(&s.adapterRetriesTotal, channel)
 }
 
 func (s *Store) IncChannelReconnects(channel string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.channelReconnectsTotal[channel]++
+	counterInc(&s.channelReconnectsTotal, channel)
 }
 
 func (s *Store) ObserveMessageLatency(channel string, seconds float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	h, ok := s.messageLatency[channel]
-	if !ok {
-		h = &latencyHistogram{buckets: make([]uint64, len(histogramBuckets))}
-		s.messageLatency[channel] = h
-	}
-	h.count++
-	h.sum += seconds
-	for i, b := range histogramBuckets {
-		if seconds <= b {
-			h.buckets[i]++
-		}
-	}
+	v, _ := s.messageLatency.LoadOrStore(channel, newLatencyHistogram())
+	v.(*latencyHistogram).observe(seconds)
 }
 
 func (s *Store) SetDLQDepth(channel string, depth float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.dlqDepth[channel] = depth
+	v, _ := s.dlqDepth.LoadOrStore(channel, new(atomic.Uint64))
+	v.(*atomic.Uint64).Store(uint64(depth * 1e6))
 }
 
 func (s *Store) SetGatewayUp(up bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if up {
-		s.gatewayUp = 1
+		s.gatewayUp.Store(1)
 		return
 	}
-	s.gatewayUp = 0
+	s.gatewayUp.Store(0)
 }
 
 // IncPreflightFailures increments when CLI preflight (doctor subset) fails before start.
 func (s *Store) IncPreflightFailures() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.preflightFailuresTotal++
+	s.preflightFailuresTotal.Add(1)
 }
 
 func (s *Store) RenderPrometheus() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	var b strings.Builder
 
 	b.WriteString("# HELP messages_sent_total Total outbound messages sent successfully.\n")
 	b.WriteString("# TYPE messages_sent_total counter\n")
-	writeCounterByChannel(&b, "messages_sent_total", s.messagesSentTotal)
+	writeCounterByChannel(&b, "messages_sent_total", &s.messagesSentTotal)
 
 	b.WriteString("# HELP messages_failed_total Total outbound messages that failed.\n")
 	b.WriteString("# TYPE messages_failed_total counter\n")
-	writeCounterByChannel(&b, "messages_failed_total", s.messagesFailedTotal)
+	writeCounterByChannel(&b, "messages_failed_total", &s.messagesFailedTotal)
 
 	b.WriteString("# HELP messages_received_total Total inbound messages received.\n")
 	b.WriteString("# TYPE messages_received_total counter\n")
-	writeCounterByChannel(&b, "messages_received_total", s.messagesReceivedTotal)
+	writeCounterByChannel(&b, "messages_received_total", &s.messagesReceivedTotal)
 
 	b.WriteString("# HELP adapter_retries_total Total adapter retry attempts.\n")
 	b.WriteString("# TYPE adapter_retries_total counter\n")
-	writeCounterByChannel(&b, "adapter_retries_total", s.adapterRetriesTotal)
+	writeCounterByChannel(&b, "adapter_retries_total", &s.adapterRetriesTotal)
 
 	b.WriteString("# HELP channel_reconnects_total Total reconnect events by channel.\n")
 	b.WriteString("# TYPE channel_reconnects_total counter\n")
-	writeCounterByChannel(&b, "channel_reconnects_total", s.channelReconnectsTotal)
+	writeCounterByChannel(&b, "channel_reconnects_total", &s.channelReconnectsTotal)
 
 	b.WriteString("# HELP dlq_depth Dead-letter queue depth by channel.\n")
 	b.WriteString("# TYPE dlq_depth gauge\n")
-	writeGaugeByChannel(&b, "dlq_depth", s.dlqDepth)
+	writeGaugeByChannel(&b, "dlq_depth", &s.dlqDepth)
 
 	b.WriteString("# HELP gateway_health Gateway health indicator (1=up,0=down).\n")
 	b.WriteString("# TYPE gateway_health gauge\n")
-	fmt.Fprintf(&b, "gateway_health %g\n", s.gatewayUp)
+	fmt.Fprintf(&b, "gateway_health %d\n", s.gatewayUp.Load())
 
 	b.WriteString("# HELP preflight_failures_total Total preflight failures before daemon/gateway start.\n")
 	b.WriteString("# TYPE preflight_failures_total counter\n")
-	fmt.Fprintf(&b, "preflight_failures_total %d\n", s.preflightFailuresTotal)
+	fmt.Fprintf(&b, "preflight_failures_total %d\n", s.preflightFailuresTotal.Load())
 
 	b.WriteString("# HELP message_latency_seconds Outbound message latency in seconds.\n")
 	b.WriteString("# TYPE message_latency_seconds histogram\n")
-	channels := sortedLatencyChannels(s.messageLatency)
-	for _, channel := range channels {
-		h := s.messageLatency[channel]
-		for i, upper := range histogramBuckets {
-			fmt.Fprintf(&b, "message_latency_seconds_bucket{channel=%q,le=%q} %d\n", channel, trimFloat(upper), h.buckets[i])
-		}
-		fmt.Fprintf(&b, "message_latency_seconds_bucket{channel=%q,le=\"+Inf\"} %d\n", channel, h.count)
-		fmt.Fprintf(&b, "message_latency_seconds_sum{channel=%q} %g\n", channel, h.sum)
-		fmt.Fprintf(&b, "message_latency_seconds_count{channel=%q} %d\n", channel, h.count)
-	}
+	writeLatencyByChannel(&b, &s.messageLatency)
 
 	return b.String()
 }
 
-func writeCounterByChannel(b *strings.Builder, name string, values map[string]uint64) {
-	channels := sortedCounterKeys(values)
-	for _, ch := range channels {
-		fmt.Fprintf(b, "%s{channel=%q} %d\n", name, ch, values[ch])
-	}
-}
-
-func writeGaugeByChannel(b *strings.Builder, name string, values map[string]float64) {
-	channels := sortedGaugeKeys(values)
-	for _, ch := range channels {
-		fmt.Fprintf(b, "%s{channel=%q} %g\n", name, ch, values[ch])
-	}
-}
-
-func sortedCounterKeys(m map[string]uint64) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
+func writeCounterByChannel(b *strings.Builder, name string, m *sync.Map) {
+	var keys []string
+	m.Range(func(k, v interface{}) bool {
+		keys = append(keys, k.(string))
+		return true
+	})
 	sort.Strings(keys)
-	return keys
+	for _, ch := range keys {
+		fmt.Fprintf(b, "%s{channel=%q} %d\n", name, ch, counterGet(m, ch))
+	}
 }
 
-func sortedGaugeKeys(m map[string]float64) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
+func writeGaugeByChannel(b *strings.Builder, name string, m *sync.Map) {
+	var keys []string
+	m.Range(func(k, v interface{}) bool {
+		keys = append(keys, k.(string))
+		return true
+	})
 	sort.Strings(keys)
-	return keys
+	for _, ch := range keys {
+		v, _ := m.Load(ch)
+		val := v.(*atomic.Uint64).Load()
+		fmt.Fprintf(b, "%s{channel=%q} %g\n", name, ch, float64(val)/1e6)
+	}
 }
 
-func sortedLatencyChannels(m map[string]*latencyHistogram) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
+func writeLatencyByChannel(b *strings.Builder, m *sync.Map) {
+	var keys []string
+	m.Range(func(k, v interface{}) bool {
+		keys = append(keys, k.(string))
+		return true
+	})
 	sort.Strings(keys)
-	return keys
+	for _, channel := range keys {
+		v, _ := m.Load(channel)
+		h := v.(*latencyHistogram)
+		count := atomic.LoadUint64(&h.count)
+		sum := atomic.LoadUint64(&h.sum)
+		for i, upper := range histogramBuckets {
+			bucketCount := h.buckets[i].Load()
+			fmt.Fprintf(b, "message_latency_seconds_bucket{channel=%q,le=%q} %d\n", channel, trimFloat(upper), bucketCount)
+		}
+		fmt.Fprintf(b, "message_latency_seconds_bucket{channel=%q,le=\"+Inf\"} %d\n", channel, count)
+		fmt.Fprintf(b, "message_latency_seconds_sum{channel=%q} %g\n", channel, float64(sum)/1e6)
+		fmt.Fprintf(b, "message_latency_seconds_count{channel=%q} %d\n", channel, count)
+	}
 }
 
 func trimFloat(v float64) string {
@@ -213,17 +202,15 @@ func trimFloat(v float64) string {
 }
 
 func (s *Store) ResetForTests() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messagesSentTotal = make(map[string]uint64)
-	s.messagesFailedTotal = make(map[string]uint64)
-	s.messagesReceivedTotal = make(map[string]uint64)
-	s.adapterRetriesTotal = make(map[string]uint64)
-	s.channelReconnectsTotal = make(map[string]uint64)
-	s.dlqDepth = make(map[string]float64)
-	s.messageLatency = make(map[string]*latencyHistogram)
-	s.gatewayUp = 0
-	s.preflightFailuresTotal = 0
+	s.messagesSentTotal = sync.Map{}
+	s.messagesFailedTotal = sync.Map{}
+	s.messagesReceivedTotal = sync.Map{}
+	s.adapterRetriesTotal = sync.Map{}
+	s.channelReconnectsTotal = sync.Map{}
+	s.dlqDepth = sync.Map{}
+	s.messageLatency = sync.Map{}
+	s.gatewayUp.Store(0)
+	s.preflightFailuresTotal.Store(0)
 }
 
 var (

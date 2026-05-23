@@ -45,8 +45,17 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - Getting started: getting-started.md
   - Install: install.md
   - Configuration: configuration.md
+  - User guide:
+      - guides/user-guide/index.md
+      - Dashboard: guides/user-guide/dashboard.md
+      - CLI reference: guides/user-guide/cli.md
+      - Providers: guides/user-guide/providers.md
+      - Workflows: guides/user-guide/workflows.md
+      - Performance: guides/user-guide/performance.md
+      - Troubleshooting: guides/user-guide/troubleshooting.md
   - Architecture:
       - architecture/overview.md
       - architecture/packages.md
@@ -55,6 +64,13 @@ nav:
       - architecture/repo-intelligence.md
       - architecture/local-intel.md
   - Agents & tools: agents-tools.md
+  - Multi-agent systems in Go:
+      - guides/multi-agent-go/index.md
+      - Concepts: guides/multi-agent-go/concepts.md
+      - Patterns: guides/multi-agent-go/patterns.md
+      - Minimal Go: guides/multi-agent-go/minimal-go.md
+      - Production: guides/multi-agent-go/production.md
+      - Design checklist: guides/multi-agent-go/checklist.md
   - Repo intelligence: repo-intelligence.md
   - Observability: observability.md
   - Security: security.md

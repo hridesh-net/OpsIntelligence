@@ -6,6 +6,8 @@
     <title>OpsIntelligence · Dashboard</title>
     <link rel="stylesheet" href="style.css" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   </head>
   <body class="app-page">
     <aside class="sidebar">
@@ -28,6 +30,7 @@
           <div class="whoami-roles" id="whoami-roles"></div>
         </div>
         <button id="logout" class="ghost">Sign out</button>
+        <button id="kbd-help" class="ghost" style="font-size:11px;padding:6px 10px;">⌘ Shortcuts (?)</button>
       </div>
     </aside>
 
@@ -35,7 +38,12 @@
       <header class="content-header">
         <div class="content-header-row">
           <h1 id="section-title">Overview</h1>
-          <div class="content-actions" id="content-actions"></div>
+          <div class="content-actions" id="content-actions">
+            <div class="search-bar" id="global-search-bar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" id="global-search-input" placeholder="Search… (/)" autocomplete="off" readonly />
+            </div>
+          </div>
         </div>
         <p id="section-sub" class="content-sub">
           A quick look at the ops plane.
@@ -45,6 +53,28 @@
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
       <section class="view" id="view-overview">
+        <div class="status-grid" id="overview-status">
+          <div class="status-card">
+            <div class="status-label">Gateway</div>
+            <div class="status-value" id="status-gateway"><span class="pulse-dot ok"></span> Online</div>
+            <div class="status-hint" id="status-gateway-hint">Dashboard connected</div>
+          </div>
+          <div class="status-card">
+            <div class="status-label">Active Tasks</div>
+            <div class="status-value" id="status-tasks">—</div>
+            <div class="status-hint" id="status-tasks-hint">From TaskManager</div>
+          </div>
+          <div class="status-card">
+            <div class="status-label">Redis</div>
+            <div class="status-value" id="status-redis">—</div>
+            <div class="status-hint" id="status-redis-hint">Caching & pub/sub</div>
+          </div>
+          <div class="status-card">
+            <div class="status-label">Version</div>
+            <div class="status-value" id="status-version">—</div>
+            <div class="status-hint">OpsIntelligence</div>
+          </div>
+        </div>
         <div class="grid">
           <div class="card">
             <h2>Signed in as</h2>
@@ -134,6 +164,13 @@
         </div>
       </section>
     </main>
+
+    <div id="cmd-palette-backdrop" class="cmd-palette-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="cmd-palette">
+        <input type="text" id="cmd-palette-input" class="cmd-palette-input" placeholder="Type a command or page…" autocomplete="off" />
+        <div id="cmd-palette-results" class="cmd-palette-results"></div>
+      </div>
+    </div>
 
     <div
       id="modal-backdrop"

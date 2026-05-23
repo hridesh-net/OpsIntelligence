@@ -15,6 +15,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
+	"github.com/opsintelligence/opsintelligence/internal/githubapp"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
 )
@@ -82,7 +83,10 @@ type AuthService struct {
 //
 // Returns (nil, nil) when the datastore is not configured — the
 // gateway falls back to its pre-2c Bearer-token model in that case.
-func BuildAuthService(ctx context.Context, cfg *config.Config, store datastore.Store, log *zap.Logger) (*AuthService, error) {
+//
+// sessionRepo, when non-nil, overrides store.Sessions() for the auth
+// session manager. This is used to inject a Redis caching layer.
+func BuildAuthService(ctx context.Context, cfg *config.Config, store datastore.Store, sessionRepo datastore.SessionRepo, log *zap.Logger) (*AuthService, error) {
 	if store == nil {
 		return nil, nil
 	}
@@ -114,7 +118,12 @@ func BuildAuthService(ctx context.Context, cfg *config.Config, store datastore.S
 	if ac.Sessions.Secure != nil {
 		sessionOpts.Secure = *ac.Sessions.Secure
 	}
-	sessions := auth.NewSessionManager(store, sessionOpts)
+	if sessionRepo == nil {
+		sessionRepo = store.Sessions()
+	}
+	// Wrap the session repo in a store-like facade so NewSessionManager
+	// can use it transparently.
+	sessions := auth.NewSessionManager(&sessionStoreFacade{store: store, sessions: sessionRepo}, sessionOpts)
 
 	resolver := rbac.NewResolver(store)
 
@@ -587,3 +596,30 @@ func parseSameSite(s string) http.SameSite {
 		return http.SameSiteLaxMode
 	}
 }
+
+// sessionStoreFacade is a minimal datastore.Store wrapper that overrides
+// Sessions() with an external SessionRepo (e.g. Redis-cached). All other
+// methods delegate to the underlying store.
+type sessionStoreFacade struct {
+	store    datastore.Store
+	sessions datastore.SessionRepo
+}
+
+func (f *sessionStoreFacade) Driver() string                                     { return f.store.Driver() }
+func (f *sessionStoreFacade) Ping(ctx context.Context) error                    { return f.store.Ping(ctx) }
+func (f *sessionStoreFacade) Close() error                                      { return f.store.Close() }
+func (f *sessionStoreFacade) Migrate(ctx context.Context) error                 { return f.store.Migrate(ctx) }
+func (f *sessionStoreFacade) MigrationStatus(ctx context.Context) (int, int, error) {
+	return f.store.MigrationStatus(ctx)
+}
+func (f *sessionStoreFacade) Users() datastore.UserRepo                           { return f.store.Users() }
+func (f *sessionStoreFacade) Roles() datastore.RoleRepo                           { return f.store.Roles() }
+func (f *sessionStoreFacade) APIKeys() datastore.APIKeyRepo                       { return f.store.APIKeys() }
+func (f *sessionStoreFacade) Sessions() datastore.SessionRepo                     { return f.sessions }
+func (f *sessionStoreFacade) Audit() datastore.AuditRepo                          { return f.store.Audit() }
+func (f *sessionStoreFacade) TaskHistory() datastore.TaskHistoryRepo              { return f.store.TaskHistory() }
+func (f *sessionStoreFacade) OIDCState() datastore.OIDCStateRepo                  { return f.store.OIDCState() }
+func (f *sessionStoreFacade) GitHubAppInstallations() githubapp.InstallationRepo  { return f.store.GitHubAppInstallations() }
+func (f *sessionStoreFacade) GitHubAppConnectTokens() githubapp.ConnectTokenRepo  { return f.store.GitHubAppConnectTokens() }
+
+var _ datastore.Store = (*sessionStoreFacade)(nil)

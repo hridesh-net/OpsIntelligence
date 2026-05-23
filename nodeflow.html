@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NodeFlow — Architecture & Dependency Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root {
+    --bg-0: #0b0d12;
+    --bg-1: #0f1218;
+    --bg-2: #13161e;
+    --bg-3: #1a1e28;
+    --bg-glass: rgba(15, 18, 24, 0.72);
+    --line: #1e2330;
+    --line-soft: #181c26;
+    --text-0: #e2e6ef;
+    --text-1: #8b92a8;
+    --text-2: #5a6278;
+    --text-3: #3a4052;
+
+    /* Obsidian-muted palette */
+    --c-entry:     #e6a23c;
+    --c-gateway:   #5cbae6;
+    --c-agent:     #c084fc;
+    --c-subagent:  #f472b6;
+    --c-memory:    #2dd4bf;
+    --c-redis:     #ef4444;
+    --c-cron:      #a3e635;
+    --c-metrics:   #fbbf24;
+    --c-config:    #94a3b8;
+    --c-datastore: #fb923c;
+    --c-provider:  #818cf8;
+    --c-tool:      #67e8f9;
+    --c-external:  #f87171;
+
+    --flow: #7df9ff;
+    --accent: #7df9ff;
+    --accent-glow: 0 0 14px rgba(125, 249, 255, 0.6), 0 0 32px rgba(125, 249, 255, 0.2);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-0);
+    color: var(--text-0);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(125, 249, 255, 0.025), transparent 60%),
+      radial-gradient(ellipse at 70% 80%, rgba(192, 132, 252, 0.02), transparent 60%),
+      var(--bg-0);
+  }
+
+  /* ============ APP SHELL ============ */
+  .app {
+    display: grid;
+    grid-template-rows: 52px 1fr;
+    height: 100vh;
+    position: relative;
+  }
+
+  header.bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-glass);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    z-index: 20;
+    gap: 16px;
+  }
+
+  .brand { display: flex; align-items: baseline; gap: 12px; flex-shrink: 0; }
+  .brand .mark {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    color: var(--text-0);
+  }
+  .brand .mark span { color: var(--accent); }
+  .brand .tag {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-2);
+    border-left: 1px solid var(--line);
+    padding-left: 12px;
+  }
+
+  .header-center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+  }
+  .search-wrap {
+    position: relative;
+    width: 320px;
+    max-width: 100%;
+  }
+  .search-wrap input {
+    width: 100%;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 12px 7px 32px;
+    color: var(--text-0);
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .search-wrap input::placeholder { color: var(--text-3); }
+  .search-wrap input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(125, 249, 255, 0.1);
+  }
+  .search-wrap svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px; height: 14px;
+    stroke: var(--text-3);
+    pointer-events: none;
+  }
+  .search-results {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0; right: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 30;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .search-results.active { display: block; }
+  .search-results .res {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text-1);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .search-results .res:last-child { border-bottom: none; }
+  .search-results .res:hover { background: var(--bg-3); color: var(--text-0); }
+  .search-results .res .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .search-results .res .name { font-weight: 500; }
+  .search-results .res .pkg { margin-left: auto; font-size: 10px; color: var(--text-3); font-family: 'JetBrains Mono', monospace; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-2);
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 0;
+  }
+  .icon-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(125, 249, 255, 0.05);
+  }
+  .icon-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(125, 249, 255, 0.08);
+  }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* ============ LAYOUT ============ */
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr 340px;
+    height: 100%;
+    overflow: hidden;
+    transition: grid-template-columns 0.3s ease;
+  }
+  .layout.fs-left { grid-template-columns: 0px 1fr 340px; }
+  .layout.fs-right { grid-template-columns: 280px 1fr 0px; }
+  .layout.fs-both { grid-template-columns: 0px 1fr 0px; }
+
+  aside {
+    background: var(--bg-glass);
+    backdrop-filter: blur(12px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-right: 1px solid var(--line);
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+  aside.right { border-right: none; border-left: 1px solid var(--line); }
+  .layout.fs-left aside.left,
+  .layout.fs-both aside.left { transform: translateX(-100%); opacity: 0; pointer-events: none; }
+  .layout.fs-right aside.right,
+  .layout.fs-both aside.right { transform: translateX(100%); opacity: 0; pointer-events: none; }
+
+  aside::-webkit-scrollbar { width: 5px; }
+  aside::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+
+  .panel {
+    padding: 18px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel h3 {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel h3::before {
+    content: '';
+    width: 14px; height: 1px;
+    background: var(--text-3);
+  }
+
+  /* ============ FLOW BUTTONS ============ */
+  .endpoints { display: flex; flex-direction: column; gap: 5px; }
+  .endpoint {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-1);
+    padding: 9px 11px;
+    font-family: inherit;
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 0.15s ease;
+    position: relative;
+  }
+  .endpoint:hover {
+    border-color: var(--accent);
+    color: var(--text-0);
+    background: rgba(125, 249, 255, 0.04);
+  }
+  .endpoint .verb {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .endpoint .verb.GET { background: rgba(45, 212, 191, 0.12); color: var(--c-memory); }
+  .endpoint .verb.POST { background: rgba(244, 114, 182, 0.12); color: var(--c-subagent); }
+  .endpoint .verb.WS { background: rgba(124, 58, 237, 0.12); color: var(--c-provider); }
+  .endpoint .path { font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+  .endpoint.playing {
+    border-color: var(--accent);
+    background: rgba(125, 249, 255, 0.07);
+    color: var(--text-0);
+    box-shadow: inset 0 0 0 1px rgba(125, 249, 255, 0.25);
+  }
+  .endpoint.playing::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: var(--accent-glow);
+    animation: pulseDot 1.2s ease-in-out infinite;
+  }
+  @keyframes pulseDot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
+  }
+
+  /* ============ LEGEND ============ */
+  .legend { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .legend li {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px;
+    color: var(--text-1);
+    cursor: pointer;
+    transition: opacity 0.15s;
+    padding: 3px 4px;
+    border-radius: 3px;
+  }
+  .legend li:hover { color: var(--text-0); background: var(--bg-1); }
+  .legend li.dim { opacity: 0.3; }
+  .legend .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 4px currentColor;
+  }
+
+  /* ============ STATS ============ */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .stat {
+    background: var(--bg-1);
+    padding: 10px;
+  }
+  .stat .label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-2);
+    margin-bottom: 3px;
+  }
+  .stat .value {
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--accent);
+    line-height: 1;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ============ SETTINGS SLIDERS ============ */
+  .slider-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .slider-row label {
+    font-size: 11px;
+    color: var(--text-1);
+    white-space: nowrap;
+  }
+  .slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 3px;
+  }
+  .slider-row .val {
+    font-size: 10px;
+    color: var(--text-2);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 28px;
+    text-align: right;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .toggle-row label {
+    font-size: 11px;
+    color: var(--text-1);
+  }
+  .toggle-switch {
+    position: relative;
+    width: 32px; height: 18px;
+    background: var(--bg-3);
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border: 1px solid var(--line);
+  }
+  .toggle-switch.on { background: rgba(125, 249, 255, 0.25); border-color: var(--accent); }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--text-2);
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle-switch.on::after { transform: translateX(14px); background: var(--accent); }
+
+  /* ============ CANVAS ============ */
+  .canvas-wrap {
+    position: relative;
+    overflow: hidden;
+    background: transparent;
+  }
+  svg#graph {
+    width: 100%; height: 100%;
+    cursor: grab;
+  }
+  svg#graph:active { cursor: grabbing; }
+
+  .corner-info {
+    position: absolute;
+    top: 16px; left: 20px;
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .corner-info span { color: var(--accent); }
+
+  .canvas-controls {
+    position: absolute;
+    top: 16px; right: 20px;
+    display: flex; gap: 5px;
+    z-index: 5;
+  }
+  .canvas-btn {
+    background: var(--bg-glass);
+    border: 1px solid var(--line);
+    color: var(--text-1);
+    padding: 6px 11px;
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    backdrop-filter: blur(8px);
+  }
+  .canvas-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .flow-status {
+    position: absolute;
+    bottom: 22px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--line);
+    padding: 9px 16px;
+    border-radius: 24px;
+    font-size: 11px;
+    color: var(--text-1);
+    display: none;
+    align-items: center;
+    gap: 10px;
+    z-index: 5;
+    max-width: 80%;
+    white-space: nowrap;
+  }
+  .flow-status.visible { display: flex; }
+  .flow-status .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: var(--accent-glow);
+    animation: pulseDot 1s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  .flow-status .step { color: var(--accent); font-weight: 500; }
+  .flow-status .arrow { color: var(--text-3); }
+  .flow-status .label { color: var(--text-0); }
+
+  /* ============ GRAPH STYLES ============ */
+  .node circle {
+    stroke-width: 1.2;
+    transition: all 0.25s ease;
+    cursor: pointer;
+  }
+  .node text {
+    fill: var(--text-2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    text-anchor: middle;
+    pointer-events: none;
+    transition: fill 0.25s, opacity 0.25s, font-size 0.25s;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+  }
+  .node:hover text { fill: var(--text-0); }
+
+  .node.dimmed { opacity: 0.12; }
+  .node.dimmed text { opacity: 0; }
+
+  .node.selected circle {
+    stroke-width: 2.5;
+  }
+  .node.focus-current circle {
+    stroke: var(--accent) !important;
+    stroke-width: 3;
+    filter: url(#glow-accent);
+  }
+  .node.focus-current text { fill: var(--text-0); font-weight: 500; }
+  .node.neighbor circle { stroke-width: 2; }
+  .node.neighbor text { fill: var(--text-1); }
+
+  .link {
+    stroke: var(--text-3);
+    stroke-width: 0.8;
+    fill: none;
+    transition: stroke 0.25s, opacity 0.25s, stroke-width 0.25s;
+    opacity: 0.25;
+  }
+  .link.dimmed { opacity: 0.06; }
+  .link.highlighted { stroke: var(--text-2); opacity: 0.6; stroke-width: 1.2; }
+  .link.flow-active {
+    stroke: var(--accent);
+    stroke-width: 1.2;
+    opacity: 0.5;
+  }
+
+  .pulse-particle {
+    fill: var(--accent);
+    filter: url(#glow-accent);
+    pointer-events: none;
+  }
+
+  /* ============ DETAIL PANEL ============ */
+  .detail-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-3);
+  }
+  .detail-empty .icon {
+    font-size: 40px;
+    color: var(--line);
+    margin-bottom: 10px;
+    line-height: 1;
+  }
+  .detail-empty .note {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-2);
+  }
+
+  .detail-header {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .detail-header .type-badge {
+    display: inline-block;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .detail-header .name {
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text-0);
+    line-height: 1.2;
+    margin-bottom: 3px;
+    word-break: break-word;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .detail-header .file {
+    font-size: 10px;
+    color: var(--text-2);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .detail-section {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .detail-section h4 {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .detail-section .desc {
+    font-size: 11px;
+    color: var(--text-1);
+    line-height: 1.6;
+  }
+
+  .dep-list { display: flex; flex-direction: column; gap: 3px; }
+  .dep-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 7px;
+    background: var(--bg-1);
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text-1);
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.12s;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .dep-item:hover {
+    border-color: var(--line);
+    color: var(--text-0);
+  }
+  .dep-item .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .dep-item .arrow { color: var(--text-3); margin-left: auto; font-size: 10px; }
+
+  .code-block {
+    background: var(--bg-1);
+    padding: 12px 14px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.55;
+    overflow-x: auto;
+    color: var(--text-1);
+    white-space: pre;
+    border: 1px solid var(--line);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .code-block::-webkit-scrollbar { height: 4px; }
+  .code-block::-webkit-scrollbar-thumb { background: var(--bg-3); }
+
+  .code-block .kw { color: #c084fc; }
+  .code-block .fn { color: #67e8f9; }
+  .code-block .str { color: #fde047; }
+  .code-block .com { color: var(--text-3); font-style: italic; }
+  .code-block .num { color: #fb923c; }
+  .code-block .type { color: #fda4af; }
+  .code-block .op { color: var(--text-2); }
+
+  .focus-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--accent);
+    background: rgba(125, 249, 255, 0.08);
+    border: 1px solid rgba(125, 249, 255, 0.2);
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin-top: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .focus-badge:hover {
+    background: rgba(125, 249, 255, 0.14);
+    border-color: rgba(125, 249, 255, 0.35);
+  }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 240px 1fr 300px; }
+    .search-wrap { width: 240px; }
+  }
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 200px 1fr; }
+    aside.right { display: none; }
+    .search-wrap { width: 180px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <div class="mark">Node<span>Flow</span></div>
+      <div class="tag">Architecture Graph</div>
+    </div>
+    <div class="header-center">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="searchInput" placeholder="Find node…" autocomplete="off">
+        <div class="search-results" id="searchResults"></div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="icon-btn" id="btnFocus" title="Focus mode (selected node only)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/></svg>
+      </button>
+      <button class="icon-btn" id="btnLabels" title="Toggle labels">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+      </button>
+      <button class="icon-btn" id="btnFullscreen" title="Toggle fullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+      <button class="icon-btn" id="btnExport" title="Export SVG">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout" id="layout">
+    <!-- LEFT PANEL -->
+    <aside class="left">
+      <div class="panel">
+        <h3>Simulate Request</h3>
+        <div class="endpoints" id="endpoints">
+          <button class="endpoint" data-flow="chat">
+            <span class="verb POST">POST</span>
+            <span class="path">/api/chat</span>
+          </button>
+          <button class="endpoint" data-flow="ws">
+            <span class="verb WS">WS</span>
+            <span class="path">/ws/stream</span>
+          </button>
+          <button class="endpoint" data-flow="webhook">
+            <span class="verb POST">POST</span>
+            <span class="path">/webhook/…</span>
+          </button>
+          <button class="endpoint" data-flow="cron">
+            <span class="verb POST">POST</span>
+            <span class="path">/api/tasks/run</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Node Types</h3>
+        <ul class="legend" id="legend">
+          <li data-type="entry"><span class="dot" style="background:var(--c-entry)"></span>Entry</li>
+          <li data-type="gateway"><span class="dot" style="background:var(--c-gateway)"></span>Gateway</li>
+          <li data-type="agent"><span class="dot" style="background:var(--c-agent)"></span>Agent</li>
+          <li data-type="subagent"><span class="dot" style="background:var(--c-subagent)"></span>Subagent</li>
+          <li data-type="memory"><span class="dot" style="background:var(--c-memory)"></span>Memory</li>
+          <li data-type="redis"><span class="dot" style="background:var(--c-redis)"></span>Redis</li>
+          <li data-type="cron"><span class="dot" style="background:var(--c-cron)"></span>Cron</li>
+          <li data-type="metrics"><span class="dot" style="background:var(--c-metrics)"></span>Metrics</li>
+          <li data-type="config"><span class="dot" style="background:var(--c-config)"></span>Config</li>
+          <li data-type="datastore"><span class="dot" style="background:var(--c-datastore)"></span>Datastore</li>
+          <li data-type="provider"><span class="dot" style="background:var(--c-provider)"></span>Provider</li>
+          <li data-type="tool"><span class="dot" style="background:var(--c-tool)"></span>Tool</li>
+          <li data-type="external"><span class="dot" style="background:var(--c-external)"></span>External</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Graph Stats</h3>
+        <div class="stats">
+          <div class="stat"><div class="label">Nodes</div><div class="value" id="statNodes">—</div></div>
+          <div class="stat"><div class="label">Edges</div><div class="value" id="statEdges">—</div></div>
+          <div class="stat"><div class="label">Packages</div><div class="value" id="statPkgs">—</div></div>
+          <div class="stat"><div class="label">Density</div><div class="value" id="statDensity">—</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Physics</h3>
+        <div class="slider-row">
+          <label>Repulsion</label>
+          <input type="range" id="repelSlider" min="-800" max="-50" value="-320">
+          <span class="val" id="repelVal">-320</span>
+        </div>
+        <div class="slider-row">
+          <label>Link Distance</label>
+          <input type="range" id="distSlider" min="30" max="200" value="75">
+          <span class="val" id="distVal">75</span>
+        </div>
+        <div class="slider-row">
+          <label>Gravity</label>
+          <input type="range" id="gravSlider" min="0" max="0.15" step="0.01" value="0.04">
+          <span class="val" id="gravVal">0.04</span>
+        </div>
+        <div class="slider-row">
+          <label>Collision</label>
+          <input type="range" id="collSlider" min="0" max="30" value="10">
+          <span class="val" id="collVal">10</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>How to use</h3>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.7;">
+          <strong style="color:var(--text-1)">Click</strong> a request to animate its flow.<br>
+          <strong style="color:var(--text-1)">Click</strong> a node to inspect & focus.<br>
+          <strong style="color:var(--text-1)">Drag</strong> nodes to rearrange.<br>
+          <strong style="color:var(--text-1)">Scroll</strong> to zoom, <strong style="color:var(--text-1)">drag canvas</strong> to pan.<br>
+          <strong style="color:var(--text-1)">Search</strong> to find and zoom to any node.
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTER CANVAS -->
+    <div class="canvas-wrap">
+      <div class="corner-info">opsintelligence / <span>internal/</span></div>
+      <div class="canvas-controls">
+        <button class="canvas-btn" id="btnReset">Reset View</button>
+        <button class="canvas-btn" id="btnRelayout">Re-layout</button>
+        <button class="canvas-btn" id="btnFit">Fit</button>
+      </div>
+      <svg id="graph">
+        <defs>
+          <!-- Soft outer glow for nodes -->
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2.5" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="glow-accent" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="glow-strong" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+      </svg>
+      <div class="flow-status" id="flowStatus"></div>
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <aside class="right" id="detail">
+      <div class="detail-empty">
+        <div class="icon">◯</div>
+        <div class="note">Select a node to inspect its source,<br>dependencies & dependents.</div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   DATA — OpsIntelligence Architecture (demo)
+   =========================================================
+   To wire real data from the Go backend, replace NODES & EDGES
+   with a fetch to your API endpoint, e.g.:
+
+     fetch('/api/repos/opsintelligence/graph')
+       .then(r => r.json())
+       .then(cg => { initGraph(cg.nodes, cg.edges); });
+
+   Expected JSON schema (matches internal/repointel/callgraph.go):
+     { nodes: [{id, name, file, line, kind, package}], edges: [{from, to, kind}] }
+   ========================================================= */
+
+const TYPE_COLORS = {
+  entry: '#e6a23c', gateway: '#5cbae6', agent: '#c084fc',
+  subagent: '#f472b6', memory: '#2dd4bf', redis: '#ef4444',
+  cron: '#a3e635', metrics: '#fbbf24', config: '#94a3b8',
+  datastore: '#fb923c', provider: '#818cf8', tool: '#67e8f9',
+  external: '#f87171'
+};
+
+const TYPE_SIZE = {
+  entry: 14, gateway: 11, agent: 12, subagent: 11,
+  memory: 10, redis: 10, cron: 10, metrics: 10,
+  config: 9, datastore: 10, provider: 10, tool: 9, external: 11
+};
+
+/* ---- Demo nodes representing the OpsIntelligence Go architecture ---- */
+const NODES = [
+  // Entry
+  { id: 'main', label: 'main', type: 'entry', pkg: 'cmd/opsintelligence', file: 'cmd/opsintelligence/main.go',
+    desc: 'Application entrypoint. Wires all subsystems: gateway, agent runner, Redis, cron, and metrics.' },
+
+  // Gateway
+  { id: 'server', label: 'Server', type: 'gateway', pkg: 'internal/gateway', file: 'internal/gateway/server.go',
+    desc: 'HTTP server mounting all API routes, WebSocket hub, auth, and webhook router.' },
+  { id: 'hub', label: 'Hub', type: 'gateway', pkg: 'internal/gateway', file: 'internal/gateway/hub.go',
+    desc: 'WebSocket hub managing client registrations, broadcasts, and cross-instance Redis bridge.' },
+  { id: 'auth', label: 'AuthService', type: 'gateway', pkg: 'internal/gateway', file: 'internal/gateway/authsvc.go',
+    desc: 'Authentication & authorization: bootstrap, API keys, CSRF protection, session management.' },
+  { id: 'chat-api', label: 'handleChat', type: 'gateway', pkg: 'internal/gateway', file: 'internal/gateway/server.go',
+    desc: 'Chat API handler. Receives user messages and streams agent responses via SSE.' },
+  { id: 'webhook-api', label: 'handleWebhook', type: 'gateway', pkg: 'internal/gateway', file: 'internal/gateway/server.go',
+    desc: 'Webhook handler. Returns 202 Accepted immediately, runs agent in background goroutine.' },
+
+  // Agent
+  { id: 'runner', label: 'Runner', type: 'agent', pkg: 'internal/agent', file: 'internal/agent/runner.go',
+    desc: 'Core agent execution loop: LLM streaming, parallel tool dispatch (max 4), memory management.' },
+  { id: 'autonomous', label: 'RunAutonomous', type: 'agent', pkg: 'internal/agent', file: 'internal/agent/runner.go',
+    desc: 'Autonomous mode with unique :auto: session suffix to prevent WorkingMemory races.' },
+
+  // Subagents
+  { id: 'taskmgr', label: 'TaskManager', type: 'subagent', pkg: 'internal/subagents', file: 'internal/subagents/tasks.go',
+    desc: 'Async task manager with bounded concurrency (MaxConcurrent=4) and channel-based Wait().' },
+  { id: 'substore', label: 'SubAgentStore', type: 'subagent', pkg: 'internal/subagents', file: 'internal/subagents/store.go',
+    desc: 'Sub-agent registry with in-memory read cache (RWMutex) to avoid disk I/O on hot path.' },
+
+  // Memory
+  { id: 'memmgr', label: 'MemoryManager', type: 'memory', pkg: 'internal/memory', file: 'internal/memory/memory.go',
+    desc: 'Three-tier memory system. GetWorking() uses RLock read fast path; write lock only on cache miss.' },
+
+  // Redis
+  { id: 'redis-client', label: 'RedisClient', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/client.go',
+    desc: 'go-redis/v9 wrapper supporting standalone, Sentinel, and Cluster modes.' },
+  { id: 'redis-cache', label: 'Cache', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/cache.go',
+    desc: 'Generic JSON cache with TTL and GetOrSet helper for computed values.' },
+  { id: 'redis-pubsub', label: 'PubSub', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/pubsub.go',
+    desc: 'Typed pub/sub envelope system for cross-instance communication.' },
+  { id: 'hub-bridge', label: 'HubBridge', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/hub_bridge.go',
+    desc: 'Bidirectional bridge: local WS broadcasts → Redis pub, remote Redis → local WS clients.' },
+  { id: 'session-cache', label: 'SessionCache', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/session_cache.go',
+    desc: 'SessionRepo decorator: reads from Redis cache, writes invalidate upstream + cache.' },
+  { id: 'cron-lock', label: 'CronLock', type: 'redis', pkg: 'internal/redis', file: 'internal/redis/cron_lock.go',
+    desc: 'Distributed cron locking via SET NX + Lua owner-only delete.' },
+
+  // Cron
+  { id: 'cron-daemon', label: 'CronDaemon', type: 'cron', pkg: 'internal/cron', file: 'internal/cron/cron.go',
+    desc: 'Scheduled job execution with SkipIfStillRunning and optional distributed Redis lock.' },
+
+  // Metrics
+  { id: 'metrics-store', label: 'MetricsStore', type: 'metrics', pkg: 'internal/observability/metrics', file: 'internal/observability/metrics/metrics.go',
+    desc: 'Sharded metrics store: sync.Map for channel-keyed counters, atomic.Uint64 for simple counters.' },
+
+  // Config
+  { id: 'config-root', label: 'Config', type: 'config', pkg: 'internal/config', file: 'internal/config/config.go',
+    desc: 'Root configuration including new RedisConfig section. Validation on load.' },
+  { id: 'configsvc', label: 'ConfigService', type: 'config', pkg: 'internal/configsvc', file: 'internal/configsvc/service.go',
+    desc: 'Config read/write with 5-second TTL in-memory cache. Skips disk I/O when file unchanged.' },
+
+  // Datastore
+  { id: 'datastore', label: 'Datastore', type: 'datastore', pkg: 'internal/datastore', file: 'internal/datastore/',
+    desc: 'SQLite-backed persistence layer for sessions, agents, and operational data.' },
+
+  // Provider
+  { id: 'llm-provider', label: 'LLMProvider', type: 'provider', pkg: 'internal/provider', file: 'internal/provider/',
+    desc: 'Abstraction over LLM backends: streaming, tool calling, and token accounting.' },
+
+  // Tools
+  { id: 'tools-exec', label: 'ToolExec', type: 'tool', pkg: 'internal/tools', file: 'internal/tools/',
+    desc: 'Tool execution framework. Supports up to 4 concurrent calls with mutex-protected budget.' },
+
+  // External
+  { id: 'stripe', label: 'Stripe API', type: 'external', pkg: 'external', file: 'api.stripe.com',
+    desc: 'Stripe payment gateway (example external dependency).' },
+  { id: 'sendgrid', label: 'SendGrid API', type: 'external', pkg: 'external', file: 'api.sendgrid.com',
+    desc: 'SendGrid transactional email API (example external dependency).' },
+];
+
+const EDGES = [
+  // Entry → subsystems
+  ['main','server'], ['main','config-root'], ['main','configsvc'],
+  ['main','redis-client'], ['main','cron-daemon'], ['main','metrics-store'],
+
+  // Server → handlers & hub
+  ['server','chat-api'], ['server','webhook-api'], ['server','hub'], ['server','auth'],
+  ['server','metrics-store'],
+
+  // Chat flow
+  ['chat-api','auth'],
+  ['chat-api','runner'],
+  ['webhook-api','runner'],
+
+  // Agent runner → dependencies
+  ['runner','llm-provider'],
+  ['runner','tools-exec'],
+  ['runner','memmgr'],
+  ['runner','taskmgr'],
+  ['autonomous','runner'],
+
+  // Task manager → subagent store & Redis events
+  ['taskmgr','substore'],
+  ['taskmgr','redis-pubsub'],
+
+  // Memory → datastore
+  ['memmgr','datastore'],
+
+  // Redis wiring
+  ['redis-client','redis-cache'],
+  ['redis-client','redis-pubsub'],
+  ['redis-pubsub','hub-bridge'],
+  ['hub-bridge','hub'],
+  ['session-cache','redis-client'],
+  ['session-cache','datastore'],
+  ['auth','session-cache'],
+  ['cron-lock','redis-client'],
+
+  // Cron
+  ['cron-daemon','cron-lock'],
+  ['cron-daemon','runner'],
+  ['cron-daemon','taskmgr'],
+
+  // Config
+  ['configsvc','config-root'],
+  ['server','configsvc'],
+  ['runner','configsvc'],
+
+  // External
+  ['tools-exec','stripe'],
+  ['tools-exec','sendgrid'],
+];
+
+/* ---- Request flows — proper call-stack walks ---- */
+const FLOWS = {
+  chat: {
+    label: 'POST /api/chat',
+    path: [
+      'main','server','chat-api','auth','session-cache','datastore','session-cache','auth','chat-api',
+      'runner','memmgr','runner','llm-provider','runner','tools-exec','runner','chat-api','server','main'
+    ]
+  },
+  ws: {
+    label: 'WS /ws/stream',
+    path: [
+      'main','server','hub','hub-bridge','redis-pubsub','hub-bridge','hub','server','main'
+    ]
+  },
+  webhook: {
+    label: 'POST /webhook/…',
+    path: [
+      'main','server','webhook-api','runner','taskmgr','substore','taskmgr','redis-pubsub','taskmgr','runner','webhook-api','server','main'
+    ]
+  },
+  cron: {
+    label: 'Cron Job Execution',
+    path: [
+      'main','cron-daemon','cron-lock','redis-client','cron-lock','cron-daemon',
+      'runner','llm-provider','runner','tools-exec','runner','cron-daemon','main'
+    ]
+  }
+};
+
+/* =========================================================
+   GRAPH ENGINE
+   ========================================================= */
+const svg = d3.select('#graph');
+let width, height;
+const g = svg.append('g');
+const linkLayer = g.append('g').attr('class','links');
+const nodeLayer = g.append('g').attr('class','nodes');
+const pulseLayer = g.append('g').attr('class','pulses');
+
+const zoom = d3.zoom().scaleExtent([0.2, 4]).on('zoom', e => g.attr('transform', e.transform));
+svg.call(zoom);
+
+function resize() {
+  const rect = svg.node().getBoundingClientRect();
+  width = rect.width; height = rect.height;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+}
+resize();
+window.addEventListener('resize', () => { resize(); simulation.alpha(0.3).restart(); });
+
+// Build lookups
+const nodeById = Object.fromEntries(NODES.map(n => [n.id, n]));
+const links = EDGES.map(([s,t]) => ({ source: s, target: t }));
+
+// Compute degrees for node sizing
+const degree = {};
+NODES.forEach(n => degree[n.id] = 0);
+EDGES.forEach(([s,t]) => { degree[s]++; degree[t]++; });
+NODES.forEach(n => { n.degree = degree[n.id]; n.radius = TYPE_SIZE[n.type] + Math.min(n.degree * 1.2, 8); });
+
+// Adjacency
+const deps = {}, dependents = {};
+NODES.forEach(n => { deps[n.id] = []; dependents[n.id] = []; });
+EDGES.forEach(([s,t]) => { deps[s].push(t); dependents[t].push(s); });
+
+// Stats
+const pkgs = new Set(NODES.map(n => n.pkg).filter(Boolean));
+document.getElementById('statNodes').textContent = NODES.length;
+document.getElementById('statEdges').textContent = links.length;
+document.getElementById('statPkgs').textContent = pkgs.size;
+document.getElementById('statDensity').textContent = (links.length / (NODES.length * (NODES.length - 1) / 2)).toFixed(3);
+
+// Label visibility mode: 'all' | 'important' | 'hover' | 'none'
+let labelMode = 'important';
+
+/* ---- Force simulation ---- */
+let simConfig = {
+  charge: -320,
+  distance: 75,
+  gravity: 0.04,
+  collision: 10
+};
+
+const simulation = d3.forceSimulation(NODES)
+  .force('link', d3.forceLink(links).id(d => d.id).distance(simConfig.distance).strength(0.6))
+  .force('charge', d3.forceManyBody().strength(simConfig.charge))
+  .force('center', d3.forceCenter(width/2, height/2))
+  .force('collide', d3.forceCollide().radius(d => d.radius + simConfig.collision))
+  .force('x', d3.forceX(width/2).strength(simConfig.gravity))
+  .force('y', d3.forceY(height/2).strength(simConfig.gravity));
+
+// Render links
+const link = linkLayer.selectAll('line')
+  .data(links)
+  .enter().append('line')
+  .attr('class','link')
+  .attr('id', d => `link-${d.source.id || d.source}-${d.target.id || d.target}`);
+
+// Render nodes
+const node = nodeLayer.selectAll('g')
+  .data(NODES)
+  .enter().append('g')
+  .attr('class','node')
+  .attr('id', d => `node-${d.id}`)
+  .call(d3.drag()
+    .on('start', (e,d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on('drag',  (e,d) => { d.fx = e.x; d.fy = e.y; })
+    .on('end',   (e,d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }))
+  .on('click', (e,d) => { e.stopPropagation(); selectNode(d.id); })
+  .on('mouseenter', (e,d) => hoverNode(d.id, true))
+  .on('mouseleave', (e,d) => hoverNode(d.id, false));
+
+// Outer halo (glow)
+node.append('circle')
+  .attr('r', d => d.radius + 4)
+  .attr('fill', d => TYPE_COLORS[d.type])
+  .attr('opacity', 0.06)
+  .attr('class', 'halo');
+
+// Main node circle
+node.append('circle')
+  .attr('r', d => d.radius)
+  .attr('fill', d => TYPE_COLORS[d.type] + '18')
+  .attr('stroke', d => TYPE_COLORS[d.type])
+  .style('color', d => TYPE_COLORS[d.type])
+  .attr('filter', d => d.degree > 4 ? 'url(#glow)' : null);
+
+// Label
+node.append('text')
+  .attr('dy', d => d.radius + 13)
+  .text(d => d.label)
+  .style('opacity', d => labelOpacity(d));
+
+function labelOpacity(d) {
+  if (labelMode === 'none') return 0;
+  if (labelMode === 'all') return 0.85;
+  if (labelMode === 'hover') return 0;
+  // important: show for high-degree nodes or specific types
+  return (d.degree > 2 || d.type === 'entry' || d.type === 'gateway') ? 0.85 : 0;
+}
+
+simulation.on('tick', () => {
+  link
+    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+  node.attr('transform', d => `translate(${d.x},${d.y})`);
+});
+
+simulation.alpha(1).restart();
+
+svg.on('click', () => { if (!flowPlaying) clearSelection(); });
+
+/* =========================================================
+   INTERACTION STATE
+   ========================================================= */
+let selectedId = null;
+let flowPlaying = false;
+let focusMode = false;
+
+function hoverNode(id, on) {
+  if (flowPlaying || selectedId) return;
+  if (on) {
+    const neighbors = new Set([id, ...deps[id], ...dependents[id]]);
+    node.classed('dimmed', d => !neighbors.has(d.id));
+    link.classed('dimmed', l => !(l.source.id === id || l.target.id === id))
+        .classed('highlighted', l => (l.source.id === id || l.target.id === id));
+    // Temporarily show label on hover if in 'hover' mode
+    if (labelMode === 'hover') {
+      d3.select(`#node-${id}`).select('text').style('opacity', 1);
+    }
+  } else {
+    node.classed('dimmed', false);
+    link.classed('dimmed', false).classed('highlighted', false);
+    if (labelMode === 'hover') {
+      node.select('text').style('opacity', d => labelOpacity(d));
+    }
+  }
+}
+
+function selectNode(id) {
+  selectedId = id;
+  const n = nodeById[id];
+
+  node.classed('selected', d => d.id === id)
+      .classed('focus-current', d => d.id === id)
+      .classed('neighbor', false)
+      .classed('dimmed', false);
+
+  const neighbors = new Set([id, ...deps[id], ...dependents[id]]);
+
+  if (focusMode) {
+    node.classed('dimmed', d => !neighbors.has(d.id))
+        .classed('neighbor', d => d.id !== id && neighbors.has(d.id));
+    link.classed('dimmed', l => !(l.source.id === id || l.target.id === id))
+        .classed('highlighted', l => (l.source.id === id || l.target.id === id));
+  } else {
+    node.classed('dimmed', d => !neighbors.has(d.id))
+        .classed('neighbor', d => d.id !== id && neighbors.has(d.id));
+    link.classed('dimmed', l => !(l.source.id === id || l.target.id === id))
+        .classed('highlighted', l => (l.source.id === id || l.target.id === id));
+  }
+
+  renderDetail(n);
+}
+
+function clearSelection() {
+  selectedId = null;
+  node.classed('selected', false).classed('focus-current', false).classed('neighbor', false).classed('dimmed', false);
+  link.classed('dimmed', false).classed('highlighted', false);
+  renderEmptyDetail();
+}
+
+function renderEmptyDetail() {
+  document.getElementById('detail').innerHTML = `
+    <div class="detail-empty">
+      <div class="icon">◯</div>
+      <div class="note">Select a node to inspect its source,<br>dependencies & dependents.</div>
+    </div>`;
+}
+
+function renderDetail(n) {
+  const typeColor = TYPE_COLORS[n.type];
+  const depsList = deps[n.id].map(id => nodeById[id]);
+  const dependentsList = dependents[n.id].map(id => nodeById[id]);
+
+  const depHtml = (list, dir) => list.length
+    ? `<div class="dep-list">${list.map(d => `
+        <div class="dep-item" data-id="${d.id}">
+          <span class="dot" style="background:${TYPE_COLORS[d.type]}"></span>
+          <span>${d.label}</span>
+          <span class="arrow">${dir}</span>
+        </div>`).join('')}</div>`
+    : `<div style="font-size:11px;color:var(--text-3)">None</div>`;
+
+  const focusBadge = focusMode
+    ? `<div class="focus-badge" id="btnClearFocus">Focused · click to show all</div>`
+    : `<div class="focus-badge" id="btnSetFocus">Focus on this node</div>`;
+
+  document.getElementById('detail').innerHTML = `
+    <div class="detail-header">
+      <span class="type-badge" style="background:${typeColor}18;color:${typeColor}">${n.type}</span>
+      <div class="name">${n.label}</div>
+      <div class="file">${n.file}${n.line ? ':' + n.line : ''}</div>
+      ${focusBadge}
+    </div>
+    <div class="detail-section">
+      <h4>Purpose</h4>
+      <div class="desc">${n.desc || 'No description available.'}</div>
+    </div>
+    <div class="detail-section">
+      <h4>Calls (${depsList.length})</h4>
+      ${depHtml(depsList, '→')}
+    </div>
+    <div class="detail-section">
+      <h4>Called by (${dependentsList.length})</h4>
+      ${depHtml(dependentsList, '←')}
+    </div>
+    ${n.code ? `<div class="detail-section">
+      <h4>Source</h4>
+      <pre class="code-block">${highlightCode(n.code)}</pre>
+    </div>` : ''}`;
+
+  document.querySelectorAll('.dep-item').forEach(el => {
+    el.addEventListener('click', () => selectNode(el.dataset.id));
+  });
+
+  const fb = document.getElementById('btnSetFocus') || document.getElementById('btnClearFocus');
+  if (fb) fb.addEventListener('click', () => {
+    focusMode = !focusMode;
+    document.getElementById('btnFocus').classList.toggle('active', focusMode);
+    if (selectedId) selectNode(selectedId);
+  });
+}
+
+// Tiny syntax highlighter (Go-oriented)
+function highlightCode(src) {
+  const esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return esc
+    .replace(/(\/\/[^\n]*)/g, '<span class="com">$1</span>')
+    .replace(/('[^']*'|"[^"]*"|`[^`]*`)/g, '<span class="str">$1</span>')
+    .replace(/\b(func|type|struct|interface|map|chan|go|defer|return|if|else|for|range|select|case|default|package|import|var|const|nil|true|false|make|new|len|cap|append|copy|close|delete)\b/g, '<span class="kw">$1</span>')
+    .replace(/\b(int|string|bool|float64|float32|int64|int32|uint|byte|rune|error|context\.Context|sync\.Mutex|sync\.RWMutex|atomic\.Uint64)\b/g, '<span class="type">$1</span>')
+    .replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
+}
+
+/* =========================================================
+   FLOW ANIMATION
+   ========================================================= */
+const flowStatus = document.getElementById('flowStatus');
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function playFlow(flowId, button) {
+  if (flowPlaying) return;
+  flowPlaying = true;
+  document.querySelectorAll('.endpoint').forEach(b => b.classList.remove('playing'));
+  button.classList.add('playing');
+
+  clearSelection();
+  node.classed('flow-active', false).classed('focus-current', false);
+  link.classed('flow-active', false);
+  pulseLayer.selectAll('*').remove();
+
+  const flow = FLOWS[flowId];
+  flowStatus.classList.add('visible');
+
+  const visited = new Set();
+  for (let i = 0; i < flow.path.length; i++) {
+    const id = flow.path[i];
+    const cur = nodeById[id];
+    if (!cur) continue;
+    const isReturn = visited.has(id);
+
+    flowStatus.innerHTML = `
+      <span class="dot"></span>
+      <span class="step">${flow.label}</span>
+      <span class="arrow">·</span>
+      <span style="color:${isReturn ? 'var(--text-2)' : 'var(--c-memory)'};font-size:10px">${isReturn ? '↩ return' : '→ call'}</span>
+      <span class="arrow">·</span>
+      <span class="label">${cur.label}</span>
+      <span class="arrow" style="margin-left:12px;color:var(--text-3)">${i+1}/${flow.path.length}</span>
+    `;
+
+    d3.select(`#node-${id}`).classed('flow-current', true).classed('flow-active', true);
+    visited.add(id);
+
+    if (i > 0) {
+      const prevId = flow.path[i-1];
+      const linkSel = d3.select(`#link-${prevId}-${id}`).size()
+        ? d3.select(`#link-${prevId}-${id}`)
+        : d3.select(`#link-${id}-${prevId}`);
+      linkSel.classed('flow-active', true);
+      animatePulse(nodeById[prevId], cur, isReturn);
+    }
+
+    await sleep(isReturn ? 180 : 380);
+    d3.select(`#node-${id}`).classed('flow-current', false);
+  }
+
+  await sleep(900);
+  node.classed('flow-active', false);
+  link.classed('flow-active', false);
+  flowStatus.classList.remove('visible');
+  button.classList.remove('playing');
+  flowPlaying = false;
+}
+
+function animatePulse(source, target, isReturn) {
+  const pulse = pulseLayer.append('circle')
+    .attr('class','pulse-particle')
+    .attr('r', isReturn ? 2 : 3.5)
+    .style('opacity', isReturn ? 0.5 : 0.9)
+    .attr('cx', source.x)
+    .attr('cy', source.y);
+
+  pulse.transition()
+    .duration(isReturn ? 180 : 360)
+    .ease(d3.easeQuadInOut)
+    .attr('cx', target.x)
+    .attr('cy', target.y)
+    .on('end', function() { d3.select(this).remove(); });
+}
+
+document.querySelectorAll('.endpoint').forEach(btn => {
+  btn.addEventListener('click', () => playFlow(btn.dataset.flow, btn));
+});
+
+/* =========================================================
+   LEGEND FILTERING
+   ========================================================= */
+const hiddenTypes = new Set();
+document.querySelectorAll('#legend li').forEach(li => {
+  li.addEventListener('click', () => {
+    const t = li.dataset.type;
+    if (hiddenTypes.has(t)) { hiddenTypes.delete(t); li.classList.remove('dim'); }
+    else { hiddenTypes.add(t); li.classList.add('dim'); }
+    const anyHidden = hiddenTypes.size > 0;
+    node.style('display', d => hiddenTypes.has(d.type) ? 'none' : null)
+        .style('opacity', d => anyHidden && !hiddenTypes.has(d.type) ? 1 : null);
+    link.style('display', l => (hiddenTypes.has(l.source.type) || hiddenTypes.has(l.target.type)) ? 'none' : null)
+        .style('opacity', l => anyHidden && !hiddenTypes.has(l.source.type) && !hiddenTypes.has(l.target.type) ? 0.25 : null);
+  });
+});
+
+/* =========================================================
+   SEARCH
+   ========================================================= */
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) { searchResults.classList.remove('active'); return; }
+  const hits = NODES.filter(n => n.label.toLowerCase().includes(q) || n.id.toLowerCase().includes(q) || (n.pkg && n.pkg.toLowerCase().includes(q)));
+  searchResults.innerHTML = hits.map(n => `
+    <div class="res" data-id="${n.id}">
+      <span class="dot" style="background:${TYPE_COLORS[n.type]}"></span>
+      <span class="name">${n.label}</span>
+      <span class="pkg">${n.pkg || ''}</span>
+    </div>`).join('');
+  searchResults.classList.toggle('active', hits.length > 0);
+});
+
+searchInput.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { searchInput.value = ''; searchResults.classList.remove('active'); }
+});
+
+searchResults.addEventListener('click', e => {
+  const res = e.target.closest('.res');
+  if (!res) return;
+  const id = res.dataset.id;
+  searchResults.classList.remove('active');
+  searchInput.value = '';
+  zoomToNode(id);
+  selectNode(id);
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) searchResults.classList.remove('active');
+});
+
+function zoomToNode(id) {
+  const n = nodeById[id];
+  if (!n) return;
+  const scale = 1.6;
+  const tx = width/2 - scale * n.x;
+  const ty = height/2 - scale * n.y;
+  svg.transition().duration(600).ease(d3.easeCubicOut)
+    .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+/* =========================================================
+   SETTINGS & CONTROLS
+   ========================================================= */
+// Focus mode toggle
+document.getElementById('btnFocus').addEventListener('click', () => {
+  focusMode = !focusMode;
+  document.getElementById('btnFocus').classList.toggle('active', focusMode);
+  if (selectedId) selectNode(selectedId);
+});
+
+// Label mode cycle: important → all → hover → none → important
+document.getElementById('btnLabels').addEventListener('click', () => {
+  const modes = ['important', 'all', 'hover', 'none'];
+  const idx = modes.indexOf(labelMode);
+  labelMode = modes[(idx + 1) % modes.length];
+  node.selectAll('text').transition().duration(250).style('opacity', d => labelOpacity(d));
+});
+
+// Fullscreen (collapse side panels)
+let fsState = 0; // 0=none, 1=left, 2=right, 3=both
+document.getElementById('btnFullscreen').addEventListener('click', () => {
+  fsState = (fsState + 1) % 4;
+  const layout = document.getElementById('layout');
+  layout.classList.remove('fs-left', 'fs-right', 'fs-both');
+  if (fsState === 1) layout.classList.add('fs-left');
+  if (fsState === 2) layout.classList.add('fs-right');
+  if (fsState === 3) layout.classList.add('fs-both');
+  setTimeout(() => { resize(); simulation.alpha(0.3).restart(); }, 320);
+});
+
+// Export SVG
+function exportSVG() {
+  const svgNode = document.getElementById('graph');
+  const serializer = new XMLSerializer();
+  let source = serializer.serializeToString(svgNode);
+  // Add XML declaration and inline styles
+  source = '<?xml version="1.0" standalone="no"?>\r\n' + source;
+  const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(source);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'nodeflow-graph.svg';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+document.getElementById('btnExport').addEventListener('click', exportSVG);
+
+// Canvas controls
+document.getElementById('btnReset').addEventListener('click', () => {
+  svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+  clearSelection();
+});
+
+document.getElementById('btnRelayout').addEventListener('click', () => {
+  NODES.forEach(n => { n.fx = null; n.fy = null; });
+  simulation.alpha(1).restart();
+});
+
+document.getElementById('btnFit').addEventListener('click', () => {
+  const xs = NODES.map(d => d.x), ys = NODES.map(d => d.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = 60;
+  const dx = maxX - minX, dy = maxY - minY;
+  const scale = Math.min((width - pad*2) / dx, (height - pad*2) / dy, 2);
+  const tx = (width - dx * scale) / 2 - minX * scale;
+  const ty = (height - dy * scale) / 2 - minY * scale;
+  svg.transition().duration(700).ease(d3.easeCubicOut)
+    .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+});
+
+// Physics sliders
+function updatePhysics() {
+  simConfig.charge = +document.getElementById('repelSlider').value;
+  simConfig.distance = +document.getElementById('distSlider').value;
+  simConfig.gravity = +document.getElementById('gravSlider').value;
+  simConfig.collision = +document.getElementById('collSlider').value;
+
+  document.getElementById('repelVal').textContent = simConfig.charge;
+  document.getElementById('distVal').textContent = simConfig.distance;
+  document.getElementById('gravVal').textContent = simConfig.gravity;
+  document.getElementById('collVal').textContent = simConfig.collision;
+
+  simulation.force('link').distance(simConfig.distance);
+  simulation.force('charge').strength(simConfig.charge);
+  simulation.force('x').strength(simConfig.gravity);
+  simulation.force('y').strength(simConfig.gravity);
+  simulation.force('collide').radius(d => d.radius + simConfig.collision);
+  simulation.alpha(0.5).restart();
+}
+
+['repelSlider','distSlider','gravSlider','collSlider'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updatePhysics);
+});
+
+/* =========================================================
+   KEYBOARD SHORTCUTS
+   ========================================================= */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'f') document.getElementById('btnFocus').click();
+  if (e.key === 'l') document.getElementById('btnLabels').click();
+  if (e.key === 'Escape') clearSelection();
+  if (e.key === '0') document.getElementById('btnReset').click();
+  if (e.key === 'r') document.getElementById('btnRelayout').click();
+  if (e.key === 's') searchInput.focus();
+});
+</script>
+</body>
+</html>

@@ -1,13 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 )
 
 func TestHub_MaxWebSocketClients_RejectsAtCap(t *testing.T) {
 	t.Parallel()
 	h := NewHub(1)
-	go h.Run()
+	go h.Run(context.Background())
 
 	c1 := &Client{ID: "a", Hub: h, Send: make(chan []byte, 4)}
 	ok1 := make(chan bool, 1)
@@ -35,7 +36,7 @@ func TestHub_MaxWebSocketClients_RejectsAtCap(t *testing.T) {
 func TestHub_MaxWebSocketClientsZero_Unlimited(t *testing.T) {
 	t.Parallel()
 	h := NewHub(0)
-	go h.Run()
+	go h.Run(context.Background())
 
 	for i := 0; i < 5; i++ {
 		c := &Client{ID: string(rune('A' + i)), Hub: h, Send: make(chan []byte, 4)}

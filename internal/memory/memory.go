@@ -734,13 +734,19 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 func (m *Manager) GetWorking(sessionID string) *WorkingMemory {
+	m.mu.RLock()
+	if wm, ok := m.sessions[sessionID]; ok {
+		m.mu.RUnlock()
+		return wm
+	}
+	m.mu.RUnlock()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
+	// Double-check after acquiring write lock.
 	if wm, ok := m.sessions[sessionID]; ok {
 		return wm
 	}
-
 	wm := NewWorkingMemory(m.budget)
 	m.sessions[sessionID] = wm
 	return wm

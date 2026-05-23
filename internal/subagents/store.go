@@ -27,9 +27,13 @@ type registryFile struct {
 }
 
 // Store loads and saves ~/.opsintelligence/subagents/registry.json.
+// It keeps an in-memory cache to avoid disk I/O on every read.
 type Store struct {
 	root string
-	mu   sync.Mutex
+	mu   sync.RWMutex
+
+	cache      []Agent
+	cacheValid bool
 }
 
 // NewStore uses stateDir as OpsIntelligence root (e.g. ~/.opsintelligence).
@@ -50,22 +54,34 @@ func (s *Store) agentDir(id string) string {
 	return filepath.Join(s.root, "subagents", id)
 }
 
-// Load reads the registry from disk.
+// Load reads the registry from disk, refreshing the in-memory cache.
 func (s *Store) Load() ([]Agent, error) {
+	s.mu.RLock()
+	if s.cacheValid {
+		out := make([]Agent, len(s.cache))
+		copy(out, s.cache)
+		s.mu.RUnlock()
+		return out, nil
+	}
+	s.mu.RUnlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.registryPath())
+	// Double-check after acquiring write lock.
+	if s.cacheValid {
+		out := make([]Agent, len(s.cache))
+		copy(out, s.cache)
+		return out, nil
+	}
+
+	agents, err := s.loadLocked()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	var rf registryFile
-	if err := json.Unmarshal(data, &rf); err != nil {
-		return nil, err
-	}
-	return rf.Agents, nil
+	s.cache = make([]Agent, len(agents))
+	copy(s.cache, agents)
+	s.cacheValid = true
+	return agents, nil
 }
 
 func (s *Store) saveLocked(agents []Agent) error {
@@ -77,7 +93,14 @@ func (s *Store) saveLocked(agents []Agent) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.registryPath(), data, 0o644)
+	if err := os.WriteFile(s.registryPath(), data, 0o644); err != nil {
+		return err
+	}
+	// Refresh cache.
+	s.cache = make([]Agent, len(agents))
+	copy(s.cache, agents)
+	s.cacheValid = true
+	return nil
 }
 
 // Create registers a sub-agent and writes its workspace SOUL.md.

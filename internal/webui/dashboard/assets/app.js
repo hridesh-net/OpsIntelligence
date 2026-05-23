@@ -165,6 +165,9 @@
   let runTracePollId = null;
   let tasksPollId = null;
   let reposPollId = null;
+  let overviewPollId = null;
+  let cmdPaletteActive = false;
+  let cmdPaletteIndex = -1;
 
   let runTraceLineCache = [];
   let runTraceWhichCache = "all";
@@ -190,6 +193,13 @@
     }
   }
 
+  function clearOverviewPoll() {
+    if (overviewPollId != null) {
+      clearInterval(overviewPollId);
+      overviewPollId = null;
+    }
+  }
+
   async function bootAppPage() {
     const me = await getJSON(`${API}/whoami`).catch(() => null);
     if (!me || me.type !== "user") {
@@ -199,6 +209,8 @@
     ME = me;
     renderWhoami(me);
     wireLogout();
+    wireSearchBar();
+    wireKeyboardShortcuts();
     window.addEventListener("hashchange", () => route());
     if (!window.location.hash) window.location.hash = "#/overview";
     route();
@@ -246,6 +258,7 @@
     clearRunTracePoll();
     clearTasksPoll();
     clearReposPoll();
+    clearOverviewPoll();
     const { view, sub } = parseHash();
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
@@ -268,6 +281,9 @@
       case "overview":
         titleEl.textContent = "Overview";
         subEl.textContent = "A quick look at the ops plane.";
+        refreshOverviewStatus();
+        clearOverviewPoll();
+        overviewPollId = setInterval(refreshOverviewStatus, 10000);
         break;
       case "tasks":
         titleEl.textContent = "Tasks";
@@ -3215,10 +3231,213 @@
     const t = document.getElementById("toast");
     if (!t) return;
     t.textContent = msg;
-    t.className = `toast toast-${kind || "info"}`;
-    setTimeout(() => {
+    t.className = `toast toast-${kind || "info"} visible`;
+    if (t._toastTimer) clearTimeout(t._toastTimer);
+    t._toastTimer = setTimeout(() => {
       t.className = "toast hidden";
-    }, 4500);
+    }, 4000);
+  }
+
+  // ── command palette ──
+
+  const CMD_ITEMS = [
+    { label: "Overview", route: "#/overview", icon: "◈" },
+    { label: "Tasks", route: "#/tasks", icon: "◈" },
+    { label: "Users & Roles", route: "#/users", icon: "◈" },
+    { label: "API keys", route: "#/apikeys", icon: "◈" },
+    { label: "Repo Intel", route: "#/repos", icon: "◈" },
+    { label: "Run trace", route: "#/runtrace", icon: "◈" },
+    { label: "Settings → Gateway", route: "#/settings/gateway", icon: "⚙" },
+    { label: "Settings → Auth", route: "#/settings/auth", icon: "⚙" },
+    { label: "Settings → Datastore", route: "#/settings/datastore", icon: "⚙" },
+    { label: "Settings → Providers", route: "#/settings/providers", icon: "⚙" },
+    { label: "Settings → MCP", route: "#/settings/mcp", icon: "⚙" },
+    { label: "Settings → Webhooks", route: "#/settings/webhooks", icon: "⚙" },
+    { label: "Settings → Channels", route: "#/settings/channels", icon: "⚙" },
+    { label: "Settings → DevOps", route: "#/settings/devops", icon: "⚙" },
+    { label: "Settings → Agent", route: "#/settings/agent", icon: "⚙" },
+    { label: "Settings → Repo Intel", route: "#/settings/repo_intel", icon: "⚙" },
+  ];
+
+  function wireSearchBar() {
+    const bar = document.getElementById("global-search-input");
+    if (!bar) return;
+    bar.addEventListener("focus", () => openCmdPalette());
+    bar.addEventListener("click", () => openCmdPalette());
+  }
+
+  function openCmdPalette() {
+    const backdrop = document.getElementById("cmd-palette-backdrop");
+    const input = document.getElementById("cmd-palette-input");
+    const results = document.getElementById("cmd-palette-results");
+    if (!backdrop || !input) return;
+    backdrop.classList.remove("hidden");
+    input.value = "";
+    input.focus();
+    cmdPaletteActive = true;
+    cmdPaletteIndex = -1;
+    renderCmdResults("");
+    const clickOutside = (e) => {
+      if (e.target === backdrop) { closeCmdPalette(); document.removeEventListener("click", clickOutside); }
+    };
+    setTimeout(() => document.addEventListener("click", clickOutside), 10);
+  }
+
+  function closeCmdPalette() {
+    const backdrop = document.getElementById("cmd-palette-backdrop");
+    if (backdrop) backdrop.classList.add("hidden");
+    cmdPaletteActive = false;
+    cmdPaletteIndex = -1;
+  }
+
+  function renderCmdResults(query) {
+    const results = document.getElementById("cmd-palette-results");
+    if (!results) return;
+    const q = query.trim().toLowerCase();
+    const hits = q
+      ? CMD_ITEMS.filter((it) => it.label.toLowerCase().includes(q))
+      : CMD_ITEMS.slice(0, 8);
+    results.innerHTML = hits.map((it, i) => `
+      <div class="cmd-res" data-idx="${i}" data-route="${it.route}">
+        <span style="color:var(--accent);font-size:11px">${it.icon}</span>
+        <span>${escapeHTML(it.label)}</span>
+        <span class="shortcut">${it.route.replace("#/", "")}</span>
+      </div>`).join("");
+    results.querySelectorAll(".cmd-res").forEach((el) => {
+      el.addEventListener("click", () => {
+        window.location.hash = el.dataset.route;
+        closeCmdPalette();
+      });
+      el.addEventListener("mouseenter", () => {
+        cmdPaletteIndex = Number(el.dataset.idx);
+        highlightCmdItem();
+      });
+    });
+  }
+
+  function highlightCmdItem() {
+    const results = document.getElementById("cmd-palette-results");
+    if (!results) return;
+    results.querySelectorAll(".cmd-res").forEach((el, i) => {
+      el.classList.toggle("active", i === cmdPaletteIndex);
+    });
+  }
+
+  function wireKeyboardShortcuts() {
+    document.addEventListener("keydown", (e) => {
+      if (cmdPaletteActive) {
+        const results = document.getElementById("cmd-palette-results");
+        const items = results ? results.querySelectorAll(".cmd-res") : [];
+        if (e.key === "Escape") { e.preventDefault(); closeCmdPalette(); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); cmdPaletteIndex = Math.min(cmdPaletteIndex + 1, items.length - 1); highlightCmdItem(); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); cmdPaletteIndex = Math.max(cmdPaletteIndex - 1, -1); highlightCmdItem(); return; }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (cmdPaletteIndex >= 0 && items[cmdPaletteIndex]) {
+            window.location.hash = items[cmdPaletteIndex].dataset.route;
+            closeCmdPalette();
+          }
+          return;
+        }
+        return;
+      }
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      if (e.key === "?") { e.preventDefault(); openShortcutsModal(); return; }
+      if (e.key === "/") { e.preventDefault(); openCmdPalette(); return; }
+      if (e.key === "g" && !e.repeat) {
+        // wait for next key
+        const handler = (ev) => {
+          document.removeEventListener("keydown", handler);
+          if (ev.key === "o") window.location.hash = "#/overview";
+          if (ev.key === "t") window.location.hash = "#/tasks";
+          if (ev.key === "u") window.location.hash = "#/users";
+          if (ev.key === "a") window.location.hash = "#/apikeys";
+          if (ev.key === "r") window.location.hash = "#/repos";
+          if (ev.key === "s") window.location.hash = "#/settings";
+          if (ev.key === "l") window.location.hash = "#/runtrace";
+        };
+        document.addEventListener("keydown", handler, { once: true });
+        setTimeout(() => document.removeEventListener("keydown", handler), 600);
+      }
+    });
+
+    const kbdHelp = document.getElementById("kbd-help");
+    if (kbdHelp) kbdHelp.addEventListener("click", openShortcutsModal);
+
+    const paletteInput = document.getElementById("cmd-palette-input");
+    if (paletteInput) {
+      paletteInput.addEventListener("input", (e) => {
+        renderCmdResults(e.target.value);
+        cmdPaletteIndex = -1;
+      });
+    }
+  }
+
+  function openShortcutsModal() {
+    const modal = openModal({ title: "Keyboard shortcuts" });
+    modal.body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:13px">
+        <div style="color:var(--fg-muted)">/</div><div>Open command palette</div>
+        <div style="color:var(--fg-muted)">?</div><div>Show this help</div>
+        <div style="color:var(--fg-muted)">g o</div><div>Go to Overview</div>
+        <div style="color:var(--fg-muted)">g t</div><div>Go to Tasks</div>
+        <div style="color:var(--fg-muted)">g u</div><div>Go to Users</div>
+        <div style="color:var(--fg-muted)">g a</div><div>Go to API keys</div>
+        <div style="color:var(--fg-muted)">g r</div><div>Go to Repo Intel</div>
+        <div style="color:var(--fg-muted)">g s</div><div>Go to Settings</div>
+        <div style="color:var(--fg-muted)">g l</div><div>Go to Run trace</div>
+        <div style="color:var(--fg-muted)">Esc</div><div>Close modal / palette</div>
+      </div>
+    `;
+    setModalFooter(modal, [{ label: "Close", kind: "ghost", onClick: () => closeModal(modal) }]);
+  }
+
+  async function refreshOverviewStatus() {
+    try {
+      const [tasksData, configData] = await Promise.allSettled([
+        fetchJSON(`${API}/agent-tasks`).catch(() => null),
+        fetchJSON(`${API}/config/redis`).catch(() => null),
+      ]);
+      const tasks = tasksData.status === "fulfilled" && tasksData.value ? tasksData.value.tasks || [] : [];
+      const running = tasks.filter((t) => t.status === "running").length;
+      const pending = tasks.filter((t) => t.status === "pending").length;
+      const taskEl = document.getElementById("status-tasks");
+      const taskHint = document.getElementById("status-tasks-hint");
+      if (taskEl) {
+        if (running > 0) {
+          taskEl.innerHTML = `<span class="pulse-dot"></span> ${running} running`;
+          taskEl.className = "status-value";
+        } else if (pending > 0) {
+          taskEl.textContent = `${pending} pending`;
+          taskEl.className = "status-value status-warn";
+        } else {
+          taskEl.textContent = `${tasks.length} total`;
+          taskEl.className = "status-value status-ok";
+        }
+      }
+      if (taskHint) taskHint.textContent = `${tasks.length} task${tasks.length !== 1 ? "s" : ""} in memory`;
+
+      const redisCfg = configData.status === "fulfilled" && configData.value ? configData.value.config : null;
+      const redisEl = document.getElementById("status-redis");
+      const redisHint = document.getElementById("status-redis-hint");
+      if (redisEl) {
+        if (redisCfg && redisCfg.enabled) {
+          redisEl.innerHTML = `<span class="pulse-dot ok"></span> Enabled`;
+          redisEl.className = "status-value";
+          if (redisHint) redisHint.textContent = `${redisCfg.addr || "default addr"}`;
+        } else {
+          redisEl.textContent = "Disabled";
+          redisEl.className = "status-value status-ok";
+          if (redisHint) redisHint.textContent = "Zero-overhead mode";
+        }
+      }
+    } catch (_) {
+      // silently fail on overview status refresh
+    }
+    const verEl = document.getElementById("status-version");
+    if (verEl && verEl.textContent === "—") {
+      verEl.textContent = "3c";
+    }
   }
 
   function kvTagsToText(v) {

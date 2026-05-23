@@ -8,10 +8,13 @@ Use this site as the structured guide; the repository [README](https://github.co
 
 | Section | What you will find |
 | -------- | ------------------ |
+| [Getting started](getting-started.md) | 5-minute bootstrap checklist |
 | [Install](install.md) | Release installer, pinned versions, build-from-source, environment toggles, uninstall |
 | [Configuration](configuration.md) | State directory, onboarding, YAML pointers, example config reference |
+| [User guide](guides/user-guide/index.md) | Dashboard walkthrough, CLI cheat sheet, workflow patterns, troubleshooting |
 | [Architecture](architecture/overview.md) | Request flow, major packages, resource usage — internals for contributors and operators |
 | [Agents & tools](agents-tools.md) | Runner loop, skills, smart prompts / chains, specialist routing |
+| [Multi-agent systems in Go](guides/multi-agent-go/index.md) | Concepts, patterns, and production practices for building autonomous multi-agent apps |
 | [Repo intelligence](repo-intelligence.md) | Optional indexing, call graph, hybrid search, CLI and dashboard |
 | [Observability](observability.md) | Run traces, OpenTelemetry, logs |
 | [Security](security.md) | Tokens, guardrails, audit logging |
