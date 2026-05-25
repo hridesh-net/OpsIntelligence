@@ -73,6 +73,9 @@ type AuthService struct {
 	// cmd/opsintelligence after BuildAuthService when the full agent stack runs.
 	Tasks *subagents.TaskManager
 
+	// Kanban is the card dispatch service (optional). Set from cmd/opsintelligence.
+	Kanban KanbanDispatcher
+
 	Log *zap.Logger
 }
 
@@ -621,5 +624,13 @@ func (f *sessionStoreFacade) TaskHistory() datastore.TaskHistoryRepo            
 func (f *sessionStoreFacade) OIDCState() datastore.OIDCStateRepo                  { return f.store.OIDCState() }
 func (f *sessionStoreFacade) GitHubAppInstallations() githubapp.InstallationRepo  { return f.store.GitHubAppInstallations() }
 func (f *sessionStoreFacade) GitHubAppConnectTokens() githubapp.ConnectTokenRepo  { return f.store.GitHubAppConnectTokens() }
+func (f *sessionStoreFacade) Boards() datastore.BoardRepo                        { return f.store.Boards() }
+func (f *sessionStoreFacade) BoardColumns() datastore.BoardColumnRepo            { return f.store.BoardColumns() }
+func (f *sessionStoreFacade) BoardCards() datastore.BoardCardRepo                { return f.store.BoardCards() }
+func (f *sessionStoreFacade) CardRuns() datastore.CardRunRepo                    { return f.store.CardRuns() }
+func (f *sessionStoreFacade) CardRunEvents() datastore.CardRunEventRepo          { return f.store.CardRunEvents() }
+func (f *sessionStoreFacade) PendingDecisions() datastore.PendingDecisionRepo    { return f.store.PendingDecisions() }
+func (f *sessionStoreFacade) BoardAgents() datastore.BoardAgentRepo              { return f.store.BoardAgents() }
+func (f *sessionStoreFacade) Personas() datastore.PersonaRepo                    { return f.store.Personas() }
 
 var _ datastore.Store = (*sessionStoreFacade)(nil)

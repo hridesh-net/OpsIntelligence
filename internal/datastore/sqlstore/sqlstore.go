@@ -89,6 +89,14 @@ func (s *Store) TaskHistory() datastore.TaskHistoryRepo             { return &ta
 func (s *Store) OIDCState() datastore.OIDCStateRepo                 { return &oidcStateRepo{s: s} }
 func (s *Store) GitHubAppInstallations() githubapp.InstallationRepo  { return &githubAppRepo{s: s} }
 func (s *Store) GitHubAppConnectTokens() githubapp.ConnectTokenRepo { return &connectTokenRepo{s: s} }
+func (s *Store) Boards() datastore.BoardRepo                        { return &boardRepo{s: s} }
+func (s *Store) BoardColumns() datastore.BoardColumnRepo            { return &boardColumnRepo{s: s} }
+func (s *Store) BoardCards() datastore.BoardCardRepo                { return &boardCardRepo{s: s} }
+func (s *Store) CardRuns() datastore.CardRunRepo                    { return &cardRunRepo{s: s} }
+func (s *Store) CardRunEvents() datastore.CardRunEventRepo          { return &cardRunEventRepo{s: s} }
+func (s *Store) PendingDecisions() datastore.PendingDecisionRepo    { return &pendingDecisionRepo{s: s} }
+func (s *Store) BoardAgents() datastore.BoardAgentRepo              { return &boardAgentRepo{s: s} }
+func (s *Store) Personas() datastore.PersonaRepo                    { return &personaRepo{s: s} }
 
 // ─── shared helpers ─────────────────────────────────────────────────
 

@@ -554,3 +554,41 @@ func decodeBase64(s string) (string, error) {
 	}
 	return string(b), nil
 }
+
+// Issue is a trimmed GitHub issue.
+type Issue struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	State     string `json:"state"`
+	HTMLURL   string `json:"html_url"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// ListIssues returns issues (not PRs) for owner/repo.
+func (c *Client) ListIssues(ctx context.Context, owner, repo, state string) ([]Issue, error) {
+	if state == "" {
+		state = "open"
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues?state=%s&per_page=100", c.cfg.BaseURL, owner, repo, state)
+	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var issues []Issue
+	if err := json.Unmarshal(buf.Bytes(), &issues); err != nil {
+		return nil, fmt.Errorf("github: decode issues: %w", err)
+	}
+	var out []Issue
+	for _, i := range issues {
+		if !strings.Contains(i.HTMLURL, "/pull/") {
+			out = append(out, i)
+		}
+	}
+	return out, nil
+}

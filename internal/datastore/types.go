@@ -201,3 +201,171 @@ type OIDCState struct {
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Kanban — boards, columns, cards, runs, events, decisions, agents, personas
+// ─────────────────────────────────────────────────────────────────────
+
+// Board is a kanban board (one per workspace / repo).
+type Board struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	TeamID     string    `json:"team_id,omitempty"`
+	RepoURL    string    `json:"repo_url,omitempty"`
+	RepoPath   string    `json:"repo_path,omitempty"`
+	Mode       string    `json:"mode"` // local | github
+	Config     map[string]any `json:"config,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// BoardColumn is a column on a kanban board.
+type BoardColumn struct {
+	ID        string    `json:"id"`
+	BoardID   string    `json:"board_id"`
+	Name      string    `json:"name"`
+	Position  int       `json:"position"`
+	Color     string    `json:"color,omitempty"`
+	WIPLimit  *int      `json:"wip_limit,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// BoardCard is a task / issue card on a board.
+type BoardCard struct {
+	ID           string         `json:"id"`
+	BoardID      string         `json:"board_id"`
+	ColumnID     string         `json:"column_id"`
+	IssueNumber  *int           `json:"issue_number,omitempty"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description,omitempty"`
+	CardType     string         `json:"card_type"` // bug | feature | refactor | review | spike | chore
+	Priority     string         `json:"priority"`  // p0 | p1 | p2 | p3
+	Effort       string         `json:"effort,omitempty"` // small | medium | large
+	Status       string         `json:"status"`    // queued | running | awaiting | completed | failed | stopped
+	Assignee     string         `json:"assignee,omitempty"`
+	AssigneeType string         `json:"assignee_type,omitempty"` // agent | user | unassigned
+	Branch       string         `json:"branch,omitempty"`
+	WorktreePath string         `json:"worktree_path,omitempty"`
+	CostUSD      float64        `json:"cost_usd"`
+	TokenIn      int64          `json:"token_in"`
+	TokenOut     int64          `json:"token_out"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	StartedAt    *time.Time     `json:"started_at,omitempty"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+}
+
+// CardRun is one agent execution on a card.
+type CardRun struct {
+	ID           string    `json:"id"`
+	CardID       string    `json:"card_id"`
+	RunNumber    int       `json:"run_number"`
+	AgentID      string    `json:"agent_id"`
+	AgentType    string    `json:"agent_type"` // go | claude-code | codex | kimi-code | mcp
+	Model        string    `json:"model,omitempty"`
+	PersonaID    string    `json:"persona_id,omitempty"`
+	Status       string    `json:"status"` // running | awaiting | completed | failed | stopped
+	CostUSD      float64   `json:"cost_usd"`
+	TokenIn      int64     `json:"token_in"`
+	TokenOut     int64     `json:"token_out"`
+	ElapsedMs    int64     `json:"elapsed_ms"`
+	WorktreePath string    `json:"worktree_path,omitempty"`
+	Branch       string    `json:"branch,omitempty"`
+	BaseBranch   string    `json:"base_branch,omitempty"`
+	ResultSummary string   `json:"result_summary,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	CreatedBy    string    `json:"created_by,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+// CardRunEvent is one row in the agent event stream for a run.
+type CardRunEvent struct {
+	ID       int64          `json:"id"`
+	RunID    string         `json:"run_id"`
+	Kind     string         `json:"kind"` // tool_start | tool_end | text | decision | error | progress | lifecycle
+	Phase    string         `json:"phase,omitempty"`
+	Message  string         `json:"message"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+// PendingDecision is a question posed by an agent that needs human input.
+type PendingDecision struct {
+	ID         string     `json:"id"`
+	RunID      string     `json:"run_id"`
+	CardID     string     `json:"card_id"`
+	Question   string     `json:"question"`
+	Options    []string   `json:"options"`
+	Status     string     `json:"status"` // pending | answered | dismissed
+	Answer     string     `json:"answer,omitempty"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// BoardAgent is a registered agent / provider that can be assigned to cards.
+type BoardAgent struct {
+	ID         string         `json:"id"`
+	BoardID    string         `json:"board_id"`
+	Name       string         `json:"name"`
+	AgentType  string         `json:"agent_type"` // go | claude-code | codex | kimi-code | mcp
+	ProviderID string         `json:"provider_id,omitempty"`
+	Config     map[string]any `json:"config,omitempty"`
+	IsDefault  bool           `json:"is_default"`
+	IsActive   bool           `json:"is_active"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// Persona is a named system prompt lens.
+type Persona struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Icon         string    `json:"icon,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	SystemPrompt string    `json:"system_prompt"`
+	IsBuiltIn    bool      `json:"is_builtin"`
+	CreatedBy    string    `json:"created_by,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ── Filters ──
+
+// BoardFilter parameterises BoardRepo.List.
+type BoardFilter struct {
+	TeamID string
+	Limit  int
+	Offset int
+}
+
+// BoardCardFilter parameterises BoardCardRepo.List.
+type BoardCardFilter struct {
+	BoardID  string
+	ColumnID string
+	Status   string
+	Assignee string
+	Limit    int
+	Offset   int
+}
+
+// CardRunFilter parameterises CardRunRepo.List.
+type CardRunFilter struct {
+	CardID string
+	Status string
+	Limit  int
+	Offset int
+}
+
+// CardRunEventFilter parameterises CardRunEventRepo.List.
+type CardRunEventFilter struct {
+	RunID  string
+	SinceID int64
+	Limit  int
+}
+
+// PersonaFilter parameterises PersonaRepo.List.
+type PersonaFilter struct {
+	BuiltInOnly bool
+	Limit       int
+	Offset      int
+}

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +16,11 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/datastore/drivers" // register sqlite+postgres
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
+	"github.com/opsintelligence/opsintelligence/internal/kanban"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
+	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/redis"
 )
 
@@ -212,4 +218,47 @@ func StartGitHubAppConnector(ctx context.Context, cfg *config.Config, runner *ag
 		zap.Int64("installation_id", cc.InstallationID),
 	)
 	go conn.Run(ctx)
+}
+
+// attachKanbanToGateway wires the kanban dispatch service when the datastore
+// and provider registry are available.
+func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gateway.Server, log *zap.Logger) {
+	if srv == nil || srv.AuthService == nil || srv.AuthService.Store == nil {
+		return
+	}
+	store := srv.AuthService.Store
+
+	wtBase := filepath.Join(cfg.StateDir, "workspace", "kanban")
+	if err := os.MkdirAll(wtBase, 0o755); err != nil {
+		log.Warn("kanban: failed to create worktree base", zap.Error(err))
+	}
+
+	wtMgr := worktree.NewManager(wtBase, log)
+	_ = wtMgr.EnsureBase()
+
+	driverReg := dispatcher.NewRegistry()
+
+	// Register the Go driver if a default provider is available.
+	if reg != nil {
+		for _, name := range []string{"google", "openai", "anthropic", "groq", "ollama"} {
+			if p, ok := reg.Get(name); ok {
+				driverReg.Register(dispatcher.NewGoDriver(p, log))
+				log.Info("kanban: registered Go driver", zap.String("provider", name))
+				break
+			}
+		}
+	}
+
+	// Register CLI adapters (best-effort; they work if the binary is on PATH).
+	driverReg.Register(dispatcher.NewClaudeCodeDriver(log))
+	driverReg.Register(dispatcher.NewCodexDriver(log))
+	log.Info("kanban: registered CLI drivers", zap.Strings("drivers", []string{"claude-code", "codex"}))
+
+	svc := kanban.NewService(store, wtMgr, driverReg, log)
+	srv.AuthService.Kanban = svc
+
+	log.Info("kanban dispatch service wired",
+		zap.String("worktree_base", wtBase),
+		zap.Int("drivers", driverReg.Len()),
+	)
 }

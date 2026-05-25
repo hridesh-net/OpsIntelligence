@@ -307,6 +307,15 @@ func (s *Server) Start() error {
 		mux.Handle("/api/v1/repos/", phase2OrLegacyAuth(s.RepoIntel.HandleRepos))
 	}
 
+	// ── API: Kanban Boards ────────────────────────────────────────────────────
+	if s.AuthService != nil {
+		mux.Handle("/api/v1/boards", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/boards/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/runs/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/personas", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/personas/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+	}
+
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
 	mux.HandleFunc("/api/chat", auth(s.withCorrelation(s.handleChat)))
 

@@ -60,6 +60,10 @@ func BuiltInRoles() []RoleSpec {
 				PermChannelsRead, PermChannelsManage,
 				PermSettingsRead, PermSettingsWrite, PermSecretsRead,
 				PermRunTraceRead,
+				PermBoardsRead, PermBoardsManage,
+				PermCardsCreate, PermCardsEdit, PermCardsDelete,
+				PermRunsDispatch, PermRunsCancel, PermRunsRead,
+				PermPersonasRead, PermPersonasManage,
 			},
 		},
 		{
@@ -77,6 +81,9 @@ func BuiltInRoles() []RoleSpec {
 				PermWebhooksRead,
 				PermChannelsRead,
 				PermSettingsRead,
+				PermBoardsRead, PermCardsCreate, PermCardsEdit,
+				PermRunsDispatch, PermRunsRead,
+				PermPersonasRead,
 			},
 		},
 		{
@@ -94,6 +101,9 @@ func BuiltInRoles() []RoleSpec {
 				PermChannelsRead,
 				PermSettingsRead,
 				PermRunTraceRead,
+				PermBoardsRead, PermCardsCreate, PermCardsEdit,
+				PermRunsDispatch, PermRunsRead,
+				PermPersonasRead,
 			},
 		},
 		{
@@ -113,6 +123,8 @@ func BuiltInRoles() []RoleSpec {
 				PermChannelsRead,
 				PermSettingsRead,
 				PermRunTraceRead,
+				PermBoardsRead, PermRunsRead,
+				PermPersonasRead,
 			},
 		},
 		{
@@ -126,6 +138,8 @@ func BuiltInRoles() []RoleSpec {
 				PermToolsRead,
 				PermWebhooksRead,
 				PermChannelsRead,
+				PermBoardsRead,
+				PermPersonasRead,
 			},
 		},
 	}

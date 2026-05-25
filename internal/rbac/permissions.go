@@ -145,6 +145,20 @@ const (
 	PermRunTraceRead Permission = "run_trace.read"
 )
 
+// Kanban — boards, cards, agent runs, personas.
+const (
+	PermBoardsRead     Permission = "boards.read"
+	PermBoardsManage   Permission = "boards.manage"
+	PermCardsCreate    Permission = "cards.create"
+	PermCardsEdit      Permission = "cards.edit"
+	PermCardsDelete    Permission = "cards.delete"
+	PermRunsDispatch   Permission = "runs.dispatch"
+	PermRunsCancel     Permission = "runs.cancel"
+	PermRunsRead       Permission = "runs.read"
+	PermPersonasRead   Permission = "personas.read"
+	PermPersonasManage Permission = "personas.manage"
+)
+
 // AllPermissions returns every permission declared above. The returned
 // slice is freshly allocated; callers may sort or filter without
 // racing other callers.
@@ -165,5 +179,9 @@ func AllPermissions() []Permission {
 		PermSettingsRead, PermSettingsWrite, PermSecretsRead, PermSecretsWrite, PermDatastoreAdmin,
 		PermDashboardView, PermChatUse,
 		PermRunTraceRead,
+		PermBoardsRead, PermBoardsManage,
+		PermCardsCreate, PermCardsEdit, PermCardsDelete,
+		PermRunsDispatch, PermRunsCancel, PermRunsRead,
+		PermPersonasRead, PermPersonasManage,
 	}
 }

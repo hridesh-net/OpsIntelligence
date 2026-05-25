@@ -186,3 +186,37 @@ func nullableTime(t *time.Time) any {
 	}
 	return *t
 }
+
+// nullableInt converts a nil *int into NULL for SQL.
+func nullableInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// sqlNullInt64 is a thin alias so scan helpers don't import database/sql.
+type sqlNullInt64 struct {
+	Int64 int64
+	Valid bool
+}
+
+func (n *sqlNullInt64) Scan(value any) error {
+	if value == nil {
+		n.Int64, n.Valid = 0, false
+		return nil
+	}
+	switch v := value.(type) {
+	case int64:
+		n.Int64, n.Valid = v, true
+	case int:
+		n.Int64, n.Valid = int64(v), true
+	case int32:
+		n.Int64, n.Valid = int64(v), true
+	case float64:
+		n.Int64, n.Valid = int64(v), true
+	default:
+		n.Valid = false
+	}
+	return nil
+}

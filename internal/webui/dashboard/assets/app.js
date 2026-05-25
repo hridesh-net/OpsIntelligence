@@ -166,6 +166,7 @@
   let tasksPollId = null;
   let reposPollId = null;
   let overviewPollId = null;
+  let boardsPollId = null;
   let cmdPaletteActive = false;
   let cmdPaletteIndex = -1;
 
@@ -197,6 +198,13 @@
     if (overviewPollId != null) {
       clearInterval(overviewPollId);
       overviewPollId = null;
+    }
+  }
+
+  function clearBoardsPoll() {
+    if (boardsPollId != null) {
+      clearInterval(boardsPollId);
+      boardsPollId = null;
     }
   }
 
@@ -259,6 +267,7 @@
     clearTasksPoll();
     clearReposPoll();
     clearOverviewPoll();
+    clearBoardsPoll();
     const { view, sub } = parseHash();
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
@@ -284,6 +293,11 @@
         refreshOverviewStatus();
         clearOverviewPoll();
         overviewPollId = setInterval(refreshOverviewStatus, 10000);
+        break;
+      case "boards":
+        titleEl.textContent = "Kanban Boards";
+        subEl.textContent = "Agent-driven kanban boards for your projects.";
+        renderBoardsView(actionsEl);
         break;
       case "tasks":
         titleEl.textContent = "Tasks";
@@ -3496,3 +3510,297 @@
     return out;
   }
 })();
+
+
+  // ─────────────────────── kanban boards ───────────────────────
+
+  let currentBoardId = null;
+
+  function renderBoardsView(actionsEl) {
+    const container = document.getElementById("boards-list");
+    const detail = document.getElementById("board-detail");
+    container.classList.remove("hidden");
+    detail.classList.add("hidden");
+    currentBoardId = null;
+
+    // "New board" button
+    const btn = document.createElement("button");
+    btn.className = "primary";
+    btn.textContent = "+ New board";
+    btn.addEventListener("click", () => showCreateBoardModal());
+    actionsEl.appendChild(btn);
+
+    refreshBoardsList();
+    clearBoardsPoll();
+    boardsPollId = setInterval(refreshBoardsList, 5000);
+  }
+
+  async function refreshBoardsList() {
+    const container = document.getElementById("boards-list");
+    if (!container || !container.classList.contains("hidden") === false) return;
+    try {
+      const data = await getJSON(`${API}/boards`);
+      const boards = data.boards || [];
+      if (boards.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>No boards yet. Create your first kanban board to get started.</p>
+          </div>`;
+        return;
+      }
+      let html = `<div class="boards-grid">`;
+      for (const b of boards) {
+        html += `
+          <div class="board-card" data-id="${escapeHtml(b.id)}">
+            <div class="board-card-name">${escapeHtml(b.name)}</div>
+            <div class="board-card-meta">${escapeHtml(b.mode || "local")}${b.repo_url ? " · " + escapeHtml(b.repo_url) : ""}</div>
+          </div>`;
+      }
+      html += `</div>`;
+      container.innerHTML = html;
+      container.querySelectorAll(".board-card").forEach((card) => {
+        card.addEventListener("click", () => openBoard(card.dataset.id));
+      });
+    } catch (err) {
+      container.innerHTML = `<div class="error">Failed to load boards: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function openBoard(boardId) {
+    currentBoardId = boardId;
+    const container = document.getElementById("boards-list");
+    const detail = document.getElementById("board-detail");
+    container.classList.add("hidden");
+    detail.classList.remove("hidden");
+
+    document.getElementById("section-title").textContent = "Board";
+    document.getElementById("section-sub").textContent = "Kanban view";
+
+    await refreshBoardView();
+    clearBoardsPoll();
+    boardsPollId = setInterval(refreshBoardView, 5000);
+  }
+
+  async function refreshBoardView() {
+    const detail = document.getElementById("board-detail");
+    if (!detail || detail.classList.contains("hidden")) return;
+    if (!currentBoardId) return;
+    try {
+      const data = await getJSON(`${API}/boards/${currentBoardId}`);
+      const board = data.board;
+      const columns = data.columns || [];
+      const cards = data.cards || [];
+
+      let html = `<div class="kanban-toolbar">
+        <button class="ghost" id="board-back">← Back to boards</button>
+        <button class="primary" id="board-new-card">+ New task</button>
+      </div>`;
+      html += `<div class="kanban-board">`;
+      for (const col of columns) {
+        const colCards = cards.filter((c) => c.column_id === col.id);
+        html += `<div class="kanban-column" data-column-id="${escapeHtml(col.id)}">
+          <div class="kanban-column-header">
+            <span class="kanban-column-name">${escapeHtml(col.name)}</span>
+            <span class="kanban-column-count">${colCards.length}</span>
+          </div>
+          <div class="kanban-column-cards">`;
+        for (const card of colCards) {
+          const priorityClass = `priority-${card.priority || "p2"}`;
+          const typeLabel = card.card_type ? card.card_type.toUpperCase() : "TASK";
+          const statusIcon = card.status === "running" ? "⚡" : card.status === "awaiting" ? "⏸" : "";
+          html += `
+            <div class="kanban-card ${priorityClass}" draggable="true" data-card-id="${escapeHtml(card.id)}">
+              <div class="kanban-card-top">
+                <span class="kanban-card-type">${escapeHtml(typeLabel)}</span>
+                <span class="kanban-card-priority">${escapeHtml(card.priority || "p2")}</span>
+              </div>
+              <div class="kanban-card-title">${escapeHtml(card.title)}</div>
+              <div class="kanban-card-bottom">
+                <span class="kanban-card-status">${statusIcon} ${escapeHtml(card.status || "queued")}</span>
+                ${card.cost_usd ? `<span class="kanban-card-cost">$${Number(card.cost_usd).toFixed(2)}</span>` : ""}
+              </div>
+            </div>`;
+        }
+        html += `</div></div>`;
+      }
+      html += `</div>`;
+      detail.innerHTML = html;
+
+      // Wire back button
+      document.getElementById("board-back").addEventListener("click", () => {
+        renderBoardsView(document.getElementById("content-actions"));
+      });
+
+      // Wire new card button
+      document.getElementById("board-new-card").addEventListener("click", () => {
+        showCreateCardModal(currentBoardId);
+      });
+
+      // Wire card clicks
+      detail.querySelectorAll(".kanban-card").forEach((cardEl) => {
+        cardEl.addEventListener("click", () => showCardDetailModal(cardEl.dataset.cardId));
+      });
+
+      // Wire drag-and-drop
+      setupKanbanDragDrop(detail);
+    } catch (err) {
+      detail.innerHTML = `<div class="error">Failed to load board: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function setupKanbanDragDrop(boardEl) {
+    let draggedId = null;
+    boardEl.querySelectorAll(".kanban-card").forEach((card) => {
+      card.addEventListener("dragstart", (e) => {
+        draggedId = card.dataset.cardId;
+        e.dataTransfer.setData("text/plain", draggedId);
+        card.classList.add("dragging");
+      });
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        draggedId = null;
+      });
+    });
+    boardEl.querySelectorAll(".kanban-column").forEach((col) => {
+      col.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        col.classList.add("drag-over");
+      });
+      col.addEventListener("dragleave", () => {
+        col.classList.remove("drag-over");
+      });
+      col.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        col.classList.remove("drag-over");
+        const cardId = e.dataTransfer.getData("text/plain");
+        const columnId = col.dataset.columnId;
+        if (!cardId || !columnId) return;
+        try {
+          await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/move`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", ...csrfHeaders() },
+            body: JSON.stringify({ column_id: columnId }),
+          });
+          await refreshBoardView();
+        } catch (err) {
+          showToast("Move failed: " + err.message);
+        }
+      });
+    });
+  }
+
+  async function showCreateBoardModal() {
+    const name = prompt("Board name:");
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/boards`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "create failed");
+      await refreshBoardsList();
+    } catch (err) {
+      showToast("Create board failed: " + err.message);
+    }
+  }
+
+  async function showCreateCardModal(boardId) {
+    const title = prompt("Task title:");
+    if (!title) return;
+    try {
+      const res = await fetch(`${API}/boards/${boardId}/cards`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "create failed");
+      await refreshBoardView();
+    } catch (err) {
+      showToast("Create card failed: " + err.message);
+    }
+  }
+
+  async function showCardDetailModal(cardId) {
+    try {
+      const data = await getJSON(`${API}/boards/${currentBoardId}/cards/${cardId}`);
+      const card = data.card;
+      const runs = data.runs || [];
+
+      const modal = document.createElement("div");
+      modal.className = "modal-overlay";
+      let runsHtml = "";
+      for (const run of runs) {
+        runsHtml += `<div class="run-row">
+          <span class="run-status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+          <span class="run-agent">${escapeHtml(run.agent_id)}</span>
+          ${run.cost_usd ? `<span class="run-cost">$${Number(run.cost_usd).toFixed(2)}</span>` : ""}
+        </div>`;
+      }
+      modal.innerHTML = `
+        <div class="modal">
+          <div class="modal-header">
+            <h3>#${escapeHtml(card.id.slice(0, 8))} · ${escapeHtml(card.title)}</h3>
+            <button class="modal-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="card-meta">
+              <span class="badge">${escapeHtml((card.card_type || "feature").toUpperCase())}</span>
+              <span class="badge ${card.priority || "p2"}">${escapeHtml(card.priority || "p2")}</span>
+              <span class="badge">${escapeHtml(card.status || "queued")}</span>
+            </div>
+            <p class="card-description">${escapeHtml(card.description || "No description.")}</p>
+            <h4>Runs</h4>
+            <div class="runs-list">${runsHtml || "<p>No runs yet.</p>"}</div>
+            <div class="modal-actions">
+              <button class="primary" id="card-dispatch">Dispatch agent</button>
+              <button class="danger" id="card-delete">Delete</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      modal.querySelector(".modal-close").addEventListener("click", () => modal.remove());
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) modal.remove();
+      });
+
+      document.getElementById("card-dispatch").addEventListener("click", async () => {
+        try {
+          const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/dispatch`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", ...csrfHeaders() },
+            body: JSON.stringify({}),
+          });
+          if (!res.ok) throw new Error((await res.json()).error || "dispatch failed");
+          showToast("Agent dispatched");
+          modal.remove();
+          await refreshBoardView();
+        } catch (err) {
+          showToast("Dispatch failed: " + err.message);
+        }
+      });
+
+      document.getElementById("card-delete").addEventListener("click", async () => {
+        if (!confirm("Delete this card?")) return;
+        try {
+          const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}`, {
+            method: "DELETE",
+            credentials: "same-origin",
+            headers: csrfHeaders(),
+          });
+          if (!res.ok) throw new Error("delete failed");
+          modal.remove();
+          await refreshBoardView();
+        } catch (err) {
+          showToast("Delete failed: " + err.message);
+        }
+      });
+    } catch (err) {
+      showToast("Load card failed: " + err.message);
+    }
+  }

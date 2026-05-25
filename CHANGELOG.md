@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.19] — 2026-05-24
+
+### Added
+
+- **Kanban Dispatch Service** (`internal/kanban/dispatch_service.go`): full card → agent → run orchestration. Replaces the gateway placeholder with a real async dispatcher that creates worktrees, spawns agents, streams events, and rolls up costs.
+- **Git Worktree Manager** (`internal/kanban/worktree/manager.go`): per-run git isolation. Clones repos (or reuses local paths), creates worktrees from a base branch, and cleans up on completion. Supports branch auto-naming and promotion (push + comment).
+- **Agent Driver Framework** (`internal/kanban/dispatcher/`): pluggable `AgentDriver` interface with three implementations:
+  - `go_driver.go` — uses the internal Go LLM provider chain (`internal/provider/`) with streaming, token tracking, and tool-call event emission.
+  - `claude_code_driver.go` — spawns `claude -p --output-format stream-json` in the worktree directory.
+  - `codex_driver.go` — spawns `codex -q -f` in the worktree directory.
+- **Cost Calculator** (`internal/kanban/cost/calculator.go`): per-model pricing table (Gemini, GPT-4o, Claude, DeepSeek, Groq, etc.) that computes USD cost from token-in/token-out counts on every run.
+- **Decision Prompt Detection + Resume** (`internal/kanban/decisions.go`): scans agent output for questions, creates `PendingDecision` rows, and signals a waiting goroutine when the human answers via the API. Run status transitions `running → awaiting → running/completed`.
+- **GitHub Bidirectional Sync** (`internal/kanban/github_sync.go`): `SyncBoard()` polls open GitHub issues and creates/updates kanban cards; `SyncCardToGitHub()` pushes card comments back as issue comments. Uses the existing `internal/devops/github` client (added `ListIssues()`).
+- **Sentry Import** (`internal/kanban/sentry_import.go`): fetches error groups from the Sentry API and creates bug cards with inferred priority (`p0` for fatal/high-count, `p1` for error/moderate-count).
+- **MCP Server** (`internal/kanban/mcp_server.go`): exposes the kanban board as 5 Model Context Protocol tools — `kanban_list_boards`, `kanban_get_board`, `kanban_list_cards`, `kanban_get_card`, `kanban_dispatch_card`.
+- **Autopilot** (`internal/kanban/autopilot.go`): background round-robin loop that auto-dispatches queued cards to available personas every 30 seconds.
+- **Gateway Wiring** (`internal/gateway/kanban_dispatcher.go`, `internal/gateway/kanban_api.go`, `cmd/opsintelligence/gateway_auth.go`, `cmd/opsintelligence/main.go`):
+  - `KanbanDispatcher` interface on `AuthService` decouples gateway from kanban package.
+  - `POST /api/v1/boards/{id}/cards/{cid}/dispatch` now calls `kanban.Service.Dispatch()` (creates run + worktree + goroutine).
+  - `POST /api/v1/runs/{rid}/stop` now cancels the in-flight context and finalizes the run.
+  - `POST /api/v1/runs/{rid}/decisions/{did}` now signals the waiting goroutine via `DecisionResume`.
+  - `attachKanbanToGateway()` wires worktree manager + driver registry + dispatch service at boot.
+
 ## [1.0.18] — 2026-05-22
 
 ### Added

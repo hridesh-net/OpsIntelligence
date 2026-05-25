@@ -45,6 +45,86 @@ type Store interface {
 	// GitHubAppConnectTokens manages one-time connection tokens used by the
 	// client's OpsIntelligence to authenticate its outbound WebSocket to the relay.
 	GitHubAppConnectTokens() githubapp.ConnectTokenRepo
+
+	// Kanban — boards, columns, cards, runs, events, decisions, agents, personas.
+	Boards() BoardRepo
+	BoardColumns() BoardColumnRepo
+	BoardCards() BoardCardRepo
+	CardRuns() CardRunRepo
+	CardRunEvents() CardRunEventRepo
+	PendingDecisions() PendingDecisionRepo
+	BoardAgents() BoardAgentRepo
+	Personas() PersonaRepo
+}
+
+// BoardRepo manages Board rows.
+type BoardRepo interface {
+	Create(ctx context.Context, b *Board) error
+	Get(ctx context.Context, id string) (*Board, error)
+	Update(ctx context.Context, b *Board) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context, f BoardFilter) ([]Board, error)
+}
+
+// BoardColumnRepo manages BoardColumn rows.
+type BoardColumnRepo interface {
+	Create(ctx context.Context, c *BoardColumn) error
+	Get(ctx context.Context, id string) (*BoardColumn, error)
+	Update(ctx context.Context, c *BoardColumn) error
+	Delete(ctx context.Context, id string) error
+	ListByBoard(ctx context.Context, boardID string) ([]BoardColumn, error)
+}
+
+// BoardCardRepo manages BoardCard rows.
+type BoardCardRepo interface {
+	Create(ctx context.Context, c *BoardCard) error
+	Get(ctx context.Context, id string) (*BoardCard, error)
+	Update(ctx context.Context, c *BoardCard) error
+	Delete(ctx context.Context, id string) error
+	Move(ctx context.Context, cardID, columnID string) error
+	List(ctx context.Context, f BoardCardFilter) ([]BoardCard, error)
+}
+
+// CardRunRepo manages CardRun rows.
+type CardRunRepo interface {
+	Create(ctx context.Context, r *CardRun) error
+	Get(ctx context.Context, id string) (*CardRun, error)
+	Update(ctx context.Context, r *CardRun) error
+	List(ctx context.Context, f CardRunFilter) ([]CardRun, error)
+}
+
+// CardRunEventRepo manages CardRunEvent rows.
+type CardRunEventRepo interface {
+	Append(ctx context.Context, e *CardRunEvent) error
+	List(ctx context.Context, f CardRunEventFilter) ([]CardRunEvent, error)
+}
+
+// PendingDecisionRepo manages PendingDecision rows.
+type PendingDecisionRepo interface {
+	Create(ctx context.Context, d *PendingDecision) error
+	Get(ctx context.Context, id string) (*PendingDecision, error)
+	Answer(ctx context.Context, id, answer string) error
+	Dismiss(ctx context.Context, id string) error
+	ListByRun(ctx context.Context, runID string) ([]PendingDecision, error)
+	ListByCard(ctx context.Context, cardID string) ([]PendingDecision, error)
+}
+
+// BoardAgentRepo manages BoardAgent rows.
+type BoardAgentRepo interface {
+	Create(ctx context.Context, a *BoardAgent) error
+	Get(ctx context.Context, id string) (*BoardAgent, error)
+	Update(ctx context.Context, a *BoardAgent) error
+	Delete(ctx context.Context, id string) error
+	ListByBoard(ctx context.Context, boardID string) ([]BoardAgent, error)
+}
+
+// PersonaRepo manages Persona rows.
+type PersonaRepo interface {
+	Create(ctx context.Context, p *Persona) error
+	Get(ctx context.Context, id string) (*Persona, error)
+	Update(ctx context.Context, p *Persona) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context, f PersonaFilter) ([]Persona, error)
 }
 
 // UserRepo manages User rows.
@@ -134,3 +214,4 @@ type OIDCStateRepo interface {
 	Take(ctx context.Context, state string) (*OIDCState, error)
 	DeleteExpired(ctx context.Context) (int, error)
 }
+

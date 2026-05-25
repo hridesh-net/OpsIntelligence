@@ -65,7 +65,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.18" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.19" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1094,6 +1094,7 @@ By default, start and serve run a fast preflight (doctor subset, --skip-network)
 					}
 				}()
 			}
+			attachKanbanToGateway(cfg, nil, srv, log)
 
 			// Start Redis hub bridge for cross-instance WebSocket broadcasts.
 			if redisPubSub != nil {
@@ -2428,6 +2429,9 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		if srv.AuthService != nil {
 			srv.AuthService.Tasks = tasks
 		}
+
+		// Wire kanban dispatch service (needs store + provider registry).
+		attachKanbanToGateway(cfg, reg, srv, log)
 
 		// Start Redis hub bridge for cross-instance WebSocket broadcasts.
 		if redisPubSub != nil {

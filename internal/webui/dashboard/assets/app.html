@@ -17,6 +17,7 @@
       </div>
       <nav class="nav" id="primary-nav">
         <a class="nav-item" data-route="overview" href="#/overview">Overview</a>
+        <a class="nav-item" data-route="boards" href="#/boards">Boards</a>
         <a class="nav-item" data-route="tasks" href="#/tasks">Tasks</a>
         <a class="nav-item" data-route="users" href="#/users">Users &amp; Roles</a>
         <a class="nav-item" data-route="apikeys" href="#/apikeys">API keys</a>
@@ -51,6 +52,11 @@
       </header>
 
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <section class="view hidden" id="view-boards">
+        <div id="boards-list"></div>
+        <div id="board-detail" class="hidden"></div>
+      </section>
 
       <section class="view" id="view-overview">
         <div class="status-grid" id="overview-status">
