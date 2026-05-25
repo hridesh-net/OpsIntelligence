@@ -249,6 +249,7 @@ var openAICompatProviders = map[string]bool{
 	"ollama":     true,
 	"vllm":       true,
 	"lmstudio":   true,
+	"gemini":     true,
 	"groq":       true,
 	"mistral":    true,
 	"openrouter": true,

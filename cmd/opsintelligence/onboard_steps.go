@@ -905,6 +905,7 @@ func providerSteps(
 		huh.NewOption("OpenAI", "openai"),
 		huh.NewOption("Ollama (Local / Free)", "ollama"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Gemini (AI Studio)", "gemini"),
 		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("Groq", "groq"),
 		huh.NewOption("Mistral", "mistral"),
@@ -932,6 +933,7 @@ func providerSteps(
 		huh.NewOption("xAI (Grok)", "xai"),
 		huh.NewOption("Perplexity", "perplexity"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Gemini (AI Studio)", "gemini"),
 		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("NVIDIA NIM", "nvidia"),
 		huh.NewOption("Together AI", "together"),
@@ -994,7 +996,7 @@ func providerSteps(
 	// Step 3: credentials
 	needsCreds := func() bool {
 		needsKey := map[string]bool{
-			"anthropic": true, "openai": true, "groq": true, "mistral": true,
+			"anthropic": true, "openai": true, "gemini": true, "groq": true, "mistral": true,
 			"openrouter": true, "azure": true, "deepseek": true, "perplexity": true,
 			"xai": true, "together": true, "nvidia": true, "cohere": true,
 			"huggingface": true, "voyage": true,
@@ -1003,7 +1005,7 @@ func providerSteps(
 			"ollama": true, "vllm": true, "lmstudio": true,
 		}
 		return needsKey[entry.provider] || needsURL[entry.provider] ||
-			entry.provider == "bedrock" || entry.provider == "vertex" || entry.provider == "azure"
+			entry.provider == "bedrock" || entry.provider == "gemini" || entry.provider == "vertex" || entry.provider == "azure"
 	}
 	s3 := tui.OnboardWizardStep{
 		Icon: icon, Title: title,
@@ -1011,7 +1013,7 @@ func providerSteps(
 		MakeForm: func() *huh.Form {
 			var fields []huh.Field
 			needsKey := map[string]bool{
-				"anthropic": true, "openai": true, "groq": true, "mistral": true,
+				"anthropic": true, "openai": true, "gemini": true, "groq": true, "mistral": true,
 				"openrouter": true, "azure": true, "deepseek": true, "perplexity": true,
 				"xai": true, "together": true, "nvidia": true, "cohere": true,
 				"huggingface": true, "voyage": true,
@@ -1090,6 +1092,7 @@ func providerSteps(
 		"deepseek":  {huh.NewOption("DeepSeek Chat", "deepseek-chat"), huh.NewOption("DeepSeek Reasoner (R1)", "deepseek-reasoner"), huh.NewOption("Other / Custom...", "custom")},
 		"perplexity": {huh.NewOption("Sonar Reasoning Pro", "sonar-reasoning-pro"), huh.NewOption("Sonar Pro", "sonar-pro"), huh.NewOption("Other / Custom...", "custom")},
 		"xai":       {huh.NewOption("Grok 4", "grok-4-latest"), huh.NewOption("Grok Beta", "grok-beta"), huh.NewOption("Other / Custom...", "custom")},
+		"gemini":    {huh.NewOption("Gemini 2.5 Flash", "gemini-2.5-flash"), huh.NewOption("Gemini 2.5 Pro", "gemini-2.5-pro"), huh.NewOption("Gemini 2.0 Flash", "gemini-2.0-flash"), huh.NewOption("Gemini 1.5 Flash", "gemini-1.5-flash"), huh.NewOption("Gemini 1.5 Pro", "gemini-1.5-pro"), huh.NewOption("Other / Custom...", "custom")},
 		"vertex":    {huh.NewOption("Gemini 1.5 Pro", "gemini-1.5-pro"), huh.NewOption("Gemini 1.5 Flash", "gemini-1.5-flash"), huh.NewOption("Gemini 2.0 Flash Exp", "gemini-2.0-flash-exp"), huh.NewOption("Other / Custom...", "custom")},
 	}
 	s4 := tui.OnboardWizardStep{
@@ -1241,6 +1244,12 @@ func populateFromExisting(s *onboardState, c *config.Config) {
 		if c.Providers.DeepSeek != nil {
 			s.primary.apiKey = c.Providers.DeepSeek.APIKey
 			s.primary.model = c.Providers.DeepSeek.DefaultModel
+		}
+	case "gemini":
+		if c.Providers.Gemini != nil {
+			s.primary.apiKey = c.Providers.Gemini.APIKey
+			s.primary.baseURL = c.Providers.Gemini.BaseURL
+			s.primary.model = c.Providers.Gemini.DefaultModel
 		}
 	case "vertex":
 		if c.Providers.Vertex != nil {

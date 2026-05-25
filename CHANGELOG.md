@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.21] — 2026-05-24
+
+### Fixed
+
+- **Gemini onboarding visibility** (`cmd/opsintelligence/onboard_steps.go`): the onboarding wizard (`RunOnboardWizard`) uses a separate provider list from the legacy sequential flow. Added "Google Gemini (AI Studio)" to the wizard's `allPrimary` / `allSecondary` lists, API key prompts, model picker, and config pre-population so it appears correctly in the TUI.
+
 ## [1.0.20] — 2026-05-24
 
 ### Added
