@@ -501,6 +501,18 @@ tracing:
 # LLM providers
 # ─────────────────────────────────────────────
 providers:
+  # Google Gemini (AI Studio) — simplest Google option; just needs an API key.
+  # Get one free at https://aistudio.google.com/app/apikey
+  gemini:
+    api_key: "${GEMINI_API_KEY}"
+    default_model: "gemini-2.5-flash"
+
+  # Google Vertex AI — for GCP-backed Gemini with service accounts.
+  # vertex:
+  #   project_id: "my-gcp-project"
+  #   location: "us-central1"
+  #   credentials: "/path/to/service-account.json"
+
   anthropic:
     api_key: "${ANTHROPIC_API_KEY}"
   openai:

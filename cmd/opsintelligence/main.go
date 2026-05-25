@@ -47,14 +47,15 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/prompts"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 	"github.com/opsintelligence/opsintelligence/internal/provider/anthropic"
-	"github.com/opsintelligence/opsintelligence/internal/redis"
 	"github.com/opsintelligence/opsintelligence/internal/provider/bedrock"
 	"github.com/opsintelligence/opsintelligence/internal/provider/catalogs"
+	"github.com/opsintelligence/opsintelligence/internal/provider/gemini"
 	"github.com/opsintelligence/opsintelligence/internal/provider/ollama"
 	"github.com/opsintelligence/opsintelligence/internal/provider/openai"
 	"github.com/opsintelligence/opsintelligence/internal/provider/openaicompat"
 	planoprovider "github.com/opsintelligence/opsintelligence/internal/provider/plano"
 	"github.com/opsintelligence/opsintelligence/internal/provider/vertex"
+	"github.com/opsintelligence/opsintelligence/internal/redis"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
@@ -65,7 +66,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.19" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.20" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -2765,6 +2766,13 @@ func registerProviders(ctx context.Context, cfg *config.Config, reg *provider.Re
 		} else {
 			register(v)
 		}
+	}
+	if prov.Gemini != nil {
+		register(gemini.New(gemini.Config{
+			APIKey:       prov.Gemini.APIKey,
+			BaseURL:      prov.Gemini.BaseURL,
+			DefaultModel: prov.Gemini.DefaultModel,
+		}))
 	}
 	// ─── Plano Smart Routing ───────────────────────────────────────────────────
 	// If Plano is enabled, register it as the primary provider so all requests

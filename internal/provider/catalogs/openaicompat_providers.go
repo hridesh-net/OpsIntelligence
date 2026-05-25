@@ -104,6 +104,23 @@ func TogetherModels(prov string) []provider.ModelInfo {
 	return modelRows(prov, ts, rows)
 }
 
+// GeminiModels fallback list for Google AI Studio (generativelanguage.googleapis.com).
+func GeminiModels(prov string) []provider.ModelInfo {
+	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming, provider.CapabilityVision, provider.CapabilityReasoning}
+	rows := []struct {
+		id, name string
+		ctx, max int
+	}{
+		{"gemini-2.5-flash", "Gemini 2.5 Flash", 1000000, 8192},
+		{"gemini-2.5-pro", "Gemini 2.5 Pro", 1000000, 8192},
+		{"gemini-2.0-flash", "Gemini 2.0 Flash", 1000000, 8192},
+		{"gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 1000000, 8192},
+		{"gemini-1.5-flash", "Gemini 1.5 Flash", 1000000, 8192},
+		{"gemini-1.5-pro", "Gemini 1.5 Pro", 2000000, 8192},
+	}
+	return modelRows(prov, ts, rows)
+}
+
 // OpenRouterModels fallback rows when the API returns few models.
 func OpenRouterModels(prov string) []provider.ModelInfo {
 	ts := []provider.Capability{provider.CapabilityTools, provider.CapabilityStreaming}

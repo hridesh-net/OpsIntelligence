@@ -867,6 +867,7 @@ type ProvidersConfig struct {
 	Anthropic   *ProviderCreds    `yaml:"anthropic"`
 	Bedrock     *BedrockCreds     `yaml:"bedrock"`
 	Vertex      *VertexCreds      `yaml:"vertex"`
+	Gemini      *ProviderCreds    `yaml:"gemini"`
 	Ollama      *LocalCreds       `yaml:"ollama"`
 	VLLM        *LocalCreds       `yaml:"vllm"`
 	LMStudio    *LocalCreds       `yaml:"lm_studio"`

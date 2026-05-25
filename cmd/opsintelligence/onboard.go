@@ -272,6 +272,7 @@ func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bo
 		huh.NewOption("OpenAI", "openai"),
 		huh.NewOption("Ollama (Local / Free)", "ollama"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Gemini (AI Studio)", "gemini"),
 		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("Groq", "groq"),
 		huh.NewOption("Mistral", "mistral"),
@@ -299,6 +300,7 @@ func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bo
 		huh.NewOption("xAI (Grok)", "xai"),
 		huh.NewOption("Perplexity", "perplexity"),
 		huh.NewOption("AWS Bedrock", "bedrock"),
+		huh.NewOption("Google Gemini (AI Studio)", "gemini"),
 		huh.NewOption("Google Vertex AI (Gemini)", "vertex"),
 		huh.NewOption("NVIDIA NIM", "nvidia"),
 		huh.NewOption("Together AI", "together"),
@@ -357,6 +359,7 @@ func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bo
 	needsAPIKey := map[string]bool{
 		"anthropic":  true,
 		"openai":     true,
+		"gemini":     true,
 		"groq":       true,
 		"mistral":    true,
 		"openrouter": true,
@@ -491,6 +494,14 @@ func collectProviderFiltered(theme *huh.Theme, providerType string, isPrimary bo
 			huh.NewOption("Grok Beta", "grok-beta"),
 			huh.NewOption("Grok Vision", "grok-vision-beta"),
 			huh.NewOption("Grok 2", "grok-2"),
+			huh.NewOption("Other / Custom...", "custom"),
+		},
+		"gemini": {
+			huh.NewOption("Gemini 2.5 Flash", "gemini-2.5-flash"),
+			huh.NewOption("Gemini 2.5 Pro", "gemini-2.5-pro"),
+			huh.NewOption("Gemini 2.0 Flash", "gemini-2.0-flash"),
+			huh.NewOption("Gemini 1.5 Flash", "gemini-1.5-flash"),
+			huh.NewOption("Gemini 1.5 Pro", "gemini-1.5-pro"),
 			huh.NewOption("Other / Custom...", "custom"),
 		},
 		"vertex": {
@@ -858,6 +869,12 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 					primary.baseURL = existing.Providers.Voyage.BaseURL
 					primary.model = existing.Providers.Voyage.DefaultModel
 				}
+			case "gemini":
+				if existing.Providers.Gemini != nil {
+					primary.apiKey = existing.Providers.Gemini.APIKey
+					primary.baseURL = existing.Providers.Gemini.BaseURL
+					primary.model = existing.Providers.Gemini.DefaultModel
+				}
 			case "vertex":
 				if existing.Providers.Vertex != nil {
 					primary.vertexProj = existing.Providers.Vertex.ProjectID
@@ -984,6 +1001,12 @@ func runOnboardingLegacy(configPath string) (bool, error) { //nolint:deadcode
 						secondary.apiKey = existing.Providers.Voyage.APIKey
 						secondary.baseURL = existing.Providers.Voyage.BaseURL
 						secondary.model = existing.Providers.Voyage.DefaultModel
+					}
+				case "gemini":
+					if existing.Providers.Gemini != nil {
+						secondary.apiKey = existing.Providers.Gemini.APIKey
+						secondary.baseURL = existing.Providers.Gemini.BaseURL
+						secondary.model = existing.Providers.Gemini.DefaultModel
 					}
 				case "vertex":
 					if existing.Providers.Vertex != nil {

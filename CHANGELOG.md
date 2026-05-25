@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.20] — 2026-05-24
+
+### Added
+
+- **Google Gemini (AI Studio) provider** (`internal/provider/gemini/`): simple API-key-only provider using the OpenAI-compatible Gemini endpoint (`generativelanguage.googleapis.com/v1beta/openai/`). No GCP project ID, location, or service account required — just an API key from https://aistudio.google.com/app/apikey.
+  - `gemini.go` — thin wrapper around `openaicompat` with Gemini-specific defaults and model catalog.
+  - `catalogs.GeminiModels()` — 6 models: `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash`, `gemini-1.5-pro`.
+  - Added `Gemini *ProviderCreds` to `config.ProvidersConfig`.
+  - Registered in `registerProviders()` alongside existing providers.
+- **Onboarding support for Gemini**: `opsintelligence onboard` now shows "Google Gemini (AI Studio)" as a primary/secondary provider option with a model picker and single API key prompt. The existing "Google Vertex AI (Gemini)" option remains for GCP-backed setups.
+- **`.opsintelligence.yaml.example`**: added `gemini:` section with inline docs and the AI Studio link.
+
 ## [1.0.19] — 2026-05-24
 
 ### Added
