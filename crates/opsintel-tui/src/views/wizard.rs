@@ -26,7 +26,7 @@
 //!   └──────────────────────────────────────────────────────────┘
 
 use crate::protocol::{
-    WizardField, WizardForm, WizardOption, WizardPlan, WizardSide, WizardState, WizardStep,
+    WizardField, WizardForm, WizardPlan, WizardSide, WizardState, WizardStep,
 };
 use crate::theme;
 use crate::widgets::spinner::Spinner;

@@ -5,10 +5,10 @@ use crate::theme;
 use crate::widgets::{markdown, spinner::Spinner, textarea::{TextArea, TextAreaView}};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -307,7 +307,7 @@ impl ReplView {
     fn render_chat(&mut self, f: &mut Frame, area: Rect) {
         let mut lines: Vec<Line<'static>> = self.history.clone();
         if !self.token_buf.is_empty() {
-            let width = inner.width.saturating_sub(4) as usize;
+            let width = area.width.saturating_sub(4) as usize;
             let rendered = markdown::render(&self.token_buf, width.max(20));
             for (i, mut ln) in rendered.into_iter().enumerate() {
                 if i == 0 {

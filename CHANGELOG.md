@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.25] — 2026-05-28
+
+### Added — Wizard form engine + dashboard-style chrome
+
+- **Generic wizard form engine** in Rust. The Go side ships a `WizardStep` slice (Input / Password / Select / MultiSelect / Confirm / Note / SideEffect / Note); the Rust subprocess renders the form, collects answers, and ships them back via JSON-RPC. Powers `onboard`, `quickstart`, and `skills configure`.
+- **Mouse + keyboard interaction**: click to focus a field, click options to select, click Yes/No on confirm, scroll wheel on long forms, `Tab/↑↓/Enter/Esc` keyboard navigation.
+- **Dashboard chrome unified across all views** (`status`, `repos tui`, `doctor`, `monitor`, `agent`, `onboard`):
+  - Single outer frame with title `─ OpsIntelligence  ·  <Section> ─` embedded in the top border
+  - Status pill in the top-right corner (`RUNNING` / `3 repos` / `PID 12345 · 02:14:33` / etc.)
+  - Section panels with sharp single-line borders and section name in the title
+  - Bottom command bar with key shorthand in colored pills (`⏎ Send  ⌃J Newline  …`)
+- **Shared chrome widgets** in `crates/opsintel-tui/src/widgets/chrome.rs` (`outer_block`, `panel_block`, `render_pill`, `render_command_bar`) so future views are 3-line additions.
+- **Sidebar step tracker** in the onboarding wizard (`wizard.plan` protocol message) — shows all steps with `●` completed / `►` active / `●` pending markers.
+
+### Fixed
+
+- **TUI failed to initialise input reader (EOF on launch)**. The Rust subprocess inherited a piped stdin from the Go bridge, so `crossterm::enable_raw_mode()` couldn't set termios and `event::read()` couldn't receive keyboard input. Fixed by switching the bridge to **inherit the controlling TTY for stdin/stdout/stderr** and using **extra file descriptors (fds 3 and 4)** for JSON-RPC. `cmd.ExtraFiles` in Go, `OPSINTEL_TUI_PROTO_IN=3` / `OPSINTEL_TUI_PROTO_OUT=4` env vars in the Rust child.
+- **Duplicate splash headers** before the onboarding wizard. Removed `tui.PrintOnboardBanner` + `tui.PrintOnboardWelcomeSubtitle` calls so the user sees a single Rust alt-screen instead of two stacked banners.
+
+### Changed
+
+- **Rust crate version**: `0.1.0` → `0.2.0` (post-chrome-rework milestone).
+- **CI/Release workflows** install Rust toolchain + `Cargo.toml`-matched target, build the embedded TUI binary per platform via `cargo build --release --target <triple>`, then run `go build` (which picks up the staged binary via `go:embed`). Windows uses `x86_64-pc-windows-msvc` for the Rust subprocess (no mingw needed on the Rust side).
+- **CI clippy step is advisory** (`continue-on-error: true`) — surfaces warnings without gating PRs while the new crate stabilises.
+- **`install.sh` source-build path** now requires `cargo` and builds the Rust TUI before `go build` runs. Clear error message points to https://rustup.rs.
+
+## [1.0.24] — Rust TUI migration (initial)
+
 ### Changed — Rust TUI migration (complete)
 
 Every interactive terminal UI has been rewritten in Rust using [`ratatui`](https://github.com/ratatui-org/ratatui) and runs as a subprocess of the Go binary. The Rust executable is built from `crates/opsintel-tui/` and embedded via `go:embed`; the Go core talks to it over newline-delimited JSON-RPC on stdio. From the user's perspective `opsintelligence` remains a single binary.
