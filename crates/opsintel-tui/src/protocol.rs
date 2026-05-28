@@ -1,3 +1,9 @@
+// The Rust side defines the full JSON-RPC envelope and many request payload
+// structs that are produced *only* on the Go side and deserialized here, or
+// vice versa. Several types therefore look "dead" to the compiler — they're
+// kept for symmetric round-trip semantics with internal/tuibridge/protocol.go.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

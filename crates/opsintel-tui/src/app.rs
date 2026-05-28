@@ -2,8 +2,8 @@
 
 use crate::protocol::{
     AgentDelta, AgentEnd, AgentError, DashboardSnapshot, DashboardState, DoctorSnapshot,
-    DoctorState, Message, MonitorSnapshot, MonitorState, ReplViewState, ReposSnapshot, ReposState,
-    ViewPushParams, WizardState, WizardStep,
+    DoctorState, Message, MonitorSnapshot, MonitorState, ReposSnapshot, ReposState, ViewPushParams,
+    WizardState, WizardStep,
 };
 use crate::views::dashboard::{DashboardOutbound, DashboardView};
 use crate::views::doctor::{DoctorOutbound, DoctorView};

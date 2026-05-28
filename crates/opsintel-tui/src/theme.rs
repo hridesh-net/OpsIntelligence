@@ -4,6 +4,10 @@
 //! by default; light-mode detection is deferred. Colors are stored as
 //! `ratatui::style::Color::Rgb` for terminals that support truecolor; fallback
 //! to 256-color is automatic in crossterm.
+//!
+//! Some constants are unused by current call sites but kept for symmetry with
+//! the source Go palette so adding views later is mechanical.
+#![allow(dead_code)]
 
 use ratatui::style::{Color, Modifier, Style};
 

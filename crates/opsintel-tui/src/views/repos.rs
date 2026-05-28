@@ -50,6 +50,7 @@ pub struct ReposView {
     mode: Mode,
     edit_field: usize, // 0 = architecture, 1 = review_hints, 2 = user_context
     edit_fields: [TextArea; 3],
+    #[allow(dead_code)]
     last_error: String,
 }
 
