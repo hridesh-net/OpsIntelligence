@@ -2,7 +2,7 @@
 # Industry-standard build targets for the polyglot project.
 
 .DEFAULT_GOAL := build
-.PHONY: all build build-go build-ts build-sensing build-tui build-tui-host clean test load-test lint vet fmt install uninstall help tui-ping
+.PHONY: all build build-go build-ts build-sensing build-tui build-tui-host clean test load-test lint vet fmt install uninstall help tui-ping tui
 
 # ─────────────────────────────────────────────
 # Variables
@@ -91,6 +91,11 @@ build-tui:
 	cargo build --release -p opsintel-tui --target x86_64-pc-windows-msvc
 	cp target/x86_64-pc-windows-msvc/release/opsintel-tui.exe internal/tuibridge/assets/opsintel-tui-windows-amd64.exe
 	@echo "$(GREEN)✓ All Rust TUI targets staged into internal/tuibridge/assets/$(NC)"
+
+## tui: Rebuild the Rust TUI for the host platform and the Go binary,
+##      ready to run as $(BIN_DIR)/$(BINARY). Use this during TUI dev.
+tui: build-tui-host build-go
+	@echo "$(GREEN)✓ TUI dev build ready: $(BIN_DIR)/$(BINARY)$(NC)"
 
 ## tui-ping: Run the Phase 1 bridge smoke test (host build).
 tui-ping: build-tui-host build-go
