@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.26] — 2026-05-28
+
+### Fixed
+
+- **CI / release build failure** — `crates/opsintel-tui/src/views/repl.rs` referenced an out-of-scope `inner` binding inside `render_chat`; corrected to `area.width`. Also dropped four `unused_imports` warnings (`Block`, `Borders`, `Alignment`, `WizardOption`) that hardened release builds.
+- **Wizard sidebar showed duplicated step names** (e.g. `AI Provider` × 5, `Secondary Provider` × 5). Each provider sub-flow emits multiple form steps that share the same `Title`; Go now collapses consecutive same-titled steps into a single sidebar group and carries the 1-based form-step number at which the group activates. Rust sidebar highlights the correct group as the wizard advances.
+- **Wizard appeared stuck on multi-field steps** (most reproducibly on `Gateway — Expose via Tailscale Funnel`). Old behavior was "Enter advances unless cursor is on the last interactive field" — pressing Enter on a leading `Select` silently moved focus to the next field with no obvious visual change. **Enter now always submits the form**; `Tab` / `↓` / `j` navigate between fields. Matches huh's UX expectation.
+
+### Changed
+
+- Crate version bumped to `0.2.1`.
+
 ## [1.0.25] — 2026-05-28
 
 ### Added — Wizard form engine + dashboard-style chrome
