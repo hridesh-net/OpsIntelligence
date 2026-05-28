@@ -1,9 +1,22 @@
-//! Top-level app loop: stdio I/O, view dispatch, terminal lifecycle.
+//! Top-level app loop: protocol I/O, view dispatch, terminal lifecycle.
+//!
+//! Wire model:
+//!   - Inherited stdin/stdout/stderr are the controlling TTY. Crossterm owns
+//!     them for raw-mode keyboard input and alt-screen rendering.
+//!   - JSON-RPC protocol uses two extra file descriptors passed by the Go
+//!     parent via `cmd.ExtraFiles`:
+//!       fd 3  →  inbound  (parent → child)
+//!       fd 4  →  outbound (child  → parent)
+//!     The fd numbers are configurable via OPSINTEL_TUI_PROTO_IN /
+//!     OPSINTEL_TUI_PROTO_OUT env vars (defaulting to 3 and 4).
+//!
+//! When run standalone (no parent), the env vars are unset and we fall back
+//! to stdin/stdout for protocol — handy for `tui-ping`-style headless tests.
 
 use crate::protocol::{
     AgentDelta, AgentEnd, AgentError, DashboardSnapshot, DashboardState, DoctorSnapshot,
     DoctorState, Message, MonitorSnapshot, MonitorState, ReposSnapshot, ReposState, ViewPushParams,
-    WizardState, WizardStep,
+    WizardPlan, WizardState, WizardStep,
 };
 use crate::views::dashboard::{DashboardOutbound, DashboardView};
 use crate::views::doctor::{DoctorOutbound, DoctorView};
@@ -19,7 +32,10 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use serde_json::{json, Value};
-use std::io::{self, BufRead, BufReader, Write};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::fd::FromRawFd;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -38,13 +54,19 @@ pub fn run() -> Result<()> {
     let (tx_in, rx_in) = mpsc::channel::<Message>();
     let (tx_out, rx_out) = mpsc::channel::<Message>();
 
-    spawn_stdin_reader(tx_in);
-    spawn_stdout_writer(rx_out);
+    // Open the protocol channels. On Unix, use the inherited fds 3/4 (set by
+    // the Go parent via ExtraFiles). When the env vars are unset (e.g. running
+    // the binary standalone for debugging) fall back to stdin/stdout.
+    let (proto_in, proto_out): (Box<dyn Read + Send>, Box<dyn Write + Send>) = open_protocol_streams()?;
 
+    spawn_protocol_reader(proto_in, tx_in);
+    spawn_protocol_writer(proto_out, rx_out);
+
+    // Now crossterm can safely take over the inherited stdin/stdout TTY.
     enable_raw_mode().context("enable raw mode")?;
-    let mut stderr = io::stderr();
-    execute!(stderr, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stderr);
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let _ = tx_out.send(Message::notification(
@@ -58,6 +80,34 @@ pub fn run() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).ok();
     terminal.show_cursor().ok();
     result
+}
+
+#[cfg(unix)]
+fn open_protocol_streams() -> Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+    let in_fd = std::env::var("OPSINTEL_TUI_PROTO_IN")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok());
+    let out_fd = std::env::var("OPSINTEL_TUI_PROTO_OUT")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok());
+    match (in_fd, out_fd) {
+        (Some(i), Some(o)) => {
+            // SAFETY: fds 3/4 were inherited from the parent process and are
+            // guaranteed valid by the bridge. We take ownership.
+            let r: File = unsafe { File::from_raw_fd(i) };
+            let w: File = unsafe { File::from_raw_fd(o) };
+            Ok((Box::new(r), Box::new(w)))
+        }
+        _ => Ok((Box::new(io::stdin()), Box::new(io::stdout()))),
+    }
+}
+
+#[cfg(not(unix))]
+fn open_protocol_streams() -> Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+    // Windows: fallback to stdin/stdout (we don't currently support inherited
+    // fds on Windows). The Go bridge already pipes stdin/stdout there; on
+    // Windows the TUI runs in a "no-input-from-parent" mode anyway.
+    Ok((Box::new(io::stdin()), Box::new(io::stdout())))
 }
 
 fn main_loop<B: ratatui::backend::Backend>(
@@ -94,7 +144,33 @@ fn main_loop<B: ratatui::backend::Backend>(
         })?;
 
         if event::poll(tick)? {
-            if let Event::Key(key) = event::read()? {
+            let ev = event::read()?;
+            // Route mouse events to the active view (only wizard handles them
+            // currently — the others ignore).
+            if let Event::Mouse(me) = ev {
+                if let View::Wizard(w) = &mut view {
+                    match w.handle_mouse(me) {
+                        WizardOutbound::Submit { id, fields, cancelled } => {
+                            let _ = tx_out.send(Message::notification(
+                                "wizard.submit",
+                                json!({
+                                    "id": id,
+                                    "fields": fields,
+                                    "cancelled": cancelled,
+                                }),
+                            ));
+                        }
+                        WizardOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        WizardOutbound::None => {}
+                    }
+                }
+                continue;
+            }
+            if let Event::Key(key) = ev {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -117,27 +193,6 @@ fn main_loop<B: ratatui::backend::Backend>(
                         }
                         Outbound::None => {}
                     },
-                    View::Dashboard(d) => match d.handle_key(key) {
-                        DashboardOutbound::Dismiss => {
-                            let _ = tx_out
-                                .send(Message::notification("view.dismiss", Value::Null));
-                            view = View::Empty;
-                        }
-                        DashboardOutbound::Quit => {
-                            let _ = tx_out
-                                .send(Message::notification("view.exit", Value::Null));
-                            return Ok(());
-                        }
-                        DashboardOutbound::None => {}
-                    },
-                    View::Doctor(d) => match d.handle_key(key) {
-                        DoctorOutbound::Quit => {
-                            let _ = tx_out
-                                .send(Message::notification("view.exit", Value::Null));
-                            return Ok(());
-                        }
-                        DoctorOutbound::None => {}
-                    },
                     View::Wizard(w) => match w.handle_key(key) {
                         WizardOutbound::Submit { id, fields, cancelled } => {
                             let _ = tx_out.send(Message::notification(
@@ -156,6 +211,14 @@ fn main_loop<B: ratatui::backend::Backend>(
                         }
                         WizardOutbound::None => {}
                     },
+                    View::Doctor(d) => match d.handle_key(key) {
+                        DoctorOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        DoctorOutbound::None => {}
+                    },
                     View::Monitor(m) => match m.handle_key(key) {
                         MonitorOutbound::Quit => {
                             let _ = tx_out
@@ -163,6 +226,19 @@ fn main_loop<B: ratatui::backend::Backend>(
                             return Ok(());
                         }
                         MonitorOutbound::None => {}
+                    },
+                    View::Dashboard(d) => match d.handle_key(key) {
+                        DashboardOutbound::Dismiss => {
+                            let _ = tx_out
+                                .send(Message::notification("view.dismiss", Value::Null));
+                            view = View::Empty;
+                        }
+                        DashboardOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        DashboardOutbound::None => {}
                     },
                     View::Repos(r) => match r.handle_key(key) {
                         ReposOutbound::Select(idx) => {
@@ -349,6 +425,15 @@ fn handle_inbound(view: &mut View, msg: Message, tx_out: &Sender<Message>) {
                 }
             }
         }
+        "wizard.plan" => {
+            if let View::Wizard(w) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(plan) = serde_json::from_value::<WizardPlan>(p) {
+                        w.apply_plan(plan);
+                    }
+                }
+            }
+        }
         "wizard.step" => {
             if let View::Wizard(w) = view {
                 if let Some(p) = msg.params {
@@ -365,11 +450,10 @@ fn handle_inbound(view: &mut View, msg: Message, tx_out: &Sender<Message>) {
     }
 }
 
-fn spawn_stdin_reader(tx: Sender<Message>) {
+fn spawn_protocol_reader(reader: Box<dyn Read + Send>, tx: Sender<Message>) {
     thread::spawn(move || {
-        let stdin = io::stdin();
-        let reader = BufReader::new(stdin.lock());
-        for line in reader.lines() {
+        let buf = BufReader::new(reader);
+        for line in buf.lines() {
             let line = match line {
                 Ok(l) => l,
                 Err(_) => return,
@@ -386,19 +470,17 @@ fn spawn_stdin_reader(tx: Sender<Message>) {
     });
 }
 
-fn spawn_stdout_writer(rx: Receiver<Message>) {
+fn spawn_protocol_writer(mut writer: Box<dyn Write + Send>, rx: Receiver<Message>) {
     thread::spawn(move || {
-        let stdout = io::stdout();
         for msg in rx.iter() {
             let line = match serde_json::to_string(&msg) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let mut h = stdout.lock();
-            if writeln!(h, "{}", line).is_err() {
+            if writeln!(writer, "{}", line).is_err() {
                 return;
             }
-            let _ = h.flush();
+            let _ = writer.flush();
         }
     });
 }

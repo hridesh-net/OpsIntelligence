@@ -189,43 +189,58 @@ impl ReposView {
             return;
         }
 
+        // Outer frame.
+        let inner = crate::widgets::chrome::outer_block(
+            f,
+            area,
+            "OpsIntelligence",
+            "Repo Intelligence",
+            None,
+        );
+        // Status pill: total repo count.
+        let pill_text = format!(" {} repos ", self.snap.entries.len());
+        crate::widgets::chrome::render_pill(f, area, &pill_text, theme::PRIMARY);
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // tab row
-                Constraint::Length(1), // divider
-                Constraint::Min(3),    // body
-                Constraint::Length(1), // footer
+                Constraint::Min(3),    // body panel
+                Constraint::Length(1), // command bar
             ])
-            .split(area);
+            .split(inner);
 
         // Tab row.
-        let mut tab_spans: Vec<Span> = Vec::new();
+        let mut tab_spans: Vec<Span> = vec![Span::raw(" ")];
         for (i, t) in TABS.iter().enumerate() {
-            let style = if i == self.active_tab {
-                Style::default()
-                    .fg(theme::PRIMARY)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                theme::muted()
-            };
             if i > 0 {
-                tab_spans.push(Span::raw("  "));
+                tab_spans.push(Span::styled(" │ ", theme::muted()));
             }
-            tab_spans.push(Span::styled(format!(" {} ", t), style));
+            if i == self.active_tab {
+                tab_spans.push(Span::styled(
+                    format!(" {} ", t),
+                    Style::default()
+                        .bg(theme::PRIMARY)
+                        .fg(theme::BACKGROUND)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                tab_spans.push(Span::styled(format!(" {} ", t), theme::muted()));
+            }
         }
         f.render_widget(Paragraph::new(Line::from(tab_spans)), layout[0]);
 
-        // Divider.
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                "─".repeat(layout[1].width as usize),
-                Style::default().fg(theme::BORDER),
-            )),
-            layout[1],
-        );
+        // Body panel — titled with active tab + selected repo name.
+        let mut title = TABS[self.active_tab.min(TABS.len() - 1)].to_string();
+        if let Some(entry) = self.snap.entries.get(self.selected) {
+            if !entry.full_name.is_empty() {
+                title = format!("{}  ·  {}", title, entry.full_name);
+            }
+        }
+        let body_block = crate::widgets::chrome::panel_block(&title, theme::PRIMARY, true);
+        let body_inner = body_block.inner(layout[1]);
+        f.render_widget(body_block, layout[1]);
 
-        // Body.
         let lines = match self.active_tab {
             0 => render_repos_tab(&self.snap.entries, self.selected),
             1 => render_memory_tab(&self.snap.memory),
@@ -234,7 +249,7 @@ impl ReposView {
             4 => render_graph_tab(&self.snap.graph),
             _ => Vec::new(),
         };
-        let max_scroll = (lines.len() as u16).saturating_sub(layout[2].height);
+        let max_scroll = (lines.len() as u16).saturating_sub(body_inner.height);
         if self.scroll > max_scroll {
             self.scroll = max_scroll;
         }
@@ -242,21 +257,29 @@ impl ReposView {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .scroll((self.scroll, 0)),
-            layout[2],
+            body_inner,
         );
 
-        // Footer.
-        let hint = if self.active_tab == 0 {
-            "↑/↓ select · s sync · r refresh · ← → tabs · esc quit"
+        // Command bar.
+        let entries: &[(&str, &str)] = if self.active_tab == 0 {
+            &[
+                ("↑↓", "Select"),
+                ("S", "Sync"),
+                ("R", "Refresh"),
+                ("⇥", "Tab"),
+                ("⎋", "Quit"),
+            ]
         } else if self.active_tab == 1 {
-            "e edit · ↑/↓ scroll · ← → tabs · esc quit"
+            &[
+                ("E", "Edit"),
+                ("↑↓", "Scroll"),
+                ("⇥", "Tab"),
+                ("⎋", "Quit"),
+            ]
         } else {
-            "↑/↓ scroll · ← → tabs · esc quit"
+            &[("↑↓", "Scroll"), ("⇥", "Tab"), ("⎋", "Quit")]
         };
-        f.render_widget(
-            Paragraph::new(Span::styled(hint, theme::muted())),
-            layout[3],
-        );
+        crate::widgets::chrome::render_command_bar(f, layout[2], entries);
     }
 
     fn render_edit_form(&self, f: &mut Frame, area: Rect) {

@@ -93,28 +93,49 @@ func Spawn(ctx context.Context, opts Options) (*Bridge, error) {
 	if opts.LogDir != "" {
 		cmd.Env = append(cmd.Env, "OPSINTEL_TUI_LOG_DIR="+opts.LogDir)
 	}
-	// Inherit the controlling terminal: Rust draws to stderr, reads keys
-	// from /dev/tty directly via crossterm. stdin/stdout are reserved for
-	// JSON-RPC.
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
+
+	// The Rust subprocess needs a real TTY for keyboard input + alt-screen
+	// drawing. Inherit stdin/stdout/stderr from our process (so crossterm
+	// sees the controlling terminal) and use two extra pipes for JSON-RPC:
+	//
+	//   fd 3 (subprocess) ← write end of "go → rust" pipe (Go writes requests here)
+	//   fd 4 (subprocess) → read end  of "rust → go" pipe (Go reads responses here)
+	//
+	// ExtraFiles[0] becomes fd 3 in the child, ExtraFiles[1] becomes fd 4.
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	goToRustR, goToRustW, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("go→rust pipe: %w", err)
+	}
+	rustToGoR, rustToGoW, err := os.Pipe()
+	if err != nil {
+		goToRustR.Close()
+		goToRustW.Close()
+		return nil, fmt.Errorf("rust→go pipe: %w", err)
+	}
+	cmd.ExtraFiles = []*os.File{goToRustR, rustToGoW}
+	// Tell the Rust binary to use the protocol fds. Crossterm will own
+	// stdin/stdout once it switches to raw alt-screen mode.
+	cmd.Env = append(cmd.Env, "OPSINTEL_TUI_PROTO_IN=3", "OPSINTEL_TUI_PROTO_OUT=4")
+
 	if err := cmd.Start(); err != nil {
+		goToRustR.Close()
+		goToRustW.Close()
+		rustToGoR.Close()
+		rustToGoW.Close()
 		return nil, fmt.Errorf("start opsintel-tui (%s): %w", binPath, err)
 	}
+	// The child now owns the read-end of go→rust and the write-end of rust→go.
+	goToRustR.Close()
+	rustToGoW.Close()
 
 	b := &Bridge{
 		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReaderSize(stdout, 64*1024),
+		stdin:  goToRustW,
+		stdout: bufio.NewReaderSize(rustToGoR, 64*1024),
 		doneCh: make(chan struct{}),
 	}
 	h := opts.Handler

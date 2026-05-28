@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -106,70 +106,94 @@ impl DashboardView {
     }
 
     pub fn render(&mut self, f: &mut Frame, area: Rect) {
+        // Outer frame.
+        let section = if self.state.context_label.is_empty() {
+            "Status".to_string()
+        } else {
+            self.state.context_label.clone()
+        };
+        let inner = crate::widgets::chrome::outer_block(
+            f,
+            area,
+            "OpsIntelligence",
+            &section,
+            None,
+        );
+        // Status pill: alive indicator if we have one.
+        let pill = if self.snap.status.alive {
+            " RUNNING "
+        } else if self.snap.status.pid > 0 {
+            " STOPPED "
+        } else {
+            "         "
+        };
+        let pill_bg = if self.snap.status.alive {
+            theme::SUCCESS
+        } else if self.snap.status.pid > 0 {
+            theme::ERROR_COLOR
+        } else {
+            theme::OUTLINE_VARIANT
+        };
+        crate::widgets::chrome::render_pill(f, area, pill, pill_bg);
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // context strip
                 Constraint::Length(1), // tab row
                 Constraint::Length(3), // search bar
-                Constraint::Length(1), // divider
-                Constraint::Min(3),    // body
-                Constraint::Length(1), // footer
+                Constraint::Min(3),    // body panel
+                Constraint::Length(1), // command bar
             ])
-            .split(area);
-
-        // Context strip.
-        let strip = Paragraph::new(Line::from(vec![
-            Span::styled("› ", Style::default().fg(theme::PRIMARY)),
-            Span::styled(self.state.context_label.clone(), Style::default().fg(theme::ON_SURFACE)),
-        ]))
-        .style(Style::default().bg(theme::CHROME_BG));
-        f.render_widget(strip, layout[0]);
+            .split(inner);
 
         // Tab row.
-        let mut tab_spans: Vec<Span> = Vec::new();
+        let mut tab_spans: Vec<Span> = vec![Span::raw(" ")];
         for (i, t) in TABS.iter().enumerate() {
-            let style = if i == self.active_tab {
-                Style::default().fg(theme::PRIMARY).add_modifier(Modifier::BOLD)
-            } else {
-                theme::muted()
-            };
             if i > 0 {
-                tab_spans.push(Span::raw("  "));
+                tab_spans.push(Span::styled(" │ ", theme::muted()));
             }
-            tab_spans.push(Span::styled(format!(" {} ", t), style));
+            if i == self.active_tab {
+                tab_spans.push(Span::styled(
+                    format!(" {} ", t),
+                    Style::default()
+                        .bg(theme::PRIMARY)
+                        .fg(theme::BACKGROUND)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                tab_spans.push(Span::styled(format!(" {} ", t), theme::muted()));
+            }
         }
-        let tabs = Paragraph::new(Line::from(tab_spans));
-        f.render_widget(tabs, layout[1]);
+        f.render_widget(Paragraph::new(Line::from(tab_spans)), layout[0]);
 
-        // Search bar.
-        let search_border = if self.search_active {
-            Style::default().fg(theme::PRIMARY)
-        } else {
-            Style::default().fg(theme::BORDER)
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(search_border);
-        let search_area = layout[2];
-        let inner = block.inner(search_area);
-        f.render_widget(block, search_area);
-        let ta = TextAreaView {
-            area: &self.search,
-            style: Style::default().fg(theme::ON_SURFACE),
-            placeholder_style: theme::muted(),
-            focused: self.search_active,
-        };
-        f.render_widget(ta, inner);
+        // Search bar (panel-style).
+        let search_block = crate::widgets::chrome::panel_block(
+            "Search",
+            if self.search_active { theme::PRIMARY } else { theme::OUTLINE_VARIANT },
+            self.search_active,
+        );
+        let search_inner = search_block.inner(layout[1]);
+        f.render_widget(search_block, layout[1]);
+        f.render_widget(
+            TextAreaView {
+                area: &self.search,
+                style: Style::default().fg(theme::ON_SURFACE),
+                placeholder_style: theme::muted(),
+                focused: self.search_active,
+            },
+            Rect {
+                x: search_inner.x + 1,
+                width: search_inner.width.saturating_sub(2),
+                ..search_inner
+            },
+        );
 
-        // Divider.
-        let div = Paragraph::new(Span::styled(
-            "─".repeat(layout[3].width as usize),
-            Style::default().fg(theme::BORDER),
-        ));
-        f.render_widget(div, layout[3]);
+        // Body panel (titled with active tab name).
+        let body_title = TABS[self.active_tab.min(TABS.len() - 1)];
+        let body_block = crate::widgets::chrome::panel_block(body_title, theme::PRIMARY, true);
+        let body_inner = body_block.inner(layout[2]);
+        f.render_widget(body_block, layout[2]);
 
-        // Body — dispatch per tab.
         let query = self.search.value().to_ascii_lowercase();
         let q = query.trim();
         let lines = match self.active_tab {
@@ -181,23 +205,32 @@ impl DashboardView {
             5 => render_logs(&self.snap.logs, &self.snap.log_source_path, q),
             _ => Vec::new(),
         };
-        let max_scroll = (lines.len() as u16).saturating_sub(layout[4].height);
+        let max_scroll = (lines.len() as u16).saturating_sub(body_inner.height);
         if self.scroll > max_scroll {
             self.scroll = max_scroll;
         }
-        let body = Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll, 0));
-        f.render_widget(body, layout[4]);
+        f.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((self.scroll, 0)),
+            body_inner,
+        );
 
-        // Footer.
-        let hint = if self.state.overlay {
-            "← → tab to switch  ·  / search  ·  Esc close"
+        // Command bar.
+        let entries: &[(&str, &str)] = if self.state.overlay {
+            &[
+                ("⇥", "Tab"),
+                ("/", "Search"),
+                ("⎋", "Close"),
+            ]
         } else {
-            "← → tab to switch  ·  / search  ·  q / Esc quit"
+            &[
+                ("⇥", "Tab"),
+                ("/", "Search"),
+                ("Q", "Quit"),
+            ]
         };
-        let footer = Paragraph::new(Span::styled(hint, theme::muted()));
-        f.render_widget(footer, layout[5]);
+        crate::widgets::chrome::render_command_bar(f, layout[3], entries);
     }
 }
 

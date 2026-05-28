@@ -47,95 +47,104 @@ impl MonitorView {
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::PRIMARY));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
+        // Outer frame.
+        let inner = crate::widgets::chrome::outer_block(
+            f,
+            area,
+            "OpsIntelligence",
+            "Monitor",
+            None,
+        );
+        // Status pill.
+        let st = &self.snap.status;
+        let (pill, pill_bg) = if st.alive {
+            (format!(" PID {}  ·  {} ", st.pid, st.etime), theme::SUCCESS)
+        } else {
+            (" STOPPED ".to_string(), theme::ERROR_COLOR)
+        };
+        crate::widgets::chrome::render_pill(f, area, &pill, pill_bg);
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // status line
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // CPU/RAM
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // header
-                Constraint::Min(3),    // event table
-                Constraint::Length(1), // footer
+                Constraint::Length(4), // resources panel (CPU/RAM + version)
+                Constraint::Min(3),    // events panel
+                Constraint::Length(1), // command bar
             ])
             .split(inner);
 
-        // Status line.
-        let st = &self.snap.status;
-        let status_line = if st.alive {
-            Line::from(vec![
-                Span::styled(
-                    "● ",
-                    Style::default().fg(theme::SUCCESS).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("MONITORING", theme::primary()),
-                Span::raw(" "),
-                Span::styled(self.state.version.clone(), theme::muted()),
-                Span::raw("  "),
-                Span::styled(format!("PID {}", st.pid), theme::muted()),
-                Span::raw("  "),
-                Span::styled(st.etime.clone(), theme::muted()),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled("● ", theme::error_style()),
-                Span::styled("ORCHESTRATOR STOPPED", theme::error_style()),
-            ])
-        };
-        f.render_widget(Paragraph::new(status_line), layout[0]);
-
-        // CPU/RAM bars.
-        let bars = Line::from(vec![
-            Span::styled("CPU ", theme::muted()),
-            Span::styled(progress_bar(st.cpu_percent, 10), Style::default().fg(theme::PRIMARY)),
-            Span::styled(format!(" {:.1}%   ", st.cpu_percent), theme::muted()),
-            Span::styled("RAM ", theme::muted()),
-            Span::styled(
-                progress_bar((st.rss_mb / 1024.0 * 100.0).min(100.0), 10),
-                Style::default().fg(theme::PRIMARY),
-            ),
-            Span::styled(format!(" {:.0} MB", st.rss_mb), theme::muted()),
-        ]);
-        f.render_widget(Paragraph::new(bars), layout[2]);
-
-        // Section header.
-        f.render_widget(
-            Paragraph::new(Span::styled("Live Run Trace", theme::header())),
-            layout[4],
+        // Resources panel.
+        let res_block = crate::widgets::chrome::panel_block(
+            "Resources",
+            theme::PRIMARY,
+            true,
         );
+        let res_inner = res_block.inner(layout[0]);
+        f.render_widget(res_block, layout[0]);
+        let resource_lines = vec![
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("CPU ", theme::muted()),
+                Span::styled(progress_bar(st.cpu_percent, 14), Style::default().fg(theme::PRIMARY)),
+                Span::styled(format!("  {:.1}%   ", st.cpu_percent), theme::muted()),
+                Span::styled("RAM ", theme::muted()),
+                Span::styled(
+                    progress_bar((st.rss_mb / 1024.0 * 100.0).min(100.0), 14),
+                    Style::default().fg(theme::PRIMARY),
+                ),
+                Span::styled(format!("  {:.0} MB", st.rss_mb), theme::muted()),
+            ]),
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("version ", theme::muted()),
+                Span::styled(
+                    self.state.version.clone(),
+                    Style::default().fg(theme::ON_SURFACE),
+                ),
+            ]),
+        ];
+        f.render_widget(Paragraph::new(resource_lines), res_inner);
 
-        // Event table.
+        // Live Run Trace panel.
+        let trace_block = crate::widgets::chrome::panel_block(
+            "Live Run Trace",
+            theme::PRIMARY,
+            true,
+        );
+        let trace_inner = trace_block.inner(layout[1]);
+        f.render_widget(trace_block, layout[1]);
+
         let mut lines: Vec<Line<'static>> = vec![
             Line::from(Span::styled(
-                format!("{:<10}{:<6}{:<40}{}", "TIME", "ITER", "EVENT", "TOOL/CHAIN"),
-                theme::header(),
+                format!(" {:<10}{:<6}{:<40}{}", "TIME", "ITER", "EVENT", "TOOL/CHAIN"),
+                Style::default()
+                    .fg(theme::ON_SURFACE)
+                    .add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled("─".repeat(76), theme::muted())),
+            Line::from(Span::styled(
+                "─".repeat(trace_inner.width as usize),
+                theme::muted(),
+            )),
         ];
         for ev in &self.snap.events {
             lines.push(event_line(ev));
         }
         if self.snap.events.is_empty() {
             lines.push(Line::from(Span::styled(
-                "No log events yet — waiting for the orchestrator to write to the configured log file.",
+                " No log events yet — waiting for the orchestrator to write to the log.",
                 theme::muted(),
             )));
         }
         f.render_widget(
             Paragraph::new(lines).wrap(Wrap { trim: false }),
-            layout[5],
+            trace_inner,
         );
 
-        // Footer.
-        f.render_widget(
-            Paragraph::new(Span::styled("q to quit", theme::muted())),
-            layout[6],
+        // Command bar.
+        crate::widgets::chrome::render_command_bar(
+            f,
+            layout[2],
+            &[("Q", "Quit"), ("⎋", "Quit")],
         );
     }
 }
@@ -147,6 +156,7 @@ fn event_line(ev: &MonitorEvent) -> Line<'static> {
         ev.iteration.to_string()
     };
     Line::from(vec![
+        Span::raw(" "),
         Span::styled(format!("{:<10}", ev.time), theme::muted()),
         Span::styled(format!("{:<6}", iter_str), theme::muted()),
         Span::styled(format!("{:<40}", truncate(&ev.message, 40)), Style::default()),

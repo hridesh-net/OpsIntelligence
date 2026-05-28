@@ -122,6 +122,23 @@ pub struct WizardState {
     pub brand: String, // e.g. "OPSINTELLIGENCE"
 }
 
+/// Sent once after `view.push` with the full step list so the wizard view
+/// can render a sidebar progress tracker. The Rust side updates the active
+/// index when each `wizard.step` arrives.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WizardPlan {
+    #[serde(default)]
+    pub steps: Vec<WizardPlanItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WizardPlanItem {
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub title: String,
+}
+
 /// Sent by Go as `wizard.step` to instruct the Rust side to render one step
 /// (either a form or a side-effect spinner). The Rust side replies with a
 /// matching id via `wizard.submit` (form) or implicitly via Go pushing the next

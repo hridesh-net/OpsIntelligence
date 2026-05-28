@@ -54,95 +54,103 @@ impl DoctorView {
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
+        // Outer frame.
+        let inner = crate::widgets::chrome::outer_block(
+            f,
+            area,
+            "OpsIntelligence",
+            "Doctor",
+            None,
+        );
+
+        // Status pill: ok/warn/error breakdown when not running.
+        if self.snap.running {
+            let pill = format!(" {} running ", self.spinner.frame());
+            crate::widgets::chrome::render_pill(f, area, &pill, theme::NEON);
+        } else {
+            let mut ok = 0u32;
+            let mut warn = 0u32;
+            let mut err = 0u32;
+            for c in &self.snap.checks {
+                match c.severity.as_str() {
+                    "ok" => ok += 1,
+                    "warn" => warn += 1,
+                    "error" => err += 1,
+                    _ => {}
+                }
+            }
+            let (label, bg) = if err > 0 {
+                (format!(" {} errors ", err), theme::ERROR_COLOR)
+            } else if warn > 0 {
+                (format!(" {} warnings ", warn), theme::WARN)
+            } else {
+                (format!(" {} ok ", ok), theme::SUCCESS)
+            };
+            crate::widgets::chrome::render_pill(f, area, &label, bg);
+        }
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(3),
-                Constraint::Length(1),
-            ])
-            .split(area);
+            .constraints([Constraint::Min(3), Constraint::Length(1)])
+            .split(inner);
 
-        // Header.
-        let header = if self.snap.running {
-            Line::from(vec![
-                Span::styled(
-                    "OpsIntelligence Doctor",
-                    theme::header(),
-                ),
-                Span::raw("  "),
-                Span::styled(self.spinner.frame().to_string(), theme::neon()),
-                Span::raw(" "),
-                Span::styled("Running checks…", theme::muted()),
-            ])
+        // Body panel.
+        let title = if self.snap.running {
+            "Running checks…".to_string()
         } else {
-            Line::from(vec![
-                Span::styled(
-                    "OpsIntelligence Doctor",
-                    theme::header(),
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    "✔ Checks complete",
-                    Style::default()
-                        .fg(theme::SUCCESS)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])
+            "Checks".to_string()
         };
-        f.render_widget(Paragraph::new(header), layout[0]);
-
-        // Body.
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::PRIMARY));
-        let inner = block.inner(layout[1]);
-        f.render_widget(block, layout[1]);
+        let body_block = crate::widgets::chrome::panel_block(&title, theme::PRIMARY, true);
+        let body_inner = body_block.inner(layout[0]);
+        f.render_widget(body_block, layout[0]);
 
         let mut lines: Vec<Line<'static>> = Vec::new();
         if self.snap.checks.is_empty() && self.snap.running {
-            lines.push(Line::from(Span::styled("Initializing…", theme::muted())));
+            lines.push(Line::from(Span::styled(" Initializing…", theme::muted())));
         }
         for c in &self.snap.checks {
-            let (icon, icon_style, msg_style) = match c.severity.as_str() {
+            let (dot, dot_style, msg_style) = match c.severity.as_str() {
                 "ok" => (
-                    "✔ ",
+                    "●",
                     Style::default()
                         .fg(theme::SUCCESS)
                         .add_modifier(Modifier::BOLD),
                     Style::default().fg(theme::ON_SURFACE),
                 ),
                 "warn" => (
-                    "⚠ ",
+                    "●",
                     Style::default()
                         .fg(theme::WARN)
                         .add_modifier(Modifier::BOLD),
                     Style::default().fg(theme::WARN),
                 ),
-                "error" => ("✗ ", theme::error_style(), theme::error_style()),
-                "skipped" => ("⊘ ", theme::muted(), theme::muted()),
-                _ => ("• ", theme::muted(), theme::muted()),
+                "error" => ("●", theme::error_style(), theme::error_style()),
+                "skipped" => ("○", theme::muted(), theme::muted()),
+                _ => ("·", theme::muted(), theme::muted()),
             };
             lines.push(Line::from(vec![
-                Span::styled(icon, icon_style),
-                Span::styled(format!("{:<20} ", c.id), theme::primary()),
+                Span::raw(" "),
+                Span::styled(format!(" {} ", dot), dot_style),
+                Span::styled(
+                    format!("{:<20} ", c.id),
+                    Style::default()
+                        .fg(theme::PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(c.message.clone(), msg_style),
             ]));
         }
         f.render_widget(
             Paragraph::new(lines).wrap(Wrap { trim: false }),
-            inner,
+            body_inner,
         );
 
-        // Footer.
-        let footer = if self.snap.running {
-            "running…"
+        // Command bar.
+        let entries: &[(&str, &str)] = if self.snap.running {
+            &[("⌃C", "Abort")]
         } else {
-            "Press q to quit"
+            &[("Q", "Quit"), ("⎋", "Quit")]
         };
-        f.render_widget(
-            Paragraph::new(Span::styled(footer, theme::muted())),
-            layout[2],
-        );
+        crate::widgets::chrome::render_command_bar(f, layout[1], entries);
     }
 }

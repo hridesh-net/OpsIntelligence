@@ -280,55 +280,31 @@ impl ReplView {
         self.width = area.width;
         self.height = area.height;
 
+        // Outer frame.
+        let inner = crate::widgets::chrome::outer_block(
+            f,
+            area,
+            "OpsIntelligence",
+            "REPL",
+            None,
+        );
+        // Status pill: session ID short.
+        let pill = format!(" {} ", short_id(&self.state.session_id));
+        crate::widgets::chrome::render_pill(f, area, &pill, theme::PRIMARY);
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // header
-                Constraint::Min(3),    // chat
-                Constraint::Length(5), // input + footer
+                Constraint::Min(3),    // chat panel
+                Constraint::Length(5), // input + status
             ])
-            .split(area);
+            .split(inner);
 
-        self.render_header(f, layout[0]);
-        self.render_chat(f, layout[1]);
-        self.render_input(f, layout[2]);
-    }
-
-    fn render_header(&self, f: &mut Frame, area: Rect) {
-        let header = Line::from(vec![
-            Span::styled("› ", Style::default().fg(theme::CHROME_BG).bg(theme::CHROME_BG)),
-            Span::styled("OPSINTELLIGENCE", theme::primary()),
-            Span::raw("  "),
-            Span::styled("repl", theme::muted()),
-            Span::raw("  "),
-            Span::styled(self.state.version.clone(), theme::muted()),
-            Span::raw("  ·  "),
-            Span::styled(short_id(&self.state.session_id), theme::muted()),
-        ]);
-        let p = Paragraph::new(header).alignment(Alignment::Left);
-        f.render_widget(p, Rect { height: 1, ..area });
-        let rule = Paragraph::new(Span::styled(
-            "─".repeat(area.width.saturating_sub(2) as usize),
-            Style::default().fg(theme::BORDER),
-        ));
-        f.render_widget(
-            rule,
-            Rect {
-                y: area.y + 1,
-                height: 1,
-                ..area
-            },
-        );
+        self.render_chat(f, layout[0]);
+        self.render_input(f, layout[1]);
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: Rect) {
-        let inner = Rect {
-            x: area.x + 1,
-            y: area.y,
-            width: area.width.saturating_sub(2),
-            height: area.height,
-        };
-
         let mut lines: Vec<Line<'static>> = self.history.clone();
         if !self.token_buf.is_empty() {
             let width = inner.width.saturating_sub(4) as usize;
@@ -374,32 +350,40 @@ impl ReplView {
 
         // Compute scroll: when auto_scroll, pin to bottom.
         let total = lines.len() as u16;
-        let visible = inner.height;
+        let visible = area.height.saturating_sub(2); // border top + bottom
         let max_scroll = total.saturating_sub(visible);
         if self.auto_scroll || self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.thinking { theme::PRIMARY } else { theme::BORDER }));
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll_offset, 0));
-        f.render_widget(paragraph, area);
+        let title = if self.thinking { "Conversation  ·  thinking…" } else { "Conversation" };
+        let block = crate::widgets::chrome::panel_block(
+            title,
+            if self.thinking { theme::PRIMARY } else { theme::OUTLINE_VARIANT },
+            self.thinking,
+        );
+        f.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false })
+                .scroll((self.scroll_offset, 0)),
+            area,
+        );
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(theme::BORDER));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
+        // Input panel (bordered).
+        let input_block = crate::widgets::chrome::panel_block(
+            "Message",
+            if self.thinking { theme::OUTLINE_VARIANT } else { theme::PRIMARY },
+            !self.thinking,
+        );
+        let inner = input_block.inner(area);
+        f.render_widget(input_block, area);
 
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Length(1), Constraint::Length(1)])
+            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
             .split(inner);
 
         // Input row: "› " prefix + textarea.
@@ -417,9 +401,10 @@ impl ReplView {
         };
         f.render_widget(ta, prefix_row[1]);
 
-        // Footer hint.
-        let footer = if self.thinking {
+        // Status row + command bar.
+        let status_line = if self.thinking {
             let mut spans = vec![
+                Span::raw(" "),
                 Span::styled(self.spinner.frame().to_string(), theme::neon()),
                 Span::styled(" · ", theme::neon()),
                 Span::styled("thinking", theme::muted()),
@@ -432,32 +417,32 @@ impl ReplView {
                 }
             }
             Line::from(spans)
-        } else {
-            let mut spans = vec![Span::styled(
-                "↵ send  ·  ctrl+j newline  ·  ↑ recall  ·  ctrl+l clear  ·  esc quit",
-                theme::muted(),
-            )];
-            if !self.state.model_name.is_empty() {
-                spans.push(Span::styled("  ·  ", theme::muted()));
-                spans.push(Span::styled(self.state.model_name.clone(), theme::muted()));
-            }
-            Line::from(spans)
-        };
-        f.render_widget(Paragraph::new(footer), rows[1]);
-
-        // Usage line.
-        if self.session_usage_total > 0 {
-            let usage = Line::from(Span::styled(
-                format!(
-                    "session: {} prompt + {} completion = {} tok",
-                    fmt_num(self.session_usage_prompt),
-                    fmt_num(self.session_usage_completion),
-                    fmt_num(self.session_usage_total),
+        } else if !self.state.model_name.is_empty() {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled("model ", theme::muted()),
+                Span::styled(
+                    self.state.model_name.clone(),
+                    Style::default().fg(theme::ON_SURFACE),
                 ),
-                theme::muted(),
-            ));
-            f.render_widget(Paragraph::new(usage), rows[2]);
-        }
+            ])
+        } else {
+            Line::raw("")
+        };
+        f.render_widget(Paragraph::new(status_line), rows[1]);
+
+        let entries: &[(&str, &str)] = if self.thinking {
+            &[("⌃C", "Cancel")]
+        } else {
+            &[
+                ("⏎", "Send"),
+                ("⌃J", "Newline"),
+                ("↑", "Recall"),
+                ("⌃L", "Clear"),
+                ("⎋", "Quit"),
+            ]
+        };
+        crate::widgets::chrome::render_command_bar(f, rows[2], entries);
     }
 }
 

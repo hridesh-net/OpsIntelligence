@@ -238,9 +238,9 @@ var openAICompatProviders = map[string]bool{
 
 
 func runOnboarding(configPath string) (bool, error) {
-	tui.PrintOnboardBanner(version)
-	tui.PrintOnboardWelcomeSubtitle("Let's configure your autonomous agent environment.")
-	fmt.Println()
+	// The Rust wizard renders its own header + subtitle; we deliberately
+	// don't print a Go-side splash banner first so the user sees a single
+	// alt-screen TUI instead of two stacked headers.
 
 	// Load existing config if available to pre-populate defaults
 	var existing *config.Config

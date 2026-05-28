@@ -161,6 +161,22 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 		return err
 	}
 
+	// Push the full step plan so the wizard view can render a sidebar
+	// progress tracker. Only form steps appear in the sidebar — side-effect
+	// steps run "inside" the active form context and shouldn't be listed.
+	planItems := make([]map[string]any, 0, len(opts.Steps))
+	for i := range opts.Steps {
+		st := &opts.Steps[i]
+		if st.Form == nil {
+			continue
+		}
+		planItems = append(planItems, map[string]any{
+			"icon":  st.Icon,
+			"title": st.Title,
+		})
+	}
+	_ = b.Send("wizard.plan", map[string]any{"steps": planItems})
+
 	// Compute total form steps for the progress header.
 	totalForms := 0
 	for _, s := range opts.Steps {
