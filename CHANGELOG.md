@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.28] — 2026-05-28
+
+### Fixed
+
+- **Wizard sidebar highlighted the wrong group on skipped sub-flows.** The plan-builder counted `formNum` for every form step in `opts.Steps`, including ones whose `Skip()` returned true at runtime (e.g. the 5 Secondary-Provider sub-flow steps when `secChoice="none"`). Plan `step_num` drifted ahead of the runtime counter, so on form 9 (`Gateway — Expose via Tailscale Funnel`) the sidebar lit up `Secondary Provider`. Plan-build now applies the same `Skip()` filter as the runtime loop, and `totalForms` (the `N / 32` header denominator) matches.
+
+### Added
+
+- `make tui` — convenience target that rebuilds the Rust subprocess for the host platform and the Go binary in one step. Equivalent to `make build-tui-host && make build-go` but discoverable in `make help`.
+
+### Changed
+
+- Crate version bumped to `0.2.3`.
+
 ## [1.0.27] — 2026-05-28
 
 ### Fixed

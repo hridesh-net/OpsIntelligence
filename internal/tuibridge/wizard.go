@@ -167,12 +167,32 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 	// Consecutive form steps that share the same Title are collapsed into a
 	// single sidebar group; `step_num` records the 1-based form-step number at
 	// which the group becomes active so the Rust side can highlight correctly.
+	// Compute total form steps for the progress header. Skipped steps are
+	// excluded so the denominator matches the runtime form counter.
+	totalForms := 0
+	for i := range opts.Steps {
+		s := &opts.Steps[i]
+		if s.Form == nil {
+			continue
+		}
+		if s.Skip != nil && s.Skip() {
+			continue
+		}
+		totalForms++
+	}
+
 	planItems := make([]map[string]any, 0, len(opts.Steps))
 	var lastTitle string
 	formNum := uint32(0)
 	for i := range opts.Steps {
 		st := &opts.Steps[i]
 		if st.Form == nil {
+			continue
+		}
+		// Skipped steps must not consume a form-number, otherwise the
+		// plan's `step_num` drifts ahead of the runtime counter and the
+		// sidebar highlights the wrong group.
+		if st.Skip != nil && st.Skip() {
 			continue
 		}
 		formNum++
@@ -187,14 +207,6 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 		})
 	}
 	_ = b.Send("wizard.plan", map[string]any{"steps": planItems})
-
-	// Compute total form steps for the progress header.
-	totalForms := 0
-	for _, s := range opts.Steps {
-		if s.Form != nil {
-			totalForms++
-		}
-	}
 
 	formNum = 0
 	for i := range opts.Steps {
