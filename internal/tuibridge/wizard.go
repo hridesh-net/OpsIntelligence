@@ -196,7 +196,7 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 		}
 	}
 
-	formNum := 0
+	formNum = 0
 	for i := range opts.Steps {
 		select {
 		case <-quit:

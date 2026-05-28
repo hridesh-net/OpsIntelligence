@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.27] — 2026-05-28
+
+### Fixed
+
+- **Release build failure** — `internal/tuibridge/wizard.go:199` redeclared `formNum` with `:=` after the sidebar-dedupe loop introduced the same name earlier in the same scope (`no new variables on left side of :=`). Changed the second occurrence to a plain reassignment. Affected every platform in the v1.0.26 release matrix.
+
+### Changed
+
+- Crate version bumped to `0.2.2`.
+
 ## [1.0.26] — 2026-05-28
 
 ### Fixed
