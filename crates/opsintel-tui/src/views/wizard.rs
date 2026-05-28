@@ -366,9 +366,24 @@ fn render_sidebar(f: &mut Frame, area: Rect, plan: &WizardPlan, active_num: u32)
             theme::muted(),
         )));
     } else {
+        // Determine which group is active: the last group whose `step_num`
+        // is <= active_num. Groups before it are completed; groups after are
+        // pending. Falls back to positional 1-based index when step_num is 0
+        // (older Go binaries that don't emit the field).
+        let active_idx: Option<usize> = {
+            let mut found: Option<usize> = None;
+            for (i, item) in plan.steps.iter().enumerate() {
+                let start = if item.step_num == 0 { (i + 1) as u32 } else { item.step_num };
+                if start <= active_num {
+                    found = Some(i);
+                } else {
+                    break;
+                }
+            }
+            found
+        };
         for (i, item) in plan.steps.iter().enumerate() {
-            let one_based = (i + 1) as u32;
-            let (marker, name_style) = if one_based < active_num {
+            let (marker, name_style) = if active_idx.is_some_and(|a| i < a) {
                 (
                     Span::styled(
                         "● ",
@@ -378,7 +393,7 @@ fn render_sidebar(f: &mut Frame, area: Rect, plan: &WizardPlan, active_num: u32)
                         .fg(theme::ON_SURFACE)
                         .add_modifier(Modifier::DIM),
                 )
-            } else if one_based == active_num {
+            } else if active_idx == Some(i) {
                 (
                     Span::styled(
                         "► ",
@@ -394,7 +409,7 @@ fn render_sidebar(f: &mut Frame, area: Rect, plan: &WizardPlan, active_num: u32)
                 (Span::styled("● ", theme::muted()), theme::muted())
             };
             let title = if item.title.is_empty() {
-                format!("Step {}", one_based)
+                format!("Step {}", i + 1)
             } else {
                 item.title.clone()
             };
@@ -903,11 +918,11 @@ fn handle_form_key(state: &mut FormState, key: KeyEvent) -> WizardOutbound {
             return submit_form(state);
         }
         KeyCode::Enter => {
-            if is_last_interactive(state) {
-                return submit_form(state);
-            }
-            advance_cursor(state, 1);
-            return WizardOutbound::None;
+            // Enter always submits the form. Use Tab / ↓ / j to advance
+            // between fields. This matches huh's behavior and avoids the
+            // surprise where pressing Enter on a non-final Select silently
+            // advances cursor without any visible change.
+            return submit_form(state);
         }
         KeyCode::PageUp => {
             state.scroll = state.scroll.saturating_sub(4);
@@ -1016,6 +1031,7 @@ fn submit_form(state: &FormState) -> WizardOutbound {
     }
 }
 
+#[allow(dead_code)]
 fn is_last_interactive(state: &FormState) -> bool {
     state
         .fields

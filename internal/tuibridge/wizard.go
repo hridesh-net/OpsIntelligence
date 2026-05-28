@@ -164,15 +164,26 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 	// Push the full step plan so the wizard view can render a sidebar
 	// progress tracker. Only form steps appear in the sidebar — side-effect
 	// steps run "inside" the active form context and shouldn't be listed.
+	// Consecutive form steps that share the same Title are collapsed into a
+	// single sidebar group; `step_num` records the 1-based form-step number at
+	// which the group becomes active so the Rust side can highlight correctly.
 	planItems := make([]map[string]any, 0, len(opts.Steps))
+	var lastTitle string
+	formNum := uint32(0)
 	for i := range opts.Steps {
 		st := &opts.Steps[i]
 		if st.Form == nil {
 			continue
 		}
+		formNum++
+		if len(planItems) > 0 && st.Title == lastTitle {
+			continue
+		}
+		lastTitle = st.Title
 		planItems = append(planItems, map[string]any{
-			"icon":  st.Icon,
-			"title": st.Title,
+			"icon":     st.Icon,
+			"title":    st.Title,
+			"step_num": formNum,
 		})
 	}
 	_ = b.Send("wizard.plan", map[string]any{"steps": planItems})

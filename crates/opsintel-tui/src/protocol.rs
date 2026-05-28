@@ -137,6 +137,12 @@ pub struct WizardPlanItem {
     pub icon: String,
     #[serde(default)]
     pub title: String,
+    /// 1-based form-step number at which this sidebar group becomes active.
+    /// When Go collapses consecutive same-titled steps into one group, this
+    /// records the first step in the run so the Rust side can highlight the
+    /// correct group as `active_step_num` advances.
+    #[serde(default)]
+    pub step_num: u32,
 }
 
 /// Sent by Go as `wizard.step` to instruct the Rust side to render one step
