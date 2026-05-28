@@ -6,6 +6,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Rust TUI migration (complete)
+
+Every interactive terminal UI has been rewritten in Rust using [`ratatui`](https://github.com/ratatui-org/ratatui) and runs as a subprocess of the Go binary. The Rust executable is built from `crates/opsintel-tui/` and embedded via `go:embed`; the Go core talks to it over newline-delimited JSON-RPC on stdio. From the user's perspective `opsintelligence` remains a single binary.
+
+#### Ported interactive surfaces
+
+| Command | Before | After |
+|---|---|---|
+| `agent` / `repl` | bubbletea + bubbles | `views/repl.rs` (streaming + markdown + tool calls) |
+| `status` | bubbletea | `views/dashboard.rs` (6-tab snapshot view) |
+| `repos tui` | bubbletea + huh + viewport | `views/repos.rs` (5 tabs + edit form) |
+| `doctor` | bubbletea | `views/doctor.rs` (live check list) |
+| `monitor` | bubbletea | `views/monitor.rs` (tailing event table) |
+| `onboard` | 35 huh forms | `views/wizard.rs` (generic form engine) |
+| `quickstart` | huh + bubbletea | wizard DSL |
+| `skills configure` | huh forms | wizard DSL |
+
+#### New infrastructure
+
+- `internal/tuibridge/` — JSON-RPC bridge, `go:embed` of the Rust binary, sha256-hashed cache extraction, snapshot builders for each view, generic `WizardStep` DSL with 5 field types (Input/Password/Select/MultiSelect/Confirm/Note).
+- `crates/opsintel-tui/` — Rust workspace with `views/{repl,dashboard,repos,doctor,monitor,wizard}.rs`, ported palette from `tui/theme.go`, shared widgets (text area with UTF-8 cursor, fenced-block markdown renderer, spinner).
+- Hidden dev commands: `tui-ping` (Phase 1 smoke test), `tui-wizard-demo` (form-engine demo), `tui-onboard-preview` (sub-flow preview).
+
+#### Dependency drop
+
+`go.mod` no longer depends on `github.com/charmbracelet/huh`, `bubbles`, or `bubbletea`. Only `lipgloss` remains, used by a handful of non-interactive stdout helpers (`tui/banner.go`, `startup.go`, `theme.go`, `effects.go`, `guides.go`, `onboard_step.go`, `util.go`).
+
+#### Files removed
+
+`cmd/opsintelligence/tui/{repl,dashboard,repos_tui,doctor,monitor,status,setup,onboard_model,onboard_summary}.go` and `runOnboardingLegacy` / `collectProvider` / `collectProviderFiltered` / `ensureSelectValue` / `BuildOnboardSteps` / `providerSteps` dead-code branches — ~10,000 LOC of Go TUI deleted. Replaced by ~3,800 LOC of Rust.
+
+#### Build & dev workflow
+
+- `make build-tui-host` compiles the Rust binary for the host platform and stages it at `internal/tuibridge/assets/`. `make build-go` depends on it; the `go:embed` directive picks up the staged binary at compile time.
+- `make build-tui` cross-builds all 5 release targets (`darwin-{arm64,amd64}`, `linux-{amd64,arm64}`, `windows-amd64`).
+- `make tui-ping` round-trips a JSON-RPC ping through the embedded binary as an end-to-end smoke test.
+- `--tui-dev-binary=PATH` (also `OPSINTEL_TUI_DEV_BINARY` env) overrides the embedded binary so iterating on the Rust side doesn't require a Go rebuild.
+
+#### Migration impact
+
+- One additional toolchain required: `rustup` (Rust 1.75+). CI matrix updated to cross-build the TUI before `go build`.
+- Distribution unchanged from a user perspective — still a single `opsintelligence` binary that extracts the embedded Rust subprocess to `$XDG_CACHE_HOME/opsintelligence/tui/<hash>/` on first run.
+- Onboarding behavioural change: the legacy tabbed bubbletea summary screen at the end of `opsintelligence onboard` is replaced with a plain-text summary printer. Run `opsintelligence status` for the live tabbed view of the merged config (now in Rust).
+
+## [1.0.22] — 2026-05-24
+
+### Fixed
+
+- **Gemini provider registry name mismatch** (`internal/provider/gemini/gemini.go`): `Name()` returned `"google"` but the routing config and provider registry expected `"gemini"`, causing gateway startup to fail with `resolve model "gemini/gemini-2.5-flash": provider "gemini" not found`. Fixed by changing `Name()` to return `"gemini"` so the provider prefix matches routing exactly.
+- **Dashboard unavailable on startup** (`internal/provider/gemini/gemini.go`): because the gateway failed to start due to the provider name mismatch, the dashboard at `/dashboard/` was completely unreachable. The fix above restores full gateway functionality including dashboard, API, and health endpoints.
+- **PID lock race / stale launchd agent** (`cmd/opsintelligence/main.go`, `cmd/opsintelligence/service_darwin.go`): removed old `KeepAlive` launchd plist at `~/Library/LaunchAgents/com.opsintelligence.agent.plist` that was fighting with manual `opsintelligence start` invocations, causing PID file conflicts and stale process restarts.
+
 ## [1.0.21] — 2026-05-24
 
 ### Fixed

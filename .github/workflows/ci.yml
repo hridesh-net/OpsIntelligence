@@ -13,7 +13,7 @@ jobs:
   test-and-build:
     name: test-and-build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,6 +22,34 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Rust check + lint (opsintel-tui)
+        run: |
+          cargo check -p opsintel-tui --locked || cargo check -p opsintel-tui
+          cargo clippy -p opsintel-tui --all-targets -- -D warnings
+
+      - name: Build Rust TUI for host
+        run: |
+          cargo build --release -p opsintel-tui
+          mkdir -p internal/tuibridge/assets
+          HOST_OS=$(go env GOOS); HOST_ARCH=$(go env GOARCH)
+          cp target/release/opsintel-tui "internal/tuibridge/assets/opsintel-tui-${HOST_OS}-${HOST_ARCH}"
 
       - name: Run tests
         run: go test ./... -count=1
@@ -38,10 +66,13 @@ jobs:
           jq -e '.schema_version >= 1 and (.checks | type == "array") and (.exit_code | type == "number")' /tmp/doctor.json
           jq -e '[.checks[] | select(.id == "") or (.severity == "") or (.message == "")] | length == 0' /tmp/doctor.json
 
+      - name: TUI bridge round-trip (tui-ping)
+        run: ./opsintelligence tui-ping
+
   fresh-install:
     name: fresh-install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +83,28 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Rust TUI for host
+        shell: bash
+        run: |
+          cargo build --release -p opsintel-tui
+          mkdir -p internal/tuibridge/assets
+          HOST_OS=$(go env GOOS); HOST_ARCH=$(go env GOARCH)
+          cp target/release/opsintel-tui "internal/tuibridge/assets/opsintel-tui-${HOST_OS}-${HOST_ARCH}"
 
       - name: Fresh install smoke (install.sh + doctor)
         env:

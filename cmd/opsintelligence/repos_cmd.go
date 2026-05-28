@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,9 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +53,7 @@ Examples:
   opsintelligence repos users myorg/myrepo add alice --role maintainer
   opsintelligence repos tui`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReposTUI(gf)
+			return runReposTUI(cmd.Context(), gf)
 		},
 	}
 
@@ -500,12 +501,12 @@ func reposTUICmd(gf *globalFlags) *cobra.Command {
 		Use:   "tui",
 		Short: "Open the interactive Repo Intelligence TUI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReposTUI(gf)
+			return runReposTUI(cmd.Context(), gf)
 		},
 	}
 }
 
-func runReposTUI(gf *globalFlags) error {
+func runReposTUI(ctx context.Context, gf *globalFlags) error {
 	cfg, err := loadConfig(gf.configPath, nil)
 	if err != nil {
 		return err
@@ -532,7 +533,7 @@ func runReposTUI(gf *globalFlags) error {
 		return err
 	}
 
-	return tui.ReposTUIRun(tui.ReposTUIConfig{
+	return tuibridge.RunReposTUI(ctx, tuibridge.ReposOptions{
 		Registry:  reg,
 		MemoryDir: memDir,
 		OnSyncRequest: func(id string) {

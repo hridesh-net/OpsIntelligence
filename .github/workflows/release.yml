@@ -23,33 +23,57 @@ jobs:
             goos: linux
             goarch: amd64
             ext: ""
+            rust_target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: linux-arm64
             goos: linux
             goarch: arm64
             ext: ""
+            rust_target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: darwin-arm64
             goos: darwin
             goarch: arm64
             ext: ""
+            rust_target: aarch64-apple-darwin
           - os: macos-latest
             target: darwin-amd64
             goos: darwin
             goarch: amd64
             ext: ""
+            rust_target: x86_64-apple-darwin
           - os: windows-latest
             target: windows-amd64
             goos: windows
             goarch: amd64
             ext: ".exe"
+            # Use MSVC for the Rust subprocess (no MSYS2 dependency on the
+            # cargo side). The Go binary still uses mingw/CGO; that's fine
+            # because the Rust binary is launched as a separate process.
+            rust_target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
-      
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
-          
+
+      - name: Setup Rust (with target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.rust_target }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.rust_target }}-cargo-
+
       - name: Install MSYS2 (Windows)
         if: matrix.os == 'windows-latest'
         uses: msys2/setup-msys2@v2
@@ -64,11 +88,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsqlite3-dev
 
-      - name: Install ARM64 cross-compiler
+      - name: Install ARM64 cross-compiler (Go + Rust)
         if: matrix.target == 'linux-arm64'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
+          # tell Rust which linker to use for the aarch64-linux target
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build Rust TUI (${{ matrix.rust_target }})
+        shell: bash
+        run: |
+          cargo build --release -p opsintel-tui --target ${{ matrix.rust_target }}
+          mkdir -p internal/tuibridge/assets
+          BIN_NAME="opsintel-tui-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp "target/${{ matrix.rust_target }}/release/opsintel-tui.exe" "internal/tuibridge/assets/${BIN_NAME}"
+          else
+            cp "target/${{ matrix.rust_target }}/release/opsintel-tui" "internal/tuibridge/assets/${BIN_NAME}"
+          fi
+          ls -la internal/tuibridge/assets/
 
       - name: Build Binary (Native)
         if: matrix.target != 'linux-arm64'
@@ -97,13 +140,13 @@ jobs:
         with:
           name: binary-${{ matrix.target }}
           path: dist/*
-          
+
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -141,7 +184,9 @@ jobs:
             echo "Stable release build." >> release_notes.md
           fi
           echo "" >> release_notes.md
-          echo "Automated binaries below." >> release_notes.md
+          echo "Automated binaries below. Each platform binary embeds the matching" >> release_notes.md
+          echo "ratatui-based Rust TUI subprocess (extracted to" >> release_notes.md
+          echo "\$XDG_CACHE_HOME/opsintelligence/tui/ on first run)." >> release_notes.md
           echo "" >> release_notes.md
           echo "Included assets:" >> release_notes.md
           echo "- opsintelligence binaries for supported targets" >> release_notes.md

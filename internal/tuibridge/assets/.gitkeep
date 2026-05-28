@@ -1,0 +1,7 @@
+# Build artifacts land here.
+# Populated by `make tui` / CI release workflow:
+#   opsintel-tui-darwin-arm64
+#   opsintel-tui-darwin-amd64
+#   opsintel-tui-linux-amd64
+#   opsintel-tui-linux-arm64
+#   opsintel-tui-windows-amd64.exe

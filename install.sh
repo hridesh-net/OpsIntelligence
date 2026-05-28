@@ -342,6 +342,30 @@ build_binary_from_source() {
   local tmp_build
   tmp_build="$(mktemp "${TMPDIR:-/tmp}/opsintelligence-build.XXXXXX")"
   local go_tags="${OPSINTELLIGENCE_INSTALL_GO_TAGS:-fts5}"
+
+  # Build + stage the embedded Rust TUI before `go build` runs.
+  # Required because internal/tuibridge/assets/ is empty in source checkouts
+  # (the binary is produced by the release workflow / make targets and is
+  # picked up via go:embed at compile time).
+  local host_os host_arch tui_bin
+  host_os="$(go env GOOS)"
+  host_arch="$(go env GOARCH)"
+  tui_bin="opsintel-tui-${host_os}-${host_arch}"
+  if [[ ! -f "$build_root/internal/tuibridge/assets/$tui_bin" ]]; then
+    if command -v cargo >/dev/null 2>&1; then
+      log "Building embedded Rust TUI (cargo build --release -p opsintel-tui)..."
+      if ! (cd "$build_root" && cargo build --release -p opsintel-tui >/dev/null); then
+        cleanup_bootstrap_go
+        err "cargo build -p opsintel-tui failed — install Rust (https://rustup.rs) or unset FORCE_BUILD"
+      fi
+      mkdir -p "$build_root/internal/tuibridge/assets"
+      cp "$build_root/target/release/opsintel-tui" "$build_root/internal/tuibridge/assets/$tui_bin"
+    else
+      cleanup_bootstrap_go
+      err "Rust toolchain (cargo) not found — required for source builds. Install: https://rustup.rs  then re-run install.sh"
+    fi
+  fi
+
   if ! (cd "$build_root" && CGO_ENABLED="${CGO_ENABLED:-1}" go build -mod=vendor -tags "$go_tags" -ldflags "-s -w ${ver_ldflags}" -o "$tmp_build" ./cmd/opsintelligence); then
     cleanup_bootstrap_go
     if [[ "$PLATFORM" == darwin-* ]]; then

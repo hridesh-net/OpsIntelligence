@@ -1,7 +1,7 @@
 package main
 
-// skills_configure.go — "opsintelligence skills configure" interactive TUI
-// Also reused by onboarding so both flows are identical.
+// skills_configure.go — `opsintelligence skills configure` interactive TUI.
+// Runs through the Rust form engine (Phase 5d); no Charmbracelet dependency.
 //
 // Usage:
 //   opsintelligence skills configure
@@ -14,17 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 )
-
-// ─────────────────────────────────────────────
-// Cobra subcommand
-// ─────────────────────────────────────────────
 
 func skillsConfigureCmd(gf *globalFlags) *cobra.Command {
 	var tag string
@@ -39,23 +34,16 @@ You can also add custom skills from a local path or URL.`,
 			if err != nil {
 				return err
 			}
-			return RunSkillsConfigure(cfg, gf.configPath, tag)
+			return RunSkillsConfigure(cmd.Context(), cfg, gf.configPath, tag)
 		},
 	}
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Pre-filter skills by tag (e.g. productivity, ai, macos)")
 	return cmd
 }
 
-// ─────────────────────────────────────────────
-// RunSkillsConfigure — called from both CLI and onboarding
-// ─────────────────────────────────────────────
-
-// RunSkillsConfigure runs the interactive skill selection TUI.
-// It returns when the user confirms their selection.
-// cfgPath is the path to the config file to update (can be "" to skip config update).
-func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) error {
-	ctx := context.Background()
-
+// RunSkillsConfigure runs the interactive skill selection wizard. cfgPath may
+// be "" to skip config writes (used from onboarding).
+func RunSkillsConfigure(ctx context.Context, cfg *config.Config, cfgPath, tagFilter string) error {
 	home, _ := os.UserHomeDir()
 	bundledDir := filepath.Join(home, ".opsintelligence", "skills", "bundled")
 	customDir := filepath.Join(home, ".opsintelligence", "skills", "custom")
@@ -64,14 +52,12 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 
 	mp := skills.NewMarketplace(bundledDir, customDir)
 
-	// Fetch marketplace index
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("  Fetching skill catalog..."))
+	fmt.Println("  Fetching skill catalog…")
 	index, err := mp.FetchIndex(ctx)
 	if err != nil {
 		return fmt.Errorf("could not load skill catalog: %w", err)
 	}
 
-	// Build currently installed set
 	installedReg := skills.NewRegistry()
 	_ = installedReg.LoadAll(ctx, customDir)
 	enabledSet := make(map[string]bool)
@@ -79,7 +65,6 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 		enabledSet[s] = true
 	}
 
-	// Filter by tag if requested
 	entries := index.Skills
 	if tagFilter != "" {
 		var filtered []skills.MarketplaceEntry
@@ -97,16 +82,9 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 		}
 	}
 
-	// Build options list — pre-check enabled/installed skills
-	type skillOption struct {
-		name    string
-		enabled bool
-	}
-
 	const customSkillSentinel = "__custom__"
-	const skipSentinel = "__skip__"
 
-	var options []huh.Option[string]
+	var options []tuibridge.WizardOptionSpec
 	var defaultSelected []string
 
 	for _, e := range entries {
@@ -114,7 +92,6 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 		if e.Emoji != "" {
 			label = e.Emoji + "  " + e.Name
 		}
-		// Show install status
 		_, isInstalled := installedReg.Get(e.Name)
 		switch {
 		case isInstalled && enabledSet[e.Name]:
@@ -122,87 +99,104 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 		case isInstalled:
 			label += "  (installed, disabled)"
 		}
-		label += "\n     " + truncateStr(e.Description, 72)
-
-		options = append(options, huh.NewOption(label, e.Name))
-
-		// Pre-select if currently enabled
+		if e.Description != "" {
+			label += " — " + truncateStr(e.Description, 72)
+		}
+		options = append(options, tuibridge.WizardOptionSpec{Value: e.Name, Label: label})
 		if enabledSet[e.Name] || (len(cfg.Agent.EnabledSkills) == 0 && isInstalled) {
 			defaultSelected = append(defaultSelected, e.Name)
 		}
 	}
+	options = append(options, tuibridge.WizardOptionSpec{
+		Value: customSkillSentinel,
+		Label: "＋  Add custom skill  (local path or URL)",
+	})
 
-	// Add custom skill option at the bottom
-	options = append(options, huh.NewOption(
-		"＋  Add custom skill  (local path or URL)",
-		customSkillSentinel,
-	))
+	var (
+		selectedNames []string
+		customPath    string
+	)
 
-	var selectedNames []string
-	var customPath string
-	var addCustom bool
-
-	theme := huh.ThemeCatppuccin()
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title("Skills to enable").
-				Description("Space toggles · Enter confirms · ↑↓ moves. Bundled skills download automatically when missing.").
-				Options(options...).
-				Value(&selectedNames),
-		).Title("Configure agent skills").
-			Description("Marketplace tools for the agent."),
-	).WithTheme(theme)
-
-	if err := form.Run(); err != nil {
-		return fmt.Errorf("cancelled")
+	steps := []tuibridge.WizardStep{
+		{
+			Icon:     "🛠",
+			Title:    "Configure agent skills",
+			Subtitle: "Marketplace tools for the agent",
+			Form: func() tuibridge.WizardFormSpec {
+				return tuibridge.WizardFormSpec{
+					Fields: []tuibridge.WizardFieldSpec{
+						tuibridge.WizardMultiSelect("skills", "Skills to enable",
+							"Space toggles · Enter confirms · ↑↓ moves. Bundled skills download automatically when missing.",
+							defaultSelected, options),
+					},
+				}
+			},
+			OnSubmit: func(f map[string]any) error {
+				selectedNames = tuibridge.WizardStrings(f, "skills", nil)
+				return nil
+			},
+		},
+		{
+			Icon:  "🛠",
+			Title: "Add custom skill",
+			Skip: func() bool {
+				for _, n := range selectedNames {
+					if n == customSkillSentinel {
+						return false
+					}
+				}
+				return true
+			},
+			Form: func() tuibridge.WizardFormSpec {
+				return tuibridge.WizardFormSpec{
+					Fields: []tuibridge.WizardFieldSpec{
+						tuibridge.WizardInput("path", "Custom skill path or URL",
+							"Local dir: /path/to/my-skill   GitHub URL: https://github.com/user/skill",
+							""),
+					},
+				}
+			},
+			OnSubmit: func(f map[string]any) error {
+				customPath = strings.TrimSpace(tuibridge.WizardString(f, "path", ""))
+				return nil
+			},
+		},
 	}
 
-	// Check if user picked the custom sentinel
+	if err := tuibridge.RunWizard(ctx, tuibridge.WizardOptions{
+		Brand: "OPSINTELLIGENCE",
+		Steps: steps,
+	}); err != nil {
+		return err
+	}
+
+	// Process selection.
 	var finalNames []string
+	addCustom := false
 	for _, n := range selectedNames {
 		if n == customSkillSentinel {
 			addCustom = true
-		} else if n != skipSentinel {
-			finalNames = append(finalNames, n)
+			continue
 		}
+		finalNames = append(finalNames, n)
 	}
-
-	// Custom skill form
-	if addCustom {
-		customForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Custom skill path or URL").
-					Description("Local dir: /path/to/my-skill   GitHub URL: https://github.com/user/skill").
-					Placeholder("/path/to/skill  or  https://github.com/user/skill").
-					Value(&customPath),
-			),
-		).WithTheme(theme)
-
-		if err := customForm.Run(); err == nil && customPath != "" {
-			fmt.Printf("  Installing custom skill from %s...\n", customPath)
-			dest, err := installCustomSkill(ctx, mp, customPath)
-			if err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
-					Render(fmt.Sprintf("  ✗ Custom skill failed: %v", err)))
-			} else {
-				name := filepath.Base(dest)
-				finalNames = append(finalNames, name)
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).
-					Render(fmt.Sprintf("  ✔ Custom skill %q added", name)))
-			}
+	if addCustom && customPath != "" {
+		fmt.Printf("  Installing custom skill from %s…\n", customPath)
+		dest, err := installCustomSkill(ctx, mp, customPath)
+		if err != nil {
+			fmt.Printf("  ✗ Custom skill failed: %v\n", err)
+		} else {
+			name := filepath.Base(dest)
+			finalNames = append(finalNames, name)
+			fmt.Printf("  ✔ Custom skill %q added\n", name)
 		}
 	}
 
 	if len(finalNames) == 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("220")).
-			Render("  No skills selected — skipping."))
+		fmt.Println("  No skills selected — skipping.")
 		return nil
 	}
 
-	// Install selected skills that aren't already installed
 	fmt.Println()
 	var installedOK []string
 	for _, name := range finalNames {
@@ -210,20 +204,15 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 			installedOK = append(installedOK, name)
 			continue
 		}
-		fmt.Printf("  Installing %s...", name)
-		dest, err := mp.Install(ctx, name)
-		if err != nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
-				Render(fmt.Sprintf(" ✗ failed: %v", err)))
+		fmt.Printf("  Installing %s…", name)
+		if _, err := mp.Install(ctx, name); err != nil {
+			fmt.Printf(" ✗ failed: %v\n", err)
 		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).
-				Render(" ✔"))
-			_ = dest
+			fmt.Println(" ✔")
 			installedOK = append(installedOK, name)
 		}
 	}
 
-	// Update config
 	if cfgPath != "" && len(installedOK) > 0 {
 		for _, name := range installedOK {
 			if err := toggleSkillInConfig(cfgPath, name, true); err != nil {
@@ -233,25 +222,17 @@ func RunSkillsConfigure(cfg *config.Config, cfgPath string, tagFilter string) er
 	}
 
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("42")).
-		Render(fmt.Sprintf("  ✔ %d skill(s) active", len(installedOK))))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).
-		Render("  Restart the agent to apply changes: opsintelligence restart"))
+	fmt.Printf("  ✔ %d skill(s) active\n", len(installedOK))
+	fmt.Println("  Restart the agent to apply changes: opsintelligence restart")
 	fmt.Println()
-
 	return nil
 }
 
 // installCustomSkill handles both local path and URL installs.
 func installCustomSkill(ctx context.Context, mp *skills.Marketplace, pathOrURL string) (string, error) {
-	// Local path
 	if !strings.HasPrefix(pathOrURL, "http") {
-		expanded := expandHome(pathOrURL)
-		return mp.InstallFromPath(expanded)
+		return mp.InstallFromPath(expandHome(pathOrURL))
 	}
-	// Remote URL — use mp.Install which handles GitHub URLs
 	return mp.Install(ctx, pathOrURL)
 }
 

@@ -60,13 +60,14 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/security"
 	"github.com/opsintelligence/opsintelligence/internal/skills"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 	"github.com/opsintelligence/opsintelligence/internal/tools"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	ghadapter "github.com/opsintelligence/opsintelligence/internal/webhookadapter/github"
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.21" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.22" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -178,9 +179,10 @@ func main() {
 // ─────────────────────────────────────────────
 
 type globalFlags struct {
-	configPath string
-	logLevel   string
-	noColor    bool
+	configPath   string
+	logLevel     string
+	noColor      bool
+	tuiDevBinary string
 }
 
 func rootCmd() *cobra.Command {
@@ -201,6 +203,12 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 	root.PersistentFlags().StringVarP(&flags.configPath, "config", "c", "", "Config file path (default: ~/.opsintelligence/opsintelligence.yaml)")
 	root.PersistentFlags().StringVar(&flags.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	root.PersistentFlags().BoolVar(&flags.noColor, "no-color", false, "Disable color output")
+	root.PersistentFlags().StringVar(&flags.tuiDevBinary, "tui-dev-binary", "", "Override embedded Rust TUI with binary at PATH (development only)")
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		if flags.tuiDevBinary != "" {
+			tuibridge.SetDevBinary(flags.tuiDevBinary)
+		}
+	}
 
 	root.AddCommand(
 		autoCmd(flags),
@@ -237,8 +245,175 @@ memory, MCP, cron, webhooks, Slack, WhatsApp, and the HTTP/WebSocket gateway.`,
 		prReviewsCmd(flags), // pr-review pool monitoring + control
 		reposCmd(flags),     // repo intelligence: index, scan, users, TUI
 		githubAppCmd(flags), // multi-tenant GitHub App management
+		tuiPingCmd(flags),          // hidden: Phase 1 bridge smoke test
+		tuiWizardDemoCmd(flags),    // hidden: Phase 5b form-engine demo
+		tuiOnboardPreviewCmd(flags), // hidden: Phase 5c onboarding subset preview
 	)
 	return root
+}
+
+// tuiOnboardPreviewCmd runs the Phase 5c subset of onboarding steps
+// (BuildOnboardStepsWizard) through the Rust wizard view. It does NOT write
+// any configuration — it exists so the ported sub-flow can be exercised
+// end-to-end while the rest of onboard_steps.go is gradually migrated.
+func tuiOnboardPreviewCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:    "tui-onboard-preview",
+		Short:  "Preview the ported subset of the onboarding wizard (Phase 5c)",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, _ := loadConfig(gf.configPath, nil)
+			steps, st := BuildOnboardStepsWizard(gf.configPath, cfg)
+			err := tuibridge.RunWizard(cmd.Context(), tuibridge.WizardOptions{
+				Brand: "OPSINTELLIGENCE",
+				Steps: steps,
+				OnDone: fmt.Sprintf(
+					"provider=%q sec=%q plano=%v embed_provider=%q",
+					st.primary.provider, st.secondary.provider, st.usePlano, st.embed.provider,
+				),
+			})
+			return err
+		},
+	}
+}
+
+// tuiWizardDemoCmd is a hidden development command that exercises the Rust
+// form engine end-to-end (input + select + multi-select + confirm + side
+// effect). It exists so the wizard infrastructure can be smoke-tested without
+// touching the production onboarding flow.
+func tuiWizardDemoCmd(_ *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:    "tui-wizard-demo",
+		Short:  "Demo the Rust wizard form engine",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var (
+				name        string
+				provider    string
+				features    []string
+				smartRoute  bool
+			)
+			steps := []tuibridge.WizardStep{
+				{
+					Icon:     "👤",
+					Title:    "Identity",
+					Subtitle: "Tell us how to address you",
+					Form: func() tuibridge.WizardFormSpec {
+						return tuibridge.WizardFormSpec{
+							Fields: []tuibridge.WizardFieldSpec{
+								tuibridge.WizardInput("name", "Your name", "Shown in CLI prompts", name),
+							},
+						}
+					},
+					OnSubmit: func(f map[string]any) error {
+						name = tuibridge.WizardString(f, "name", "")
+						return nil
+					},
+				},
+				{
+					Icon:     "🧠",
+					Title:    "Primary Provider",
+					Subtitle: "Choose your default LLM",
+					Form: func() tuibridge.WizardFormSpec {
+						return tuibridge.WizardFormSpec{
+							Fields: []tuibridge.WizardFieldSpec{
+								tuibridge.WizardSelect("provider", "Provider", "",
+									"openai",
+									[]tuibridge.WizardOptionSpec{
+										{Value: "openai", Label: "OpenAI"},
+										{Value: "anthropic", Label: "Anthropic"},
+										{Value: "gemini", Label: "Google Gemini"},
+										{Value: "ollama", Label: "Ollama (local)"},
+									}),
+								tuibridge.WizardConfirm("smart_route", "Enable smart routing?",
+									"Cheap models for simple prompts, premium models for complex ones.",
+									false, "Yes", "No"),
+							},
+						}
+					},
+					OnSubmit: func(f map[string]any) error {
+						provider = tuibridge.WizardString(f, "provider", "")
+						smartRoute = tuibridge.WizardBool(f, "smart_route", false)
+						return nil
+					},
+				},
+				{
+					Icon:     "🧩",
+					Title:    "Features",
+					Subtitle: "Pick the integrations to enable",
+					Form: func() tuibridge.WizardFormSpec {
+						return tuibridge.WizardFormSpec{
+							Fields: []tuibridge.WizardFieldSpec{
+								tuibridge.WizardMultiSelect("features", "Enable", "",
+									nil,
+									[]tuibridge.WizardOptionSpec{
+										{Value: "github", Label: "GitHub PR review"},
+										{Value: "slack", Label: "Slack channels"},
+										{Value: "gateway", Label: "HTTP gateway"},
+										{Value: "mcp", Label: "MCP server"},
+									}),
+								tuibridge.WizardNote("Tip",
+									"You can change this any time via `opsintelligence config edit`."),
+							},
+						}
+					},
+					OnSubmit: func(f map[string]any) error {
+						features = tuibridge.WizardStrings(f, "features", nil)
+						return nil
+					},
+				},
+				{
+					Icon:            "💾",
+					Title:           "Persist",
+					SideEffectLabel: "Pretending to write configuration…",
+					SideEffect: func() error {
+						time.Sleep(800 * time.Millisecond)
+						return nil
+					},
+				},
+			}
+			return tuibridge.RunWizard(cmd.Context(), tuibridge.WizardOptions{
+				Brand: "OPSINTELLIGENCE",
+				Steps: steps,
+				OnDone: fmt.Sprintf(
+					"name=%q provider=%q smart_route=%v features=%v",
+					name, provider, smartRoute, features,
+				),
+			})
+		},
+	}
+}
+
+// tuiPingCmd is a hidden development command that spawns the embedded Rust
+// TUI in headless mode, sends a single JSON-RPC ping, and prints the response.
+// It exists to verify Phase 1 of the Rust TUI migration.
+func tuiPingCmd(_ *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:    "tui-ping",
+		Short:  "Smoke-test the embedded Rust TUI bridge",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			received := make(chan tuibridge.Message, 1)
+			b, err := tuibridge.Spawn(ctx, tuibridge.Options{
+				Args:    []string{"--headless"},
+				Handler: func(m tuibridge.Message) { received <- m },
+			})
+			if err != nil {
+				return err
+			}
+			defer b.Close(2 * time.Second)
+
+			resp, err := b.Request(ctx, "ping", map[string]any{"hello": "from-go"})
+			if err != nil {
+				return fmt.Errorf("ping: %w", err)
+			}
+			fmt.Printf("pong from Rust TUI: %s\n", string(resp.Result))
+			return nil
+		},
+	}
 }
 
 // ─────────────────────────────────────────────
@@ -356,13 +531,13 @@ func optionalBoolString(p *bool) string {
 	return "false"
 }
 
-func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version, skillSummary string, channels []string, mcpTransport, gwBind string, tasks *subagents.TaskManager) tui.DashboardInfo {
+func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version, skillSummary string, channels []string, mcpTransport, gwBind string, tasks *subagents.TaskManager) tuibridge.DashboardInfo {
 	webHost := cfg.Gateway.Host
 	if webHost == "" {
 		webHost = "127.0.0.1"
 	}
 	cwd, _ := os.Getwd()
-	status := tui.StatusInfo{
+	status := tuibridge.DashboardStatus{
 		PID:           pid,
 		Version:       version,
 		SkillSummary:  skillSummary,
@@ -376,7 +551,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		RunTraceFile:  cfg.Agent.RunTraceFile,
 		RunTraceMode:  cfg.Agent.RunTraceMode,
 	}
-	limits := tui.LimitsSnapshot{
+	limits := tuibridge.DashboardLimits{
 		MaxIterations:         cfg.Agent.MaxIterations,
 		WorkingTokenBudget:    cfg.Memory.WorkingTokenBudget,
 		MemPalaceSearchLimit:  cfg.Memory.MemPalace.SearchLimit,
@@ -386,7 +561,7 @@ func buildDashboardInfo(cfg *config.Config, configPath string, pid int, version,
 		LocalIntelMaxTokens:   cfg.Agent.LocalIntel.MaxTokens,
 		SmartRoutingMaxTokens: cfg.Agent.LocalIntel.SmartRoutingMaxTokens,
 	}
-	return tui.DashboardInfo{
+	return tuibridge.DashboardInfo{
 		Status:            status,
 		ConfigPath:        configPath,
 		StateDir:          cfg.StateDir,
@@ -476,7 +651,12 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				gwBind = "loopback"
 			}
 			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind, nil)
-			return tui.RunDashboard(dash, "opsintelligence status", nil, false)
+			return tuibridge.RunDashboard(cmd.Context(), tuibridge.DashboardOptions{
+				Info:         dash,
+				ContextLabel: "opsintelligence status",
+				Overlay:      false,
+				LogDir:       dash.LogsDir,
+			})
 		},
 	}
 }
@@ -2984,19 +3164,26 @@ func runREPL(ctx context.Context, r *agent.Runner, modelID string, cfg *config.C
 	dash := buildDashboardInfo(cfg, gf.configPath, os.Getpid(), version, skillSummary, channels, mcpTransport, gwBind, tasks)
 
 	a := &orchestratingAdapter{runner: r, orch: orch, tasks: tasks}
-	return tui.RunREPL(ctx, a, version, providerCount, skillCount, modelID, dash)
+	banner := tui.RenderBanner(version, r.SessionID(), providerCount, skillCount)
+	return tuibridge.RunREPL(ctx, tuibridge.ReplOptions{
+		Runner:        a,
+		Version:       version,
+		ModelName:     modelID,
+		ProviderCount: uint32(providerCount),
+		SkillCount:    uint32(skillCount),
+		Banner:        banner,
+		LogDir:        dash.LogsDir,
+	})
 }
 
-// agentRunnerAdapter wraps agent.Runner to satisfy tui.AgentRunner.
+// agentRunnerAdapter wraps agent.Runner to satisfy tuibridge.AgentRunner.
 type agentRunnerAdapter struct {
 	runner *agent.Runner
 }
 
 func (a *agentRunnerAdapter) SessionID() string { return a.runner.SessionID() }
 
-// RunStream dispatches the user message via agent.Runner.RunStream and bridges
-// agent.StreamHandler events to tui.AgentStreamHandler.
-func (a *agentRunnerAdapter) RunStream(ctx context.Context, msg string, handler tui.AgentStreamHandler) {
+func (a *agentRunnerAdapter) RunStream(ctx context.Context, msg string, handler tuibridge.AgentStreamHandler) {
 	a.runner.RunStream(ctx, memory.Message{
 		ID:        uuid.New().String(),
 		SessionID: a.runner.SessionID(),
@@ -3009,8 +3196,7 @@ func (a *agentRunnerAdapter) RunStream(ctx context.Context, msg string, handler 
 // orchestratingAdapter extends agentRunnerAdapter with auto-routing: before
 // dispatching to the master runner it checks whether the message matches a
 // specialist agent. If it does, the specialist handles the turn entirely and
-// its progress events are streamed back to the TUI. This makes specialist
-// invocation transparent — the user sees the specialist running, not the master.
+// its progress events are streamed back to the TUI.
 type orchestratingAdapter struct {
 	runner *agent.Runner
 	orch   *agents.Orchestrator
@@ -3019,11 +3205,9 @@ type orchestratingAdapter struct {
 
 func (a *orchestratingAdapter) SessionID() string { return a.runner.SessionID() }
 
-func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handler tui.AgentStreamHandler) {
-	// Try to route to a specialist agent first.
+func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handler tuibridge.AgentStreamHandler) {
 	result, err := a.orch.Route(ctx, msg)
 	if err != nil || !result.Delegated {
-		// No specialist matched — master runner handles it.
 		a.runner.RunStream(ctx, memory.Message{
 			ID:        uuid.New().String(),
 			SessionID: a.runner.SessionID(),
@@ -3034,7 +3218,6 @@ func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handle
 		return
 	}
 
-	// Specialist matched — announce it and stream its progress.
 	handler.OnToolCall("agent.route → "+result.AgentName, json.RawMessage(`{}`))
 
 	cursor := 0
@@ -3047,7 +3230,6 @@ func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handle
 			handler.OnError(ctx.Err())
 			return
 		case <-ticker.C:
-			// Drain new progress events from the specialist.
 			events := a.tasks.Events(result.TaskID, cursor)
 			for _, ev := range events {
 				if ev.Message != "" {
@@ -3060,10 +3242,9 @@ func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handle
 			}
 			cursor += len(events)
 
-			// Check task terminal state.
 			tk, ok := a.tasks.Get(result.TaskID)
 			if !ok {
-				handler.OnDone(&tui.RunResult{})
+				handler.OnDone(&tuibridge.RunResult{})
 				return
 			}
 			switch tk.Status {
@@ -3072,7 +3253,7 @@ func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handle
 					handler.OnToken("\n" + tk.Result)
 				}
 				handler.OnToolResult("agent.route", result.AgentName+" completed")
-				handler.OnDone(&tui.RunResult{Iterations: tk.Iterations})
+				handler.OnDone(&tuibridge.RunResult{Iterations: uint32(tk.Iterations)})
 				return
 			case subagents.StatusFailed:
 				handler.OnError(fmt.Errorf("%s specialist failed: %s", result.AgentName, tk.Error))
@@ -3085,8 +3266,8 @@ func (a *orchestratingAdapter) RunStream(ctx context.Context, msg string, handle
 	}
 }
 
-// runnerStreamBridge adapts agent.StreamHandler → tui.AgentStreamHandler.
-type runnerStreamBridge struct{ h tui.AgentStreamHandler }
+// runnerStreamBridge adapts agent.StreamHandler → tuibridge.AgentStreamHandler.
+type runnerStreamBridge struct{ h tuibridge.AgentStreamHandler }
 
 func (b *runnerStreamBridge) OnToken(t string)                       { b.h.OnToken(t) }
 func (b *runnerStreamBridge) OnToolCall(n string, i json.RawMessage) { b.h.OnToolCall(n, i) }
@@ -3096,14 +3277,12 @@ func (b *runnerStreamBridge) OnDone(res *agent.RunResult) {
 		b.h.OnDone(nil)
 		return
 	}
-	b.h.OnDone(&tui.RunResult{
-		Iterations: res.Iterations,
-		Usage: tui.TokenUsageSnapshot{
-			PromptTokens:     res.Usage.PromptTokens,
-			CompletionTokens: res.Usage.CompletionTokens,
-			CacheReadTokens:  res.Usage.CacheReadTokens,
-			CacheWriteTokens: res.Usage.CacheWriteTokens,
-			TotalTokens:      res.Usage.TotalTokens,
+	b.h.OnDone(&tuibridge.RunResult{
+		Iterations: uint32(res.Iterations),
+		Usage: tuibridge.TokenUsage{
+			PromptTokens:     uint64(res.Usage.PromptTokens),
+			CompletionTokens: uint64(res.Usage.CompletionTokens),
+			TotalTokens:      uint64(res.Usage.TotalTokens),
 		},
 	})
 }

@@ -1,0 +1,404 @@
+//! Top-level app loop: stdio I/O, view dispatch, terminal lifecycle.
+
+use crate::protocol::{
+    AgentDelta, AgentEnd, AgentError, DashboardSnapshot, DashboardState, DoctorSnapshot,
+    DoctorState, Message, MonitorSnapshot, MonitorState, ReplViewState, ReposSnapshot, ReposState,
+    ViewPushParams, WizardState, WizardStep,
+};
+use crate::views::dashboard::{DashboardOutbound, DashboardView};
+use crate::views::doctor::{DoctorOutbound, DoctorView};
+use crate::views::monitor::{MonitorOutbound, MonitorView};
+use crate::views::repl::{Outbound, ReplView};
+use crate::views::repos::{ReposOutbound, ReposView};
+use crate::views::wizard::{WizardOutbound, WizardView};
+use anyhow::{Context, Result};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use serde_json::{json, Value};
+use std::io::{self, BufRead, BufReader, Write};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
+
+enum View {
+    Empty,
+    Repl(ReplView),
+    Dashboard(DashboardView),
+    Repos(ReposView),
+    Doctor(DoctorView),
+    Monitor(MonitorView),
+    Wizard(WizardView),
+}
+
+pub fn run() -> Result<()> {
+    let (tx_in, rx_in) = mpsc::channel::<Message>();
+    let (tx_out, rx_out) = mpsc::channel::<Message>();
+
+    spawn_stdin_reader(tx_in);
+    spawn_stdout_writer(rx_out);
+
+    enable_raw_mode().context("enable raw mode")?;
+    let mut stderr = io::stderr();
+    execute!(stderr, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stderr);
+    let mut terminal = Terminal::new(backend)?;
+
+    let _ = tx_out.send(Message::notification(
+        "view.ready",
+        json!({ "version": env!("CARGO_PKG_VERSION") }),
+    ));
+
+    let result = main_loop(&mut terminal, &rx_in, &tx_out);
+
+    disable_raw_mode().ok();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).ok();
+    terminal.show_cursor().ok();
+    result
+}
+
+fn main_loop<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    rx_in: &Receiver<Message>,
+    tx_out: &Sender<Message>,
+) -> Result<()> {
+    let mut view = View::Empty;
+    let tick = Duration::from_millis(33);
+
+    loop {
+        loop {
+            match rx_in.try_recv() {
+                Ok(msg) => handle_inbound(&mut view, msg, tx_out),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+
+        terminal.draw(|f| {
+            let area = f.area();
+            match &mut view {
+                View::Empty => render_empty(f, area),
+                View::Repl(r) => {
+                    r.set_size(area.width, area.height);
+                    r.render(f, area);
+                }
+                View::Dashboard(d) => d.render(f, area),
+                View::Repos(r) => r.render(f, area),
+                View::Doctor(d) => d.render(f, area),
+                View::Monitor(m) => m.render(f, area),
+                View::Wizard(w) => w.render(f, area),
+            }
+        })?;
+
+        if event::poll(tick)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match &mut view {
+                    View::Repl(r) => match r.handle_key(key) {
+                        Outbound::Submit(text) => {
+                            let _ = tx_out.send(Message::notification(
+                                "command.submit",
+                                json!({ "text": text }),
+                            ));
+                        }
+                        Outbound::Cancel => {
+                            let _ = tx_out
+                                .send(Message::notification("command.cancel", Value::Null));
+                        }
+                        Outbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        Outbound::None => {}
+                    },
+                    View::Dashboard(d) => match d.handle_key(key) {
+                        DashboardOutbound::Dismiss => {
+                            let _ = tx_out
+                                .send(Message::notification("view.dismiss", Value::Null));
+                            view = View::Empty;
+                        }
+                        DashboardOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        DashboardOutbound::None => {}
+                    },
+                    View::Doctor(d) => match d.handle_key(key) {
+                        DoctorOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        DoctorOutbound::None => {}
+                    },
+                    View::Wizard(w) => match w.handle_key(key) {
+                        WizardOutbound::Submit { id, fields, cancelled } => {
+                            let _ = tx_out.send(Message::notification(
+                                "wizard.submit",
+                                json!({
+                                    "id": id,
+                                    "fields": fields,
+                                    "cancelled": cancelled,
+                                }),
+                            ));
+                        }
+                        WizardOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        WizardOutbound::None => {}
+                    },
+                    View::Monitor(m) => match m.handle_key(key) {
+                        MonitorOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        MonitorOutbound::None => {}
+                    },
+                    View::Repos(r) => match r.handle_key(key) {
+                        ReposOutbound::Select(idx) => {
+                            let _ = tx_out.send(Message::notification(
+                                "repos.select",
+                                json!({ "index": idx }),
+                            ));
+                        }
+                        ReposOutbound::Sync(id) => {
+                            let _ = tx_out.send(Message::notification(
+                                "repos.sync",
+                                json!({ "id": id }),
+                            ));
+                        }
+                        ReposOutbound::Refresh => {
+                            let _ = tx_out
+                                .send(Message::notification("repos.refresh", Value::Null));
+                        }
+                        ReposOutbound::EditSubmit {
+                            architecture,
+                            review_hints,
+                            user_context,
+                        } => {
+                            let _ = tx_out.send(Message::notification(
+                                "repos.edit_submit",
+                                json!({
+                                    "architecture": architecture,
+                                    "review_hints": review_hints,
+                                    "user_context": user_context,
+                                }),
+                            ));
+                        }
+                        ReposOutbound::Quit => {
+                            let _ = tx_out
+                                .send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                        ReposOutbound::None => {}
+                    },
+                    View::Empty => {
+                        if matches!(key.code, KeyCode::Char('q')) || matches!(key.code, KeyCode::Esc) {
+                            let _ = tx_out.send(Message::notification("view.exit", Value::Null));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_empty(f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    use ratatui::{
+        layout::Alignment,
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::{Block, Borders, Paragraph},
+    };
+    let body = Paragraph::new(vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            "OpsIntelligence Rust TUI",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "waiting for view.push from host…",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(body, area);
+}
+
+fn handle_inbound(view: &mut View, msg: Message, tx_out: &Sender<Message>) {
+    let method = msg.method.clone().unwrap_or_default();
+    match method.as_str() {
+        "ping" => {
+            if let Some(id) = msg.id {
+                let _ = tx_out.send(Message::response(
+                    id,
+                    json!({ "pong": true, "echo": msg.params }),
+                ));
+            }
+        }
+        "view.push" => {
+            if let Some(params) = msg.params {
+                if let Ok(p) = serde_json::from_value::<ViewPushParams>(params) {
+                    match p.view.as_str() {
+                        "repl" => {
+                            *view = View::Repl(ReplView::new(p.repl.unwrap_or_default()));
+                        }
+                        "dashboard" => {
+                            *view = View::Dashboard(DashboardView::new(
+                                p.dashboard.unwrap_or_else(DashboardState::default),
+                            ));
+                        }
+                        "repos" => {
+                            *view = View::Repos(ReposView::new(
+                                p.repos.unwrap_or_else(ReposState::default),
+                            ));
+                        }
+                        "doctor" => {
+                            *view = View::Doctor(DoctorView::new(
+                                p.doctor.unwrap_or_else(DoctorState::default),
+                            ));
+                        }
+                        "monitor" => {
+                            *view = View::Monitor(MonitorView::new(
+                                p.monitor.unwrap_or_else(MonitorState::default),
+                            ));
+                        }
+                        "wizard" => {
+                            *view = View::Wizard(WizardView::new(
+                                p.wizard.unwrap_or_else(WizardState::default),
+                            ));
+                        }
+                        _ => *view = View::Empty,
+                    }
+                }
+            }
+        }
+        "agent.delta" => {
+            if let View::Repl(r) = view {
+                if let Some(params) = msg.params {
+                    if let Ok(d) = serde_json::from_value::<AgentDelta>(params) {
+                        r.apply_delta(d);
+                    }
+                }
+            }
+        }
+        "agent.end" => {
+            if let View::Repl(r) = view {
+                let end = msg
+                    .params
+                    .and_then(|p| serde_json::from_value::<AgentEnd>(p).ok())
+                    .unwrap_or_default();
+                r.apply_end(end);
+            }
+        }
+        "agent.error" => {
+            if let View::Repl(r) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(e) = serde_json::from_value::<AgentError>(p) {
+                        r.apply_error(e);
+                    }
+                }
+            }
+        }
+        "dashboard.snapshot" => {
+            if let View::Dashboard(d) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(snap) = serde_json::from_value::<DashboardSnapshot>(p) {
+                        d.apply_snapshot(snap);
+                    }
+                }
+            }
+        }
+        "repos.snapshot" => {
+            if let View::Repos(r) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(snap) = serde_json::from_value::<ReposSnapshot>(p) {
+                        r.apply_snapshot(snap);
+                    }
+                }
+            }
+        }
+        "doctor.snapshot" => {
+            if let View::Doctor(d) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(snap) = serde_json::from_value::<DoctorSnapshot>(p) {
+                        d.apply_snapshot(snap);
+                    }
+                }
+            }
+        }
+        "monitor.snapshot" => {
+            if let View::Monitor(m) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(snap) = serde_json::from_value::<MonitorSnapshot>(p) {
+                        m.apply_snapshot(snap);
+                    }
+                }
+            }
+        }
+        "wizard.step" => {
+            if let View::Wizard(w) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(step) = serde_json::from_value::<WizardStep>(p) {
+                        w.apply_step(step);
+                    }
+                }
+            }
+        }
+        "exit" => {
+            let _ = tx_out.send(Message::notification("view.exit", Value::Null));
+        }
+        _ => {}
+    }
+}
+
+fn spawn_stdin_reader(tx: Sender<Message>) {
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        let reader = BufReader::new(stdin.lock());
+        for line in reader.lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => return,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(msg) = serde_json::from_str::<Message>(&line) {
+                if tx.send(msg).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+}
+
+fn spawn_stdout_writer(rx: Receiver<Message>) {
+    thread::spawn(move || {
+        let stdout = io::stdout();
+        for msg in rx.iter() {
+            let line = match serde_json::to_string(&msg) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut h = stdout.lock();
+            if writeln!(h, "{}", line).is_err() {
+                return;
+            }
+            let _ = h.flush();
+        }
+    });
+}

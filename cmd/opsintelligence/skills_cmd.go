@@ -34,7 +34,7 @@ Run 'opsintelligence skills configure' (or just 'opsintelligence skills') for th
 			if err != nil {
 				return err
 			}
-			return RunSkillsConfigure(cfg, gf.configPath, "")
+			return RunSkillsConfigure(cmd.Context(), cfg, gf.configPath, "")
 		},
 	}
 

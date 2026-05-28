@@ -1,19 +1,20 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	"github.com/opsintelligence/opsintelligence/internal/localintel"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 	"github.com/spf13/cobra"
 )
 
-// quickstartCmd registers the `opsintelligence quickstart` command — a guided
-// TUI wizard that sets up Gemma (on-device routing) and MemPalace (memory)
-// without requiring the user to edit YAML directly.
+// quickstartCmd registers `opsintelligence quickstart` — a guided wizard for
+// installing the optional smart-mode components (MemPalace memory + on-device
+// Gemma). The wizard runs through the Rust TUI form engine; no Charmbracelet
+// dependency.
 func quickstartCmd(gf *globalFlags) *cobra.Command {
 	var stateDir, ggufPath, bootstrapPy string
 
@@ -25,9 +26,6 @@ func quickstartCmd(gf *globalFlags) *cobra.Command {
   • MemPalace  — hierarchical memory system backed by Python mempalace PyPI package
   • Gemma      — on-device GGUF model for fast local routing (~3 GiB download)
 
-It detects what's already installed, runs the setup, and prints the YAML snippet
-you need to add to your opsintelligence.yaml.
-
 Both components are optional — skip either one by answering "No" in the wizard.
 
 Prerequisites:
@@ -35,14 +33,11 @@ Prerequisites:
   • Gemma:     ~3 GiB free disk space; internet connection for download`,
 
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
+			ctx := cmd.Context()
 
-			// Resolve state directory
 			sd := strings.TrimSpace(stateDir)
 			if sd == "" {
-				// Try loading from config, fall back to default
-				cfg, err := mempalaceLoadCfg(gf, "")
-				if err == nil {
+				if cfg, err := mempalaceLoadCfg(gf, ""); err == nil {
 					sd = cfg.StateDir
 				}
 			}
@@ -54,30 +49,82 @@ Prerequisites:
 				sd = filepath.Join(home, ".opsintelligence")
 			}
 
-			opts := tui.SetupOptions{
+			opts := SetupOptions{
 				StateDir:        sd,
 				GGUFPath:        strings.TrimSpace(ggufPath),
 				BootstrapPython: strings.TrimSpace(bootstrapPy),
-				Version:         version,
+			}
+			result := &SetupResult{}
+
+			pyOK := pythonAvailable(opts.BootstrapPython)
+
+			steps := []tuibridge.WizardStep{
+				{
+					Icon:     "✨",
+					Title:    "Quickstart",
+					Subtitle: "Choose which optional components to install",
+					Form: func() tuibridge.WizardFormSpec {
+						memDesc := "Hierarchical memory backed by the mempalace Python package."
+						if !pyOK {
+							memDesc = "⚠ python3 not found in PATH — MemPalace will be skipped."
+						}
+						return tuibridge.WizardFormSpec{
+							Fields: []tuibridge.WizardFieldSpec{
+								tuibridge.WizardConfirm("mempalace", "Install MemPalace?",
+									memDesc, pyOK, "Yes", "No"),
+								tuibridge.WizardConfirm("gemma", "Install Local Gemma model?",
+									"On-device GGUF model for routing (~3 GiB download).",
+									false, "Yes", "No"),
+							},
+						}
+					},
+					OnSubmit: func(f map[string]any) error {
+						result.MemPalaceEnabled = pyOK && tuibridge.WizardBool(f, "mempalace", false)
+						result.GemmaEnabled = tuibridge.WizardBool(f, "gemma", false)
+						return nil
+					},
+				},
+				{
+					Icon:            "🧩",
+					Title:           "MemPalace",
+					SideEffectLabel: "Creating venv and installing mempalace",
+					Skip:            func() bool { return !result.MemPalaceEnabled },
+					SideEffect: func() error {
+						return runMemPalaceSetup(ctx, opts)
+					},
+				},
+				{
+					Icon:            "🪶",
+					Title:           "Local Gemma",
+					SideEffectLabel: "Downloading + verifying Gemma GGUF",
+					Skip:            func() bool { return !result.GemmaEnabled },
+					SideEffect: func() error {
+						dest := opts.GGUFPath
+						if dest == "" {
+							dest = localintel.DefaultGGUFPath(opts.StateDir)
+						}
+						if err := runGemmaSetup(ctx, dest); err != nil {
+							return err
+						}
+						result.GGUFPath = dest
+						return nil
+					},
+				},
 			}
 
-			result, err := tui.RunSetupWizard(ctx, opts)
-			if err != nil {
+			if err := tuibridge.RunWizard(ctx, tuibridge.WizardOptions{
+				Brand:  "OPSINTELLIGENCE",
+				Steps:  steps,
+				OnDone: doneSummaryQuickstart(result),
+			}); err != nil {
 				return fmt.Errorf("quickstart: %w", err)
 			}
 
 			if !result.MemPalaceEnabled && !result.GemmaEnabled {
-				fmt.Println(tui.Muted.Render("Nothing was set up. Run `opsintelligence quickstart` again when ready."))
+				fmt.Println("Nothing was set up. Run `opsintelligence quickstart` again when ready.")
 				return nil
 			}
-
-			fmt.Println(tui.Primary.Render("▸ Done! Next steps:"))
-			if result.MemPalaceEnabled || result.GemmaEnabled {
-				fmt.Println(tui.Muted.Render("  1. Paste the YAML snippet above into your opsintelligence.yaml"))
-				fmt.Println(tui.Muted.Render("  2. Run: opsintelligence doctor   (verify everything is reachable)"))
-				fmt.Println(tui.Muted.Render("  3. Run: opsintelligence agent    (start chatting)"))
-			}
-			fmt.Println()
+			printQuickstartYAML(result, opts)
 			return nil
 		},
 	}
@@ -90,4 +137,49 @@ Prerequisites:
 		"Python interpreter to use for MemPalace venv (default: python3)")
 
 	return cmd
+}
+
+func doneSummaryQuickstart(r *SetupResult) string {
+	parts := []string{}
+	if r.MemPalaceEnabled {
+		parts = append(parts, "MemPalace installed")
+	}
+	if r.GemmaEnabled {
+		parts = append(parts, "Gemma installed")
+	}
+	if len(parts) == 0 {
+		return "Skipped — nothing was installed."
+	}
+	return strings.Join(parts, " · ") + " — paste the YAML snippet printed after exit into opsintelligence.yaml."
+}
+
+func printQuickstartYAML(r *SetupResult, opts SetupOptions) {
+	if !r.MemPalaceEnabled && !r.GemmaEnabled {
+		return
+	}
+	var sb strings.Builder
+	if r.MemPalaceEnabled {
+		sb.WriteString("memory:\n")
+		sb.WriteString("  mempalace:\n")
+		sb.WriteString("    enabled: true\n")
+		sb.WriteString("    auto_start: true\n")
+		sb.WriteString("    managed_venv: true\n")
+		sb.WriteString("    inject_into_memory_search: false\n")
+	}
+	if r.GemmaEnabled {
+		sb.WriteString("agent:\n")
+		sb.WriteString("  local_intel:\n")
+		sb.WriteString("    enabled: true\n")
+		sb.WriteString(fmt.Sprintf("    gguf_path: %q\n", r.GGUFPath))
+		sb.WriteString("    max_tokens: 256\n")
+		sb.WriteString(fmt.Sprintf("    cache_dir: %q\n", filepath.Join(opts.StateDir, "localintel")))
+		sb.WriteString("    smart_routing: true\n")
+	}
+	fmt.Println()
+	fmt.Println("▸ Add to opsintelligence.yaml (merge with existing memory:/agent: blocks):")
+	fmt.Println()
+	fmt.Println(sb.String())
+	fmt.Println("Config location: ~/.opsintelligence/opsintelligence.yaml")
+	fmt.Println("Re-run  opsintelligence doctor  to verify.")
+	fmt.Println()
 }

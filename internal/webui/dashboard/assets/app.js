@@ -1704,7 +1704,7 @@
     { key: "openrouter", label: "OpenRouter", kind: "openrouter" },
     { key: "huggingface", label: "HuggingFace", kind: "huggingface" },
     { key: "bedrock", label: "AWS Bedrock", kind: "bedrock" },
-    { key: "vertex", label: "Google Vertex / Gemini", kind: "vertex" }
+    { key: "vertex", label: "Google Vertex / Gemini", kind: "vertex" },
     { key: "ollama", label: "Ollama (local)", kind: "local" },
     { key: "vllm", label: "vLLM (local)", kind: "local" },
     { key: "lm_studio", label: "LM Studio (local)", kind: "local" },
@@ -2529,15 +2529,15 @@
     }));
 
     const tabContent = document.getElementById("repo-tab-content");
-    let graphNetwork = null;
+    let graphView = null;
     function showTab(name) {
-      if (graphNetwork) {
+      if (graphView) {
         try {
-          graphNetwork.destroy();
+          graphView.dispose();
         } catch (_) {
           /* ignore */
         }
-        graphNetwork = null;
+        graphView = null;
       }
       container.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
       if (name === "scan") {
@@ -2661,7 +2661,7 @@
           </div>
         `;
       } else if (name === "graph") {
-        if (typeof vis === "undefined" || !vis.DataSet || !vis.Network) {
+        if (typeof d3 === "undefined" || !d3.forceSimulation) {
           tabContent.innerHTML = `<div class="placeholder"><p>Graph library not loaded. Hard-refresh the page (cache).</p></div>`;
           return;
         }
@@ -2684,195 +2684,7 @@
             tabContent.innerHTML = `<div class="placeholder"><p>No graph nodes yet. Re-sync after indexing finishes.</p></div>`;
             return;
           }
-          const arch =
-            memory && memory.architecture
-              ? escapeHTML(String(memory.architecture).slice(0, 1400))
-              : "";
-          const hints =
-            memory && memory.review_hints
-              ? escapeHTML(String(memory.review_hints).slice(0, 900))
-              : "";
-          const kf = memory && Array.isArray(memory.key_files) ? memory.key_files : [];
-          const kfList = kf
-            .map((f) => {
-              const p = typeof f === "string" ? f : f.path || JSON.stringify(f);
-              return `<li class="mono-cell">${escapeHTML(p)}</li>`;
-            })
-            .join("");
-          const rawNodes = cg.nodes;
-          const edgesArr = Array.isArray(cg.edges) ? cg.edges : [];
-          const importEdgeCount = edgesArr.filter((e) => e.kind === "import").length;
-          const callEdgeCount = edgesArr.length - importEdgeCount;
-          const libPkgAllowed = !!fullRepo.show_callgraph_library_packages;
-          const showImportsInitially = libPkgAllowed && importEdgeCount <= 22;
-          const orientHint = libPkgAllowed
-            ? `Solid: function calls. Dashed: imports / packages. Busy graphs default to <strong>calls only</strong> — use the toolbar checkbox to show import edges. Click a node for file and line.`
-            : `Solid: <strong>function calls only</strong>. External library / package nodes and import edges stay hidden until an operator sets <code>repo_intel.show_callgraph_library_packages: true</code> (Settings → Repo Intelligence → <strong>Show external library / package nodes in call graph</strong>) and <strong>restarts the gateway</strong> so the process picks up config. Then reload this page. Click a node for file and line.`;
-          const toolbarImports = libPkgAllowed
-            ? `<label class="repo-graph-toolbar-label">
-                    <input type="checkbox" id="repo-graph-show-imports" ${showImportsInitially ? "checked" : ""} />
-                    Show package / import edges
-                  </label>
-                  <span class="repo-graph-toolbar-meta muted">${callEdgeCount} call · ${importEdgeCount} import</span>`
-            : `<p class="repo-graph-toolbar-note muted">Import / package edges hidden by policy (${importEdgeCount} not shown). Enable <strong>Show external library / package nodes in call graph</strong> under Settings → Repo Intelligence, save, restart the gateway, and reload this page.</p>
-                  <span class="repo-graph-toolbar-meta muted">${callEdgeCount} call edges</span>`;
-          tabContent.innerHTML = `
-            <div class="repo-graph-layout">
-              <aside class="repo-graph-sidebar">
-                <h3 class="repo-graph-sidebar-title">Orient</h3>
-                <p class="repo-graph-sidebar-hint muted">${orientHint}</p>
-                ${arch ? `<section class="repo-graph-section"><h4>Architecture</h4><div class="repo-graph-prose">${arch}</div></section>` : ""}
-                ${kfList ? `<section class="repo-graph-section"><h4>Key files</h4><ul class="repo-graph-file-list">${kfList}</ul></section>` : ""}
-                ${hints ? `<section class="repo-graph-section"><h4>Review focus</h4><div class="repo-graph-prose">${hints}</div></section>` : ""}
-                <div id="repo-graph-node-detail" class="repo-graph-node-detail muted">Click a node…</div>
-              </aside>
-              <div class="repo-graph-canvas-wrap">
-                <div class="repo-graph-toolbar">
-                  ${toolbarImports}
-                  <button type="button" class="ghost" id="repo-graph-fit">Fit view</button>
-                  <button type="button" class="ghost" id="repo-graph-physics">Re-layout</button>
-                </div>
-                <div id="repo-vis-network" class="repo-vis-network" role="img" aria-label="Call graph"></div>
-              </div>
-            </div>`;
-          const detailEl = tabContent.querySelector("#repo-graph-node-detail");
-          const toVisNodes = (showImports) =>
-            rawNodes
-              .filter((n) => showImports || n.kind !== "module")
-              .map((n) => ({
-                id: n.id,
-                label: n.name || n.id,
-                title:
-                  n.kind === "module" || n.kind === "file"
-                    ? `${n.name}\n${n.file}`
-                    : `${n.name}\n${n.file}:${n.line}`,
-                group:
-                  n.kind === "module" ? "module" : n.kind === "file" ? "file" : n.file || "unknown",
-              }));
-          const toVisEdges = (showImports) =>
-            edgesArr
-              .filter((e) => showImports || e.kind !== "import")
-              .map((e) => ({
-                id: `${e.from}→${e.to}→${e.kind}`,
-                from: e.from,
-                to: e.to,
-                arrows: "to",
-                dashes: e.kind === "import",
-                color:
-                  e.kind === "import"
-                    ? { color: "#5c6570", highlight: "#8b98a8" }
-                    : { color: "#5b8def", highlight: "#9dc0ff" },
-              }));
-          const el = tabContent.querySelector("#repo-vis-network");
-          if (!el) {
-            return;
-          }
-          let showImports = libPkgAllowed && showImportsInitially;
-          const data = {
-            nodes: new vis.DataSet(toVisNodes(showImports)),
-            edges: new vis.DataSet(toVisEdges(showImports)),
-          };
-          const opts = {
-            physics: {
-              enabled: true,
-              stabilization: { iterations: 260, updateInterval: 30, fit: true },
-              barnesHut: {
-                gravitationalConstant: -10000,
-                centralGravity: 0.1,
-                springLength: 220,
-                springConstant: 0.032,
-                damping: 0.58,
-              },
-            },
-            edges: {
-              smooth: { type: "continuous", roundness: 0.22 },
-              selectionWidth: 2,
-            },
-            groups: {
-              module: {
-                color: { background: "#6e7681", border: "#484f58" },
-                font: { color: "#f0f0f0", size: 13 },
-              },
-              file: {
-                color: { background: "#1f6feb55", border: "#388bfd" },
-                font: { color: "#f0f6fc", size: 13 },
-              },
-            },
-            nodes: {
-              font: { size: 14, face: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" },
-              margin: 12,
-              borderWidth: 1,
-            },
-            interaction: { hover: true, tooltipDelay: 80, zoomView: true, dragView: true },
-          };
-          graphNetwork = new vis.Network(el, data, opts);
-          graphNetwork.once("stabilizationIterationsDone", () => {
-            try {
-              graphNetwork.setOptions({ physics: false });
-              graphNetwork.fit({ animation: { duration: 280, easingFunction: "easeInOutQuad" } });
-            } catch (_) {
-              /* ignore */
-            }
-          });
-          graphNetwork.on("click", (params) => {
-            if (!detailEl || !params.nodes.length) {
-              return;
-            }
-            const nid = params.nodes[0];
-            const node = rawNodes.find((x) => x.id === nid);
-            if (!node) {
-              return;
-            }
-            const kind = node.kind === "module" || node.kind === "file" ? node.kind : node.kind || "function";
-            const loc =
-              node.kind === "module" || node.kind === "file" ? node.file : `${node.file}:${node.line}`;
-            detailEl.innerHTML = `<strong>${escapeHTML(node.name || nid)}</strong> <span class="pill">${escapeHTML(kind)}</span><br/><span class="mono-cell">${escapeHTML(loc)}</span>`;
-          });
-          const chk = libPkgAllowed ? tabContent.querySelector("#repo-graph-show-imports") : null;
-          if (chk) {
-            chk.addEventListener("change", () => {
-              showImports = chk.checked;
-              data.nodes.clear();
-              data.edges.clear();
-              data.nodes.add(toVisNodes(showImports));
-              data.edges.add(toVisEdges(showImports));
-              graphNetwork.setData(data);
-              graphNetwork.setOptions({ physics: true });
-              graphNetwork.startSimulation();
-              graphNetwork.once("stabilizationIterationsDone", () => {
-                try {
-                  graphNetwork.setOptions({ physics: false });
-                  graphNetwork.fit({ animation: { duration: 220, easingFunction: "easeInOutQuad" } });
-                } catch (_) {
-                  /* ignore */
-                }
-              });
-            });
-          }
-          const fitBtn = tabContent.querySelector("#repo-graph-fit");
-          if (fitBtn) {
-            fitBtn.addEventListener("click", () => {
-              try {
-                graphNetwork.fit({ animation: { duration: 220, easingFunction: "easeInOutQuad" } });
-              } catch (_) {
-                /* ignore */
-              }
-            });
-          }
-          const physBtn = tabContent.querySelector("#repo-graph-physics");
-          if (physBtn) {
-            physBtn.addEventListener("click", () => {
-              try {
-                graphNetwork.setOptions({ physics: true });
-                graphNetwork.startSimulation();
-                graphNetwork.once("stabilizationIterationsDone", () => {
-                  graphNetwork.setOptions({ physics: false });
-                });
-              } catch (_) {
-                /* ignore */
-              }
-            });
-          }
+          graphView = renderCallGraph(tabContent, container, cg, memory, fullRepo);
         })();
       } else if (name === "ask") {
         const treeNote = fullRepo.index_tree_truncated
@@ -3228,6 +3040,466 @@
       .replace(/'/g, "&#39;");
   }
 
+  // ───────────────────────────────────────────────────────────────────
+  // Call-graph renderer (D3, Obsidian-style force layout)
+  // ───────────────────────────────────────────────────────────────────
+  const GRAPH_TYPE_META = {
+    function: { color: "#e4572e", radius: 8, label: "Function" },
+    method:   { color: "#7c3aed", radius: 8, label: "Method" },
+    class:    { color: "#0d9488", radius: 9, label: "Class" },
+    file:     { color: "#2563eb", radius: 10, label: "File" },
+    module:   { color: "#78716c", radius: 7, label: "Module" },
+  };
+
+  function renderCallGraph(tabContent, container, cg, memory, fullRepo) {
+    const rawNodes = cg.nodes.slice();
+    const rawEdges = (Array.isArray(cg.edges) ? cg.edges : []).slice();
+    const importEdgeCount = rawEdges.filter((e) => e.kind === "import").length;
+    const callEdgeCount = rawEdges.length - importEdgeCount;
+    const libPkgAllowed = !!fullRepo.show_callgraph_library_packages;
+    const showImportsInitially = libPkgAllowed && importEdgeCount <= 22;
+
+    const arch = memory && memory.architecture
+      ? escapeHTML(String(memory.architecture).slice(0, 1400)) : "";
+    const hints = memory && memory.review_hints
+      ? escapeHTML(String(memory.review_hints).slice(0, 900)) : "";
+    const kf = memory && Array.isArray(memory.key_files) ? memory.key_files : [];
+    const kfList = kf.map((f) => {
+      const p = typeof f === "string" ? f : f.path || JSON.stringify(f);
+      return `<li class="mono-cell">${escapeHTML(p)}</li>`;
+    }).join("");
+
+    const presentKinds = Array.from(new Set(rawNodes.map((n) => n.kind || "function")));
+    const legendOrder = ["function", "method", "class", "file", "module"];
+    const orderedKinds = legendOrder.filter((k) => presentKinds.includes(k));
+    const legendHtml = orderedKinds.map((k) => {
+      const meta = GRAPH_TYPE_META[k] || { color: "#78716c", label: k };
+      const count = rawNodes.filter((n) => (n.kind || "function") === k).length;
+      return `<li class="repo-graph-legend-chip" data-kind="${escapeHTML(k)}">
+        <span class="repo-graph-legend-dot" style="background:${meta.color}"></span>
+        <span class="repo-graph-legend-label">${escapeHTML(meta.label)}</span>
+        <span class="repo-graph-legend-count">${count}</span>
+      </li>`;
+    }).join("");
+
+    const toolbarImports = libPkgAllowed
+      ? `<label class="repo-graph-toolbar-label">
+            <input type="checkbox" id="repo-graph-show-imports" ${showImportsInitially ? "checked" : ""} />
+            Show package / import edges
+          </label>
+          <span class="repo-graph-toolbar-meta muted">${callEdgeCount} call · ${importEdgeCount} import</span>`
+      : `<span class="repo-graph-toolbar-meta muted">${callEdgeCount} call edges · ${importEdgeCount} import edges hidden by policy</span>`;
+
+    tabContent.innerHTML = `
+      <div class="repo-graph-layout repo-graph-layout-d3">
+        <aside class="repo-graph-sidebar">
+          <h3 class="repo-graph-sidebar-title">Orient</h3>
+          <p class="repo-graph-sidebar-hint muted">Hover a node to focus its neighbors. Click to inspect. Drag to rearrange. Scroll to zoom.</p>
+          ${arch ? `<section class="repo-graph-section"><h4>Architecture</h4><div class="repo-graph-prose">${arch}</div></section>` : ""}
+          ${kfList ? `<section class="repo-graph-section"><h4>Key files</h4><ul class="repo-graph-file-list">${kfList}</ul></section>` : ""}
+          ${hints ? `<section class="repo-graph-section"><h4>Review focus</h4><div class="repo-graph-prose">${hints}</div></section>` : ""}
+          <section class="repo-graph-section">
+            <h4>Node types</h4>
+            <ul class="repo-graph-legend">${legendHtml}</ul>
+          </section>
+          <section class="repo-graph-section repo-graph-paths-section">
+            <h4>Call-chain walkthroughs</h4>
+            <p class="repo-graph-paths-hint muted">Auto-detected from entry points. Click to animate the trace.</p>
+            <div class="repo-graph-paths" id="repo-graph-paths"></div>
+          </section>
+        </aside>
+        <div class="repo-graph-canvas-wrap">
+          <div class="repo-graph-toolbar">
+            ${toolbarImports}
+            <button type="button" class="ghost" id="repo-graph-fit">Fit view</button>
+            <button type="button" class="ghost" id="repo-graph-relayout">Re-layout</button>
+          </div>
+          <div class="repo-graph-canvas-host">
+            <svg id="repo-graph-svg" class="repo-graph-svg" role="img" aria-label="Call graph"></svg>
+            <div class="repo-graph-flow-status" id="repo-graph-flow-status" aria-live="polite"></div>
+          </div>
+          <div class="repo-graph-detail" id="repo-graph-detail">
+            <div class="repo-graph-detail-empty muted">Click a node for details — name, file, dependencies, and dependents.</div>
+          </div>
+        </div>
+      </div>`;
+
+    const hostEl = tabContent.querySelector(".repo-graph-canvas-host");
+    const svgEl = tabContent.querySelector("#repo-graph-svg");
+    const detailEl = tabContent.querySelector("#repo-graph-detail");
+    const flowStatusEl = tabContent.querySelector("#repo-graph-flow-status");
+    const pathsEl = tabContent.querySelector("#repo-graph-paths");
+
+    const state = {
+      showImports: libPkgAllowed && showImportsInitially,
+      hiddenKinds: new Set(),
+      selectedId: null,
+      flowPlaying: false,
+      flowAbort: 0,
+    };
+
+    const svg = d3.select(svgEl);
+    const rootG = svg.append("g");
+    const linkLayer = rootG.append("g").attr("class", "repo-graph-links");
+    const nodeLayer = rootG.append("g").attr("class", "repo-graph-nodes");
+    const pulseLayer = rootG.append("g").attr("class", "repo-graph-pulses");
+
+    const zoom = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (e) => {
+      rootG.attr("transform", e.transform);
+    });
+    svg.call(zoom).on("dblclick.zoom", null);
+    svg.on("click", (e) => {
+      if (e.target === svgEl) clearSelection();
+    });
+
+    let simulation = null;
+    let nodeSel = null;
+    let linkSel = null;
+    let visibleNodes = [];
+    let visibleEdges = [];
+    let depsMap = {}, dependentsMap = {};
+
+    function resizeSvg() {
+      const r = hostEl.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        svg.attr("viewBox", `0 0 ${r.width} ${r.height}`)
+          .attr("preserveAspectRatio", "xMidYMid meet");
+      }
+    }
+    resizeSvg();
+    const ro = (typeof ResizeObserver !== "undefined") ? new ResizeObserver(() => {
+      resizeSvg();
+      if (simulation) {
+        const r = hostEl.getBoundingClientRect();
+        simulation.force("center", d3.forceCenter(r.width / 2, r.height / 2));
+        simulation.alpha(0.3).restart();
+      }
+    }) : null;
+    if (ro) ro.observe(hostEl);
+
+    function rebuild() {
+      const wantImports = state.showImports;
+      visibleNodes = rawNodes
+        .filter((n) => wantImports || n.kind !== "module")
+        .filter((n) => !state.hiddenKinds.has(n.kind || "function"))
+        .map((n) => Object.assign({}, n));
+      const idSet = new Set(visibleNodes.map((n) => n.id));
+      visibleEdges = rawEdges
+        .filter((e) => wantImports || e.kind !== "import")
+        .filter((e) => idSet.has(e.from) && idSet.has(e.to))
+        .map((e) => ({ source: e.from, target: e.to, kind: e.kind }));
+
+      depsMap = {}; dependentsMap = {};
+      visibleNodes.forEach((n) => { depsMap[n.id] = []; dependentsMap[n.id] = []; });
+      visibleEdges.forEach((e) => {
+        depsMap[e.source].push(e.target);
+        dependentsMap[e.target].push(e.source);
+      });
+
+      renderForce();
+      renderPaths();
+    }
+
+    function renderForce() {
+      const r = hostEl.getBoundingClientRect();
+      if (simulation) simulation.stop();
+
+      linkSel = linkLayer.selectAll("line").data(visibleEdges, (d) => `${d.source.id || d.source}-${d.target.id || d.target}-${d.kind}`);
+      linkSel.exit().remove();
+      const linkEnter = linkSel.enter().append("line")
+        .attr("class", (d) => `repo-graph-link repo-graph-link-${d.kind}`);
+      linkSel = linkEnter.merge(linkSel);
+
+      nodeSel = nodeLayer.selectAll("g.repo-graph-node").data(visibleNodes, (d) => d.id);
+      nodeSel.exit().remove();
+      const nodeEnter = nodeSel.enter().append("g")
+        .attr("class", "repo-graph-node")
+        .on("click", (event, d) => { event.stopPropagation(); selectNode(d.id); })
+        .on("mouseenter", (_, d) => hoverNode(d.id, true))
+        .on("mouseleave", (_, d) => hoverNode(d.id, false))
+        .call(d3.drag()
+          .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
+          .on("drag",  (e, d) => { d.fx = e.x; d.fy = e.y; })
+          .on("end",   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+      nodeEnter.append("circle")
+        .attr("r", (d) => (GRAPH_TYPE_META[d.kind] || GRAPH_TYPE_META.function).radius)
+        .attr("fill", (d) => (GRAPH_TYPE_META[d.kind] || GRAPH_TYPE_META.function).color)
+        .attr("fill-opacity", 0.18)
+        .attr("stroke", (d) => (GRAPH_TYPE_META[d.kind] || GRAPH_TYPE_META.function).color);
+      nodeEnter.append("text")
+        .attr("dy", (d) => (GRAPH_TYPE_META[d.kind] || GRAPH_TYPE_META.function).radius + 11)
+        .text((d) => d.name || d.id);
+      nodeSel = nodeEnter.merge(nodeSel);
+
+      simulation = d3.forceSimulation(visibleNodes)
+        .force("link", d3.forceLink(visibleEdges).id((d) => d.id).distance(80).strength(0.45))
+        .force("charge", d3.forceManyBody().strength(-260))
+        .force("center", d3.forceCenter(r.width / 2, r.height / 2))
+        .force("collide", d3.forceCollide().radius((d) => ((GRAPH_TYPE_META[d.kind] || GRAPH_TYPE_META.function).radius) + 10))
+        .on("tick", () => {
+          linkSel
+            .attr("x1", (d) => d.source.x).attr("y1", (d) => d.source.y)
+            .attr("x2", (d) => d.target.x).attr("y2", (d) => d.target.y);
+          nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
+        });
+      simulation.alpha(1).restart();
+    }
+
+    function hoverNode(id, on) {
+      if (state.flowPlaying || state.selectedId) return;
+      if (on) {
+        const neighbors = new Set([id, ...(depsMap[id] || []), ...(dependentsMap[id] || [])]);
+        nodeSel.classed("dimmed", (d) => !neighbors.has(d.id));
+        linkSel.classed("dimmed", (l) => !(l.source.id === id || l.target.id === id))
+               .classed("highlighted", (l) => (l.source.id === id || l.target.id === id));
+      } else {
+        nodeSel.classed("dimmed", false);
+        linkSel.classed("dimmed", false).classed("highlighted", false);
+      }
+    }
+
+    function selectNode(id) {
+      state.selectedId = id;
+      const n = visibleNodes.find((x) => x.id === id) || rawNodes.find((x) => x.id === id);
+      if (!n) return;
+      const neighbors = new Set([id, ...(depsMap[id] || []), ...(dependentsMap[id] || [])]);
+      nodeSel
+        .classed("selected", (d) => d.id === id)
+        .classed("dimmed", (d) => !neighbors.has(d.id));
+      linkSel.classed("dimmed", (l) => !(l.source.id === id || l.target.id === id))
+             .classed("highlighted", (l) => (l.source.id === id || l.target.id === id));
+      renderDetail(n);
+    }
+
+    function clearSelection() {
+      state.selectedId = null;
+      if (nodeSel) nodeSel.classed("selected", false).classed("dimmed", false);
+      if (linkSel) linkSel.classed("dimmed", false).classed("highlighted", false);
+      detailEl.innerHTML = `<div class="repo-graph-detail-empty muted">Click a node for details — name, file, dependencies, and dependents.</div>`;
+    }
+
+    function renderDetail(n) {
+      const meta = GRAPH_TYPE_META[n.kind] || GRAPH_TYPE_META.function;
+      const depItems = (depsMap[n.id] || []).map((targetId) => {
+        const t = visibleNodes.find((x) => x.id === targetId);
+        if (!t) return "";
+        const tMeta = GRAPH_TYPE_META[t.kind] || GRAPH_TYPE_META.function;
+        return `<li class="repo-graph-dep-item" data-id="${escapeHTML(t.id)}">
+          <span class="repo-graph-dep-dot" style="background:${tMeta.color}"></span>
+          <span class="repo-graph-dep-label">${escapeHTML(t.name || t.id)}</span>
+          <span class="repo-graph-dep-kind muted">${escapeHTML(t.kind)}</span>
+        </li>`;
+      }).join("");
+      const sourceItems = (dependentsMap[n.id] || []).map((sourceId) => {
+        const s = visibleNodes.find((x) => x.id === sourceId);
+        if (!s) return "";
+        const sMeta = GRAPH_TYPE_META[s.kind] || GRAPH_TYPE_META.function;
+        return `<li class="repo-graph-dep-item" data-id="${escapeHTML(s.id)}">
+          <span class="repo-graph-dep-dot" style="background:${sMeta.color}"></span>
+          <span class="repo-graph-dep-label">${escapeHTML(s.name || s.id)}</span>
+          <span class="repo-graph-dep-kind muted">${escapeHTML(s.kind)}</span>
+        </li>`;
+      }).join("");
+      const loc = (n.kind === "module" || n.kind === "file") ? (n.file || "—") : `${n.file || "—"}:${n.line || 0}`;
+      const pkg = n.package ? `<span class="muted"> · pkg ${escapeHTML(n.package)}</span>` : "";
+      detailEl.innerHTML = `
+        <div class="repo-graph-detail-header">
+          <span class="repo-graph-type-pill" style="background:${meta.color}1f;color:${meta.color};border-color:${meta.color}55">${escapeHTML(meta.label)}</span>
+          <div class="repo-graph-detail-name">${escapeHTML(n.name || n.id)}</div>
+          <div class="repo-graph-detail-loc mono-cell">${escapeHTML(loc)}${pkg}</div>
+        </div>
+        <div class="repo-graph-detail-cols">
+          <section class="repo-graph-detail-col">
+            <h5>Depends on <span class="muted">(${(depsMap[n.id] || []).length})</span></h5>
+            <ul class="repo-graph-dep-list">${depItems || `<li class="repo-graph-dep-empty muted">None in view</li>`}</ul>
+          </section>
+          <section class="repo-graph-detail-col">
+            <h5>Called by <span class="muted">(${(dependentsMap[n.id] || []).length})</span></h5>
+            <ul class="repo-graph-dep-list">${sourceItems || `<li class="repo-graph-dep-empty muted">None in view</li>`}</ul>
+          </section>
+        </div>`;
+      detailEl.querySelectorAll(".repo-graph-dep-item").forEach((el) => {
+        el.addEventListener("click", () => selectNode(el.dataset.id));
+      });
+    }
+
+    // ─── Call-chain walkthroughs (computed from graph data) ─────────
+    function computeWalkthroughs() {
+      // Entry points = nodes with zero incoming CALL edges, that have outgoing call edges
+      const callIn = {}, callOut = {};
+      rawNodes.forEach((n) => { callIn[n.id] = 0; callOut[n.id] = []; });
+      rawEdges.forEach((e) => {
+        if (e.kind !== "call") return;
+        if (callIn[e.to] != null) callIn[e.to] += 1;
+        if (callOut[e.from]) callOut[e.from].push(e.to);
+      });
+      const entries = rawNodes
+        .filter((n) => (n.kind === "function" || n.kind === "method"))
+        .filter((n) => callIn[n.id] === 0 && callOut[n.id].length > 0);
+      // Rank by reachable-set size (depth 4)
+      function reachCount(id) {
+        const seen = new Set([id]);
+        const stack = [{ id, d: 0 }];
+        while (stack.length) {
+          const { id: cur, d } = stack.pop();
+          if (d >= 4) continue;
+          (callOut[cur] || []).forEach((t) => {
+            if (!seen.has(t)) { seen.add(t); stack.push({ id: t, d: d + 1 }); }
+          });
+        }
+        return seen.size;
+      }
+      entries.forEach((e) => { e._reach = reachCount(e.id); });
+      entries.sort((a, b) => b._reach - a._reach);
+      const top = entries.slice(0, 6);
+      // For each entry, build a representative DFS walk (max 14 hops, no cycles)
+      return top.map((entry) => {
+        const path = [entry.id];
+        const visited = new Set([entry.id]);
+        let cur = entry.id;
+        while (path.length < 14) {
+          const nexts = (callOut[cur] || []).filter((t) => !visited.has(t));
+          if (!nexts.length) break;
+          // pick the next node with highest reach (most interesting branch)
+          nexts.sort((a, b) => (reachCount(b) - reachCount(a)));
+          cur = nexts[0];
+          visited.add(cur);
+          path.push(cur);
+        }
+        return { entryId: entry.id, entry, path };
+      }).filter((w) => w.path.length >= 2);
+    }
+
+    function renderPaths() {
+      const walks = computeWalkthroughs();
+      if (!walks.length) {
+        pathsEl.innerHTML = `<div class="muted" style="font-size:12px">No clear entry points detected.</div>`;
+        return;
+      }
+      pathsEl.innerHTML = walks.map((w, i) => {
+        const node = rawNodes.find((n) => n.id === w.entryId);
+        const name = node ? (node.name || node.id) : w.entryId;
+        const loc = node ? `${node.file || ""}${node.line ? ":" + node.line : ""}` : "";
+        return `<button type="button" class="repo-graph-path-btn" data-walk="${i}">
+          <span class="repo-graph-path-name">${escapeHTML(name)}</span>
+          <span class="repo-graph-path-meta muted">${w.path.length} hops · ${escapeHTML(loc)}</span>
+        </button>`;
+      }).join("");
+      pathsEl.querySelectorAll(".repo-graph-path-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = parseInt(btn.dataset.walk, 10);
+          playWalk(walks[idx], btn);
+        });
+      });
+    }
+
+    const sleep = (ms, token) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        if (token.aborted) reject(new Error("aborted")); else resolve();
+      }, ms);
+      token.timers.push(t);
+    });
+
+    async function playWalk(walk, btn) {
+      if (state.flowPlaying) return;
+      state.flowPlaying = true;
+      state.flowAbort += 1;
+      const token = { aborted: false, timers: [] };
+      const myAbort = state.flowAbort;
+      pathsEl.querySelectorAll(".repo-graph-path-btn").forEach((b) => b.classList.remove("playing"));
+      btn.classList.add("playing");
+      clearSelection();
+      nodeSel.classed("flow-active", false).classed("flow-current", false);
+      linkSel.classed("flow-active", false);
+      pulseLayer.selectAll("*").remove();
+      flowStatusEl.classList.add("visible");
+
+      try {
+        for (let i = 0; i < walk.path.length; i++) {
+          if (myAbort !== state.flowAbort) { token.aborted = true; break; }
+          const id = walk.path[i];
+          const cur = visibleNodes.find((n) => n.id === id);
+          if (!cur) continue;
+          flowStatusEl.innerHTML = `<span class="repo-graph-flow-dot"></span>
+            <span class="repo-graph-flow-step">${escapeHTML(cur.name || id)}</span>
+            <span class="repo-graph-flow-meta muted">step ${i + 1} of ${walk.path.length}</span>`;
+          nodeSel.filter((d) => d.id === id).classed("flow-current", true).classed("flow-active", true);
+          if (i > 0) {
+            const prevId = walk.path[i - 1];
+            const lnk = visibleEdges.find((e) => (e.source.id === prevId && e.target.id === id));
+            if (lnk) {
+              linkSel.filter((l) => l === lnk).classed("flow-active", true);
+              const prev = visibleNodes.find((n) => n.id === prevId);
+              if (prev && cur) animatePulse(prev, cur);
+            }
+          }
+          await sleep(520, token);
+          nodeSel.filter((d) => d.id === id).classed("flow-current", false);
+        }
+        await sleep(900, token);
+      } catch (_) { /* aborted */ }
+      finally {
+        nodeSel.classed("flow-active", false).classed("flow-current", false);
+        linkSel.classed("flow-active", false);
+        pulseLayer.selectAll("*").remove();
+        flowStatusEl.classList.remove("visible");
+        flowStatusEl.innerHTML = "";
+        btn.classList.remove("playing");
+        if (myAbort === state.flowAbort) state.flowPlaying = false;
+        token.timers.forEach((t) => clearTimeout(t));
+      }
+    }
+
+    function animatePulse(source, target) {
+      const pulse = pulseLayer.append("circle")
+        .attr("class", "repo-graph-pulse")
+        .attr("r", 4)
+        .attr("cx", source.x).attr("cy", source.y);
+      pulse.transition()
+        .duration(460).ease(d3.easeQuadInOut)
+        .attr("cx", target.x).attr("cy", target.y)
+        .on("end", function () { d3.select(this).remove(); });
+    }
+
+    // ─── Toolbar / legend handlers ──────────────────────────────────
+    const chk = libPkgAllowed ? tabContent.querySelector("#repo-graph-show-imports") : null;
+    if (chk) {
+      chk.addEventListener("change", () => {
+        state.showImports = chk.checked;
+        rebuild();
+      });
+    }
+    tabContent.querySelectorAll(".repo-graph-legend-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const k = chip.dataset.kind;
+        if (state.hiddenKinds.has(k)) { state.hiddenKinds.delete(k); chip.classList.remove("dim"); }
+        else { state.hiddenKinds.add(k); chip.classList.add("dim"); }
+        rebuild();
+      });
+    });
+    const fitBtn = tabContent.querySelector("#repo-graph-fit");
+    if (fitBtn) fitBtn.addEventListener("click", () => {
+      svg.transition().duration(360).call(zoom.transform, d3.zoomIdentity);
+    });
+    const relayoutBtn = tabContent.querySelector("#repo-graph-relayout");
+    if (relayoutBtn) relayoutBtn.addEventListener("click", () => {
+      visibleNodes.forEach((n) => { n.fx = null; n.fy = null; });
+      if (simulation) simulation.alpha(1).restart();
+    });
+
+    rebuild();
+
+    return {
+      dispose() {
+        state.flowAbort += 1;
+        state.flowPlaying = false;
+        if (simulation) { try { simulation.stop(); } catch (_) {} }
+        if (ro) { try { ro.disconnect(); } catch (_) {} }
+        svg.on(".zoom", null);
+      },
+    };
+  }
+
   function cssEscape(s) {
     if (window.CSS && window.CSS.escape) return window.CSS.escape(s);
     return String(s).replace(/[^a-zA-Z0-9_\-]/g, "\\$&");
@@ -3509,8 +3781,6 @@
     flush();
     return out;
   }
-})();
-
 
   // ─────────────────────── kanban boards ───────────────────────
 
@@ -3804,3 +4074,4 @@
       showToast("Load card failed: " + err.message);
     }
   }
+})();

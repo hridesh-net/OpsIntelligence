@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 )
 
 func monitorCmd(gf *globalFlags) *cobra.Command {
@@ -39,13 +39,15 @@ displays real-time system metrics (CPU/RAM).`,
 				os.WriteFile(logPath, []byte(""), 0644)
 			}
 
-			// Info for stats
-			return tui.RunMonitor(tui.StatusInfo{
-				PID:           pid,
-				Version:       version,
-				RunTraceFile:  logPath,
-				RunTraceMode:  cfg.Agent.RunTraceMode,
-			}, logPath)
+			return tuibridge.RunMonitor(cmd.Context(), tuibridge.MonitorOptions{
+				Status: tuibridge.DashboardStatus{
+					PID:          pid,
+					Version:      version,
+					RunTraceFile: logPath,
+					RunTraceMode: cfg.Agent.RunTraceMode,
+				},
+				LogPath: logPath,
+			})
 		},
 	}
 }

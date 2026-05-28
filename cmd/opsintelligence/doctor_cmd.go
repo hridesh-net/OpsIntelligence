@@ -13,10 +13,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/opsintelligence/opsintelligence/cmd/opsintelligence/tui"
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/localintel"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
+	"github.com/opsintelligence/opsintelligence/internal/tuibridge"
 )
 
 // doctorCheck is one row of opsintelligence doctor output (text or JSON).
@@ -92,22 +92,16 @@ See doc/runbooks/doctor-config-validation.md and doc/runbooks/doctor-json-schema
 			} else if textMode {
 				fmt.Fprint(cmd.OutOrStdout(), formatDoctorTextOutput(checks))
 			} else {
-				// Run interactive dashboard
-				runCheck := func() []tui.DoctorCheck {
-					// We already collected some checks (config issues), and now run the rest
+				runCheck := func() []tuibridge.DoctorCheck {
 					all := runDoctorChecks(ctx, cfg, skipNetwork, flags.logLevel, channelTimeout)
 					total := append(checks, all...)
-					tuiChecks := make([]tui.DoctorCheck, len(total))
+					out := make([]tuibridge.DoctorCheck, len(total))
 					for i, c := range total {
-						tuiChecks[i] = tui.DoctorCheck{
-							ID:       c.ID,
-							Severity: c.Severity,
-							Message:  c.Message,
-						}
+						out[i] = tuibridge.DoctorCheck{ID: c.ID, Severity: c.Severity, Message: c.Message}
 					}
-					return tuiChecks
+					return out
 				}
-				if err := tui.RunDoctor(runCheck); err != nil {
+				if err := tuibridge.RunDoctor(cmd.Context(), tuibridge.DoctorOptions{RunCheck: runCheck}); err != nil {
 					return err
 				}
 			}

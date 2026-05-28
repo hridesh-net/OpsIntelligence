@@ -2,7 +2,7 @@
 # Industry-standard build targets for the polyglot project.
 
 .DEFAULT_GOAL := build
-.PHONY: all build build-go build-ts build-sensing clean test load-test lint vet fmt install uninstall help
+.PHONY: all build build-go build-ts build-sensing build-tui build-tui-host clean test load-test lint vet fmt install uninstall help tui-ping
 
 # ─────────────────────────────────────────────
 # Variables
@@ -47,8 +47,10 @@ all: build-go build-ts
 ## build: Build the Go binary
 build: build-go
 
-## build-go: Build the Go orchestrator binary
-build-go:
+## build-go: Build the Go orchestrator binary. Depends on build-tui-host so the
+##           embedded Rust TUI binary for the current platform is staged before
+##           `go build` runs `//go:embed` against internal/tuibridge/assets/.
+build-go: build-tui-host
 	@echo "$(BLUE)Building Go binary...$(NC)"
 	@mkdir -p $(BIN_DIR)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) ./cmd/opsintelligence
@@ -60,6 +62,40 @@ build-ts:
 	$(PNPM) build
 	@echo "$(GREEN)✓ TypeScript build complete$(NC)"
 
+## build-tui-host: Build the Rust TUI binary for the host platform only
+##                  (writes to internal/tuibridge/assets/opsintel-tui-<os>-<arch>).
+build-tui-host:
+	@echo "$(BLUE)Building Rust TUI for host platform...$(NC)"
+	@command -v cargo >/dev/null 2>&1 || { echo "$(RED)cargo not found — install Rust from https://rustup.rs$(NC)"; exit 1; }
+	cargo build --release -p opsintel-tui
+	@mkdir -p internal/tuibridge/assets
+	@HOST_OS=$$(go env GOOS); HOST_ARCH=$$(go env GOARCH); SUFFIX=""; \
+		if [ "$$HOST_OS" = "windows" ]; then SUFFIX=".exe"; fi; \
+		cp target/release/opsintel-tui$$SUFFIX internal/tuibridge/assets/opsintel-tui-$$HOST_OS-$$HOST_ARCH$$SUFFIX
+	@echo "$(GREEN)✓ Rust TUI built and staged for host platform$(NC)"
+
+## build-tui: Build the Rust TUI for all supported release targets.
+##            Requires `rustup target add` for each triple and (typically) `cross`.
+build-tui:
+	@echo "$(BLUE)Cross-building Rust TUI...$(NC)"
+	@command -v cargo >/dev/null 2>&1 || { echo "$(RED)cargo not found — install Rust from https://rustup.rs$(NC)"; exit 1; }
+	@mkdir -p internal/tuibridge/assets
+	cargo build --release -p opsintel-tui --target aarch64-apple-darwin
+	cp target/aarch64-apple-darwin/release/opsintel-tui internal/tuibridge/assets/opsintel-tui-darwin-arm64
+	cargo build --release -p opsintel-tui --target x86_64-apple-darwin
+	cp target/x86_64-apple-darwin/release/opsintel-tui internal/tuibridge/assets/opsintel-tui-darwin-amd64
+	cargo build --release -p opsintel-tui --target x86_64-unknown-linux-gnu
+	cp target/x86_64-unknown-linux-gnu/release/opsintel-tui internal/tuibridge/assets/opsintel-tui-linux-amd64
+	cargo build --release -p opsintel-tui --target aarch64-unknown-linux-gnu
+	cp target/aarch64-unknown-linux-gnu/release/opsintel-tui internal/tuibridge/assets/opsintel-tui-linux-arm64
+	cargo build --release -p opsintel-tui --target x86_64-pc-windows-msvc
+	cp target/x86_64-pc-windows-msvc/release/opsintel-tui.exe internal/tuibridge/assets/opsintel-tui-windows-amd64.exe
+	@echo "$(GREEN)✓ All Rust TUI targets staged into internal/tuibridge/assets/$(NC)"
+
+## tui-ping: Run the Phase 1 bridge smoke test (host build).
+tui-ping: build-tui-host build-go
+	$(BIN_DIR)/$(BINARY) tui-ping
+
 ## build-sensing: Build the C++ sensing binaries
 build-sensing:
 	@echo "$(BLUE)Building C++ sensing layer...$(NC)"
@@ -69,7 +105,7 @@ build-sensing:
 	@echo "$(GREEN)✓ Sensing binaries built$(NC)"
 
 ## cross: Build release binaries for multiple platforms
-cross:
+cross: build-tui
 	@echo "$(BLUE)Cross-compiling release binaries...$(NC)"
 	@mkdir -p dist
 	GOOS=darwin  GOARCH=arm64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64 ./cmd/opsintelligence

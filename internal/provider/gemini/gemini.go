@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	providerName         = "google"
+	providerName         = "gemini"
 	openaiCompatEndpoint = "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
