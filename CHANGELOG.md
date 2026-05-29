@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.29] — 2026-05-28
+
+### Added — Proper "Setup complete" page
+
+- **Rich Done screen** at the end of `opsintelligence onboard`. Renders three sections inside the success panel:
+  - **Hero** — `✓ Setup complete` headline + subline.
+  - **Configuration** — aligned key/value list of config path, datastore, log path, and dashboard URL (computed from the user's final `gwHost`/`gwPort` choices).
+  - **Next** — primary-coloured command list (`opsintelligence start`, `agent`, `status`, `skills marketplace`) with one-line descriptions.
+- **`WizardOptions.BuildDone func() WizardDoneSpec`** for late-evaluated Done content. Runs after every step's `OnSubmit` has mutated state, so the summary reflects the user's actual choices (not the defaults captured at wizard construction). Static `DoneHeadline`/`DoneSubline`/`DoneSummary`/`DoneNext` fields remain available for callers that don't need late evaluation.
+- **`WizardDone` / `WizardDonePair` / `WizardDoneSpec`** protocol additions on both sides — `protocol.rs` exposes the typed payload; `tuibridge/wizard.go` ships the same shape over JSON-RPC.
+
+### Fixed
+
+- **Done screen bleed-through.** Stale alt-screen content (install-script stdout, prior shell output) showed through the gaps in the previous Done panel because `Block` only paints its border, not its interior. Both the full frame and the panel block now set `bg(theme::BACKGROUND)`, so ratatui repaints every cell.
+
+### Changed
+
+- Crate version bumped to `0.2.4`.
+
 ## [1.0.28] — 2026-05-28
 
 ### Fixed

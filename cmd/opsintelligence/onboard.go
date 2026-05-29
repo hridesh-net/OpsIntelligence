@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -254,6 +255,21 @@ func runOnboarding(configPath string) (bool, error) {
 	if err := tuibridge.RunWizard(context.Background(), tuibridge.WizardOptions{
 		Brand: "OPSINTELLIGENCE",
 		Steps: steps,
+		// BuildDone runs after every step's OnSubmit has mutated `state`, so
+		// the Configuration list reflects the user's actual choices.
+		BuildDone: func() tuibridge.WizardDoneSpec {
+			return tuibridge.WizardDoneSpec{
+				Headline: "Setup complete",
+				Subline:  "OpsIntelligence is configured. Review the locations below and start it whenever you're ready.",
+				Summary:  buildOnboardDoneSummary(configPath, state),
+				Next: []tuibridge.WizardDonePair{
+					{Label: "opsintelligence start", Value: "run gateway + workers"},
+					{Label: "opsintelligence agent", Value: "interactive REPL"},
+					{Label: "opsintelligence status", Value: "tabbed live dashboard"},
+					{Label: "opsintelligence skills marketplace", Value: "browse skills"},
+				},
+			}
+		},
 	}); err != nil {
 		return false, err
 	}
@@ -299,6 +315,34 @@ func runOnboarding(configPath string) (bool, error) {
 	return true, nil
 }
 
+// buildOnboardDoneSummary returns the "Configuration" list rendered on the
+// wizard's Done screen. It snapshots known-static facts (config path, default
+// datastore, dashboard URL); the wizard's per-step OnSubmit callbacks have
+// already mutated `state` by the time RunWizard reaches the Done step, so
+// values like gwPort here reflect the user's choices.
+func buildOnboardDoneSummary(configPath string, state *onboardState) []tuibridge.WizardDonePair {
+	stateDir := filepath.Dir(configPath)
+	if stateDir == "" || stateDir == "." {
+		stateDir = filepath.Join(os.Getenv("HOME"), ".opsintelligence")
+	}
+	port := 18790
+	host := "127.0.0.1"
+	if state != nil {
+		if state.gwPort > 0 {
+			port = state.gwPort
+		}
+		if state.gwHost != "" {
+			host = state.gwHost
+		}
+	}
+	dashboard := fmt.Sprintf("http://%s:%d/dashboard/", host, port)
+	return []tuibridge.WizardDonePair{
+		{Label: "Config", Value: configPath},
+		{Label: "Datastore", Value: filepath.Join(stateDir, "ops.db")},
+		{Label: "Logs", Value: filepath.Join(stateDir, "logs", "opsintelligence.log")},
+		{Label: "Dashboard", Value: dashboard},
+	}
+}
 
 func buildChannelSetupGuideLines(selectedChannels []string, gwHost string, gwPort int) []string {
 	if len(selectedChannels) == 0 {

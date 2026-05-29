@@ -88,10 +88,40 @@ func WizardNote(title, description string) WizardFieldSpec {
 
 // WizardOptions configures RunWizard.
 type WizardOptions struct {
-	Brand   string
-	Steps   []WizardStep
-	LogDir  string
-	OnDone  string // optional summary shown on the "done" screen
+	Brand  string
+	Steps  []WizardStep
+	LogDir string
+	OnDone string // legacy single-line message shown under the headline
+
+	// Rich Done screen content. All fields optional — empty sections are
+	// skipped by the renderer. `Summary` is the "Configuration" key/value
+	// list (config path, dashboard URL, etc.); `Next` is the
+	// command/description list shown under "Next".
+	DoneHeadline string
+	DoneSubline  string
+	DoneSummary  []WizardDonePair
+	DoneNext     []WizardDonePair
+
+	// BuildDone, when non-nil, is called inside RunWizard right before the
+	// Done screen is pushed — after all step OnSubmit callbacks have run.
+	// Use it when the summary depends on user choices captured during the
+	// wizard (e.g. the gateway port the user picked). Values returned here
+	// override the static Done* fields above for any field that is non-empty.
+	BuildDone func() WizardDoneSpec
+}
+
+// WizardDoneSpec is the late-evaluated Done payload returned from BuildDone.
+type WizardDoneSpec struct {
+	Headline string
+	Subline  string
+	Summary  []WizardDonePair
+	Next     []WizardDonePair
+}
+
+// WizardDonePair is one row in the Done screen's Configuration or Next list.
+type WizardDonePair struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // RunWizard launches the embedded Rust TUI in wizard mode and walks through
@@ -291,11 +321,41 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 		}
 	}
 
-	// Done screen.
-	_ = b.Send("wizard.step", map[string]any{
+	// Done screen — merge late-evaluated BuildDone() over static fields.
+	headline, subline := opts.DoneHeadline, opts.DoneSubline
+	summary, next := opts.DoneSummary, opts.DoneNext
+	if opts.BuildDone != nil {
+		spec := opts.BuildDone()
+		if spec.Headline != "" {
+			headline = spec.Headline
+		}
+		if spec.Subline != "" {
+			subline = spec.Subline
+		}
+		if len(spec.Summary) > 0 {
+			summary = spec.Summary
+		}
+		if len(spec.Next) > 0 {
+			next = spec.Next
+		}
+	}
+	donePayload := map[string]any{
 		"kind":    "done",
 		"message": opts.OnDone,
-	})
+	}
+	if headline != "" {
+		donePayload["headline"] = headline
+	}
+	if subline != "" {
+		donePayload["subline"] = subline
+	}
+	if len(summary) > 0 {
+		donePayload["summary"] = summary
+	}
+	if len(next) > 0 {
+		donePayload["next"] = next
+	}
+	_ = b.Send("wizard.step", donePayload)
 	select {
 	case <-quit:
 		return nil
@@ -336,7 +396,9 @@ func buildFormStep(id uint64, step *WizardStep, spec WizardFormSpec, num, total 
 			m["default"] = f.Default
 			m["options"] = f.Options
 		case "multi_select":
-			m["default"] = f.DefaultList
+			if f.DefaultList != nil {
+				m["default"] = f.DefaultList
+			}
 			m["options"] = f.Options
 		case "confirm":
 			m["default"] = f.DefaultBool

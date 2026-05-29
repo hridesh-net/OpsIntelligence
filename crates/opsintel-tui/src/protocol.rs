@@ -154,7 +154,32 @@ pub struct WizardPlanItem {
 pub enum WizardStep {
     Form(WizardForm),
     Side(WizardSide),
-    Done { message: String },
+    Done(WizardDone),
+}
+
+/// Payload for the "Setup complete" page. All fields are optional; the
+/// renderer skips empty sections. `message` is kept for legacy callers that
+/// only want a single free-form line under the headline.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WizardDone {
+    #[serde(default)]
+    pub headline: String,
+    #[serde(default)]
+    pub subline: String,
+    #[serde(default)]
+    pub summary: Vec<WizardDonePair>,
+    #[serde(default)]
+    pub next: Vec<WizardDonePair>,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WizardDonePair {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

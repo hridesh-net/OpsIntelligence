@@ -26,7 +26,7 @@
 //!   └──────────────────────────────────────────────────────────┘
 
 use crate::protocol::{
-    WizardField, WizardForm, WizardPlan, WizardSide, WizardState, WizardStep,
+    WizardDone, WizardField, WizardForm, WizardPlan, WizardSide, WizardState, WizardStep,
 };
 use crate::theme;
 use crate::widgets::spinner::Spinner;
@@ -53,7 +53,7 @@ enum ActiveStep {
     None,
     Form(FormState),
     Side(SideState),
-    Done(String),
+    Done(WizardDone),
 }
 
 struct FormState {
@@ -66,8 +66,8 @@ struct FormState {
 
 enum FieldRuntime {
     Input(TextArea),
-    Select { index: usize },
-    MultiSelect { selected: Vec<bool>, cursor: usize },
+    Select { index: usize, scroll: usize },
+    MultiSelect { selected: Vec<bool>, cursor: usize, scroll: usize },
     Confirm { value: bool },
     Note,
 }
@@ -137,8 +137,8 @@ impl WizardView {
                     spinner: Spinner::new(),
                 });
             }
-            WizardStep::Done { message } => {
-                self.active = ActiveStep::Done(message);
+            WizardStep::Done(done) => {
+                self.active = ActiveStep::Done(done);
             }
         }
     }
@@ -185,7 +185,7 @@ impl WizardView {
                     }
                     Some(HitAction::SelectOption(field_idx, opt_idx)) => {
                         state.cursor = field_idx;
-                        if let Some(FieldRuntime::Select { index }) =
+                        if let Some(FieldRuntime::Select { index, .. }) =
                             state.fields.get_mut(field_idx)
                         {
                             *index = opt_idx;
@@ -194,7 +194,7 @@ impl WizardView {
                     }
                     Some(HitAction::ToggleMultiOption(field_idx, opt_idx)) => {
                         state.cursor = field_idx;
-                        if let Some(FieldRuntime::MultiSelect { selected, cursor }) =
+                        if let Some(FieldRuntime::MultiSelect { selected, cursor, .. }) =
                             state.fields.get_mut(field_idx)
                         {
                             *cursor = opt_idx;
@@ -272,7 +272,7 @@ impl WizardView {
                 );
                 render_side(f, body[1], state);
             }
-            ActiveStep::Done(msg) => render_done(f, layout[0], msg),
+            ActiveStep::Done(done) => render_done(f, layout[0], done),
         }
 
         render_command_bar(f, layout[1], &self.active);
@@ -624,11 +624,11 @@ fn render_field_card(
                 );
             }
         }
-        (WizardField::Select { options, .. }, FieldRuntime::Select { index }) => {
-            for (i, opt) in options.iter().enumerate() {
+        (WizardField::Select { options, .. }, FieldRuntime::Select { index, scroll }) => {
+            for (i, opt) in options.iter().enumerate().skip(*scroll) {
                 let row_rect = Rect {
                     x: body_rect.x,
-                    y: body_rect.y + (i as u16),
+                    y: body_rect.y + ((i - *scroll) as u16),
                     width: body_rect.width,
                     height: 1,
                 };
@@ -661,11 +661,11 @@ fn render_field_card(
                 });
             }
         }
-        (WizardField::MultiSelect { options, .. }, FieldRuntime::MultiSelect { selected, cursor }) => {
-            for (i, opt) in options.iter().enumerate() {
+        (WizardField::MultiSelect { options, .. }, FieldRuntime::MultiSelect { selected, cursor, scroll }) => {
+            for (i, opt) in options.iter().enumerate().skip(*scroll) {
                 let row_rect = Rect {
                     x: body_rect.x,
-                    y: body_rect.y + (i as u16),
+                    y: body_rect.y + ((i - *scroll) as u16),
                     width: body_rect.width,
                     height: 1,
                 };
@@ -818,7 +818,15 @@ fn render_placeholder(f: &mut Frame, area: Rect, text: &str) {
     );
 }
 
-fn render_done(f: &mut Frame, area: Rect, message: &str) {
+fn render_done(f: &mut Frame, area: Rect, done: &WizardDone) {
+    // Paint the full area with the theme background first so any stale
+    // alt-screen content (e.g. install-script stdout from before launch)
+    // can't bleed through the gaps between the panel border and content.
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme::BACKGROUND)),
+        area,
+    );
+
     let title_line = Line::from(vec![
         Span::styled("─ ", Style::default().fg(theme::SUCCESS)),
         Span::styled(
@@ -833,32 +841,117 @@ fn render_done(f: &mut Frame, area: Rect, message: &str) {
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme::SUCCESS))
+        .style(Style::default().bg(theme::BACKGROUND))
         .title(title_line);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let lines = vec![
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled(
-                "  ✓  ",
-                Style::default()
-                    .fg(theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "Setup complete",
-                Style::default()
-                    .fg(theme::ON_SURFACE)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::raw(""),
-        Line::from(Span::styled(format!("  {}", message), theme::muted())),
-    ];
+
+    let headline: String = if done.headline.is_empty() {
+        "Setup complete".to_string()
+    } else {
+        done.headline.clone()
+    };
+    let subline: String = if !done.subline.is_empty() {
+        done.subline.clone()
+    } else if !done.message.is_empty() {
+        done.message.clone()
+    } else {
+        "OpsIntelligence is ready to run.".to_string()
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(
+            "✓  ",
+            Style::default()
+                .fg(theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            headline,
+            Style::default()
+                .fg(theme::ON_SURFACE)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("      "),
+        Span::styled(subline, theme::muted()),
+    ]));
+
+    if !done.summary.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(done_section_header("Configuration", inner.width));
+        let label_w = done
+            .summary
+            .iter()
+            .map(|p| p.label.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        for pair in &done.summary {
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(
+                    format!("{:<width$}", pair.label, width = label_w + 2),
+                    theme::muted(),
+                ),
+                Span::styled(
+                    pair.value.clone(),
+                    Style::default().fg(theme::ON_SURFACE),
+                ),
+            ]));
+        }
+    }
+
+    if !done.next.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(done_section_header("Next", inner.width));
+        let cmd_w = done
+            .next
+            .iter()
+            .map(|p| p.label.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        for pair in &done.next {
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(
+                    format!("{:<width$}", pair.label, width = cmd_w + 2),
+                    Style::default()
+                        .fg(theme::PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(pair.value.clone(), theme::muted()),
+            ]));
+        }
+    }
+
     f.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+fn done_section_header(label: &str, width: u16) -> Line<'static> {
+    let prefix = format!("  ── {} ", label);
+    let used = prefix.chars().count() as u16;
+    let pad = width.saturating_sub(used).saturating_sub(2);
+    Line::from(vec![
+        Span::styled(
+            prefix,
+            Style::default()
+                .fg(theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "─".repeat(pad as usize),
+            Style::default().fg(theme::OUTLINE_VARIANT),
+        ),
+    ])
 }
 
 // ── Bottom command bar ──────────────────────────────────────────────────
@@ -942,7 +1035,7 @@ fn handle_form_key(state: &mut FormState, key: KeyEvent) -> WizardOutbound {
         None => return WizardOutbound::None,
     };
     match (spec, rt) {
-        (Some(WizardField::Select { options, .. }), FieldRuntime::Select { index }) => {
+        (Some(WizardField::Select { options, .. }), FieldRuntime::Select { index, scroll }) => {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     if *index > 0 {
@@ -956,28 +1049,44 @@ fn handle_form_key(state: &mut FormState, key: KeyEvent) -> WizardOutbound {
                 }
                 _ => {}
             }
+            let visible = options.len().min(8);
+            if *index < *scroll {
+                *scroll = *index;
+            }
+            if *index >= *scroll + visible {
+                *scroll = index.saturating_sub(visible - 1);
+            }
         }
         (
             Some(WizardField::MultiSelect { options, .. }),
-            FieldRuntime::MultiSelect { selected, cursor },
-        ) => match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if *cursor > 0 {
-                    *cursor -= 1;
+            FieldRuntime::MultiSelect { selected, cursor, scroll },
+        ) => {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
                 }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if *cursor + 1 < options.len() {
-                    *cursor += 1;
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *cursor + 1 < options.len() {
+                        *cursor += 1;
+                    }
                 }
-            }
-            KeyCode::Char(' ') => {
-                if let Some(v) = selected.get_mut(*cursor) {
-                    *v = !*v;
+                KeyCode::Char(' ') => {
+                    if let Some(v) = selected.get_mut(*cursor) {
+                        *v = !*v;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
-        },
+            let visible = options.len().min(8);
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            }
+            if *cursor >= *scroll + visible {
+                *scroll = cursor.saturating_sub(visible - 1);
+            }
+        }
         (Some(WizardField::Confirm { .. }), FieldRuntime::Confirm { value }) => match key.code {
             KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => *value = !*value,
             KeyCode::Char('y') | KeyCode::Char('Y') => *value = true,
@@ -1001,7 +1110,7 @@ fn submit_form(state: &FormState) -> WizardOutbound {
             }
             (
                 WizardField::Select { key, options, .. },
-                FieldRuntime::Select { index },
+                FieldRuntime::Select { index, .. },
             ) => {
                 let val = options.get(*index).map(|o| o.value.clone()).unwrap_or_default();
                 (key.clone(), Value::String(val))
@@ -1067,11 +1176,11 @@ fn make_runtime(field: &WizardField) -> FieldRuntime {
         }
         WizardField::Select { options, default, .. } => {
             let idx = options.iter().position(|o| o.value == *default).unwrap_or(0);
-            FieldRuntime::Select { index: idx }
+            FieldRuntime::Select { index: idx, scroll: 0 }
         }
         WizardField::MultiSelect { options, default, .. } => {
             let selected = options.iter().map(|o| default.contains(&o.value)).collect();
-            FieldRuntime::MultiSelect { selected, cursor: 0 }
+            FieldRuntime::MultiSelect { selected, cursor: 0, scroll: 0 }
         }
         WizardField::Confirm { default, .. } => FieldRuntime::Confirm { value: *default },
         WizardField::Note { .. } => FieldRuntime::Note,
