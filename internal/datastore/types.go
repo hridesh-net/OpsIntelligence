@@ -272,8 +272,9 @@ type CardRun struct {
 	ElapsedMs    int64     `json:"elapsed_ms"`
 	WorktreePath string    `json:"worktree_path,omitempty"`
 	Branch       string    `json:"branch,omitempty"`
-	BaseBranch   string    `json:"base_branch,omitempty"`
-	ResultSummary string   `json:"result_summary,omitempty"`
+	BaseBranch    string    `json:"base_branch,omitempty"`
+	RepoPath      string    `json:"repo_path,omitempty"` // for worktree cleanup
+	ResultSummary string    `json:"result_summary,omitempty"`
 	Error        string    `json:"error,omitempty"`
 	CreatedBy    string    `json:"created_by,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`

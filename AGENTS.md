@@ -189,3 +189,29 @@ Hash-based SPA routing:
 7. **GitHub mode** — bidirectional issue sync
 8. **Sentry import** — error groups → cards
 9. **MCP server** — expose board over Model Context Protocol
+
+
+---
+
+## Update Log
+
+### 2026-05-24 — Week 4-6 Complete
+
+All core infrastructure is now built and compiles:
+
+- ✅ `internal/kanban/worktree/manager.go` — git worktree isolation with pre-push hooks
+- ✅ `internal/kanban/cost/calculator.go` — per-model pricing (Anthropic, OpenAI, Google, local)
+- ✅ `internal/kanban/dispatcher/` — AgentDriver interface + Go/ClaudeCode/Codex implementations
+- ✅ `internal/kanban/dispatch_service.go` — Dispatch, StopRun, AnswerDecision
+- ✅ `internal/kanban/decisions.go` — Heuristic decision prompt detection
+- ✅ `cmd/opsintelligence/gateway_auth.go` — Wired dispatch service into gateway startup
+- ✅ Dashboard persona picker — Dropdown when dispatching agent on card
+
+### Next: Phase 3+ Features
+
+- **Autopilot** — multi-persona round-robin loop that continuously dispatches queued cards
+- **GitHub mode** — bidirectional sync with real GitHub issues; draft PRs
+- **Sentry import** — poll error groups → create cards on board
+- **MCP server** — expose board as Model Context Protocol tools
+- **Branch preview** — start dev server from worktree, proxy URL
+- **QA mode** — run typecheck/test/lint/build/e2e, auto-dispatch fix runs

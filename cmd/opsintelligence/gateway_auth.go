@@ -17,6 +17,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
 	"github.com/opsintelligence/opsintelligence/internal/kanban"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
@@ -233,32 +234,27 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 		log.Warn("kanban: failed to create worktree base", zap.Error(err))
 	}
 
-	wtMgr := worktree.NewManager(wtBase, log)
-	_ = wtMgr.EnsureBase()
+	wtMgr := &worktree.Manager{BaseDir: wtBase}
 
-	driverReg := dispatcher.NewRegistry()
+	drivers := make(map[string]dispatcher.AgentDriver)
 
-	// Register the Go driver if a default provider is available.
-	if reg != nil {
-		for _, name := range []string{"google", "openai", "anthropic", "groq", "ollama"} {
-			if p, ok := reg.Get(name); ok {
-				driverReg.Register(dispatcher.NewGoDriver(p, log))
-				log.Info("kanban: registered Go driver", zap.String("provider", name))
-				break
-			}
-		}
+	// Register the Go driver if the gateway has a Runner.
+	if srv.Runner != nil {
+		drivers["go"] = dispatcher.NewGoDriver(srv.Runner)
+		log.Info("kanban: registered Go driver")
 	}
 
 	// Register CLI adapters (best-effort; they work if the binary is on PATH).
-	driverReg.Register(dispatcher.NewClaudeCodeDriver(log))
-	driverReg.Register(dispatcher.NewCodexDriver(log))
+	drivers["claude-code"] = dispatcher.NewClaudeCodeDriver()
+	drivers["codex"] = dispatcher.NewCodexDriver()
 	log.Info("kanban: registered CLI drivers", zap.Strings("drivers", []string{"claude-code", "codex"}))
 
-	svc := kanban.NewService(store, wtMgr, driverReg, log)
+	calc := cost.NewCalculator()
+	svc := kanban.NewDispatchService(store, wtMgr, drivers, calc)
 	srv.AuthService.Kanban = svc
 
 	log.Info("kanban dispatch service wired",
 		zap.String("worktree_base", wtBase),
-		zap.Int("drivers", driverReg.Len()),
+		zap.Int("drivers", len(drivers)),
 	)
 }

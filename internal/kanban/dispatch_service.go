@@ -1,336 +1,418 @@
-// Package kanban implements the kanban dispatch service that orchestrates
-// agent runs on board cards.
+// Package kanban provides the core kanban board orchestration.
 package kanban
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
-
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 )
 
-// Service orchestrates card → agent → run → events.
-type Service struct {
-	store      datastore.Store
-	wtMgr      *worktree.Manager
-	registry   *dispatcher.Registry
-	pricing    *cost.PricingTable
-	decisions  *DecisionResume
-	log        *zap.Logger
-
-	mu      sync.RWMutex
-	runs    map[string]*RunHandle // runID -> handle
+// DispatchService orchestrates agent runs on kanban cards.
+type DispatchService struct {
+	Store     datastore.Store
+	Worktrees *worktree.Manager
+	Drivers   map[string]dispatcher.AgentDriver
+	CostCalc  *cost.Calculator
 }
 
-// RunHandle tracks an in-flight run.
-type RunHandle struct {
-	RunID  string
-	Cancel context.CancelFunc
-	Done   chan struct{}
-}
-
-// NewService creates the dispatch service.
-func NewService(store datastore.Store, wtMgr *worktree.Manager, registry *dispatcher.Registry, log *zap.Logger) *Service {
-	if log == nil {
-		log = zap.NewNop()
+// NewDispatchService creates a dispatch service with the given dependencies.
+func NewDispatchService(store datastore.Store, wt *worktree.Manager, drivers map[string]dispatcher.AgentDriver, calc *cost.Calculator) *DispatchService {
+	if drivers == nil {
+		drivers = make(map[string]dispatcher.AgentDriver)
 	}
-	return &Service{
-		store:     store,
-		wtMgr:     wtMgr,
-		registry:  registry,
-		pricing:   cost.NewPricingTable(),
-		decisions: NewDecisionResume(store, log),
-		log:       log,
-		runs:      make(map[string]*RunHandle),
+	return &DispatchService{
+		Store:     store,
+		Worktrees: wt,
+		Drivers:   drivers,
+		CostCalc:  calc,
 	}
 }
 
-// Dispatch starts a new agent run for a card.
-func (s *Service) Dispatch(ctx context.Context, boardID, cardID string, req DispatchRequest) (*datastore.CardRun, error) {
-	// Load card.
-	card, err := s.store.BoardCards().Get(ctx, cardID)
+// RegisterDriver adds an agent driver to the registry.
+func (s *DispatchService) RegisterDriver(d dispatcher.AgentDriver) {
+	s.Drivers[d.Type()] = d
+}
+
+// DispatchOpts configures a dispatch operation.
+type DispatchOpts struct {
+	RunID     string
+	AgentID   string
+	PersonaID string
+	Model     string
+	CreatedBy string
+}
+
+// Dispatch starts an agent run on a card.
+func (s *DispatchService) Dispatch(ctx context.Context, cardID string, opts DispatchOpts) (*datastore.CardRun, error) {
+	card, err := s.Store.BoardCards().Get(ctx, cardID)
 	if err != nil {
-		return nil, fmt.Errorf("card not found: %w", err)
-	}
-	if card.BoardID != boardID {
-		return nil, fmt.Errorf("card does not belong to board")
+		return nil, fmt.Errorf("dispatch: get card: %w", err)
 	}
 
-	// Load board for repo settings.
-	board, err := s.store.Boards().Get(ctx, boardID)
+	board, err := s.Store.Boards().Get(ctx, card.BoardID)
 	if err != nil {
-		return nil, fmt.Errorf("board not found: %w", err)
+		return nil, fmt.Errorf("dispatch: get board: %w", err)
 	}
 
-	// Resolve agent.
-	agentID := req.AgentID
-	agentType := req.AgentType
-	if agentID == "" {
-		agents, err := s.store.BoardAgents().ListByBoard(ctx, boardID)
-		if err == nil && len(agents) > 0 {
-			for _, a := range agents {
-				if a.IsDefault && a.IsActive {
-					agentID = a.ID
-					agentType = a.AgentType
-					break
-				}
-			}
-			if agentID == "" {
-				agentID = agents[0].ID
-				agentType = agents[0].AgentType
-			}
-		}
-	}
-	if agentType == "" {
-		agentType = "go"
+	agent, err := s.resolveAgent(ctx, card, opts.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: resolve agent: %w", err)
 	}
 
-	// Load persona system prompt.
-	var systemPrompt string
-	if req.PersonaID != "" {
-		p, err := s.store.Personas().Get(ctx, req.PersonaID)
-		if err == nil {
-			systemPrompt = p.SystemPrompt
-		}
+	driver, ok := s.Drivers[agent.AgentType]
+	if !ok {
+		return nil, fmt.Errorf("dispatch: no driver for type %q", agent.AgentType)
 	}
-	if systemPrompt == "" && req.PersonaID == "" {
-		// Use board's default persona if any.
-		personas, _ := s.store.Personas().List(ctx, datastore.PersonaFilter{BuiltInOnly: true, Limit: 10})
-		for _, p := range personas {
-			if p.Name == "Senior Engineer" {
-				systemPrompt = p.SystemPrompt
-				req.PersonaID = p.ID
-				break
-			}
+
+	// Build system prompt with persona
+	systemPrompt, err := s.buildSystemPrompt(ctx, opts.PersonaID, card)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: build system prompt: %w", err)
+	}
+
+	if opts.RunID == "" {
+		opts.RunID = uuid.NewString()
+	}
+
+	// Create worktree if repo_path is configured
+	var wt *worktree.Worktree
+	if board.RepoPath != "" {
+		wt, err = s.Worktrees.Create(cardID, opts.RunID, board.RepoPath, "main")
+		if err != nil {
+			return nil, fmt.Errorf("dispatch: create worktree: %w", err)
 		}
 	}
 
-	// Create run record.
+	// Insert run record
 	run := &datastore.CardRun{
-		ID:        uuid.NewString(),
-		CardID:    cardID,
-		RunNumber: 1, // TODO: increment from last run
-		AgentID:   agentID,
-		AgentType: agentType,
-		Model:     req.Model,
-		PersonaID: req.PersonaID,
-		Status:    "running",
+		ID:           opts.RunID,
+		CardID:       cardID,
+		AgentID:      agent.ID,
+		AgentType:    agent.AgentType,
+		Model:        opts.Model,
+		PersonaID:    opts.PersonaID,
+		Status:       "running",
+		BaseBranch:   "main",
+		RepoPath:     board.RepoPath,
+		CreatedBy:    opts.CreatedBy,
 	}
-	if err := s.store.CardRuns().Create(ctx, run); err != nil {
-		return nil, fmt.Errorf("create run: %w", err)
+	if wt != nil {
+		run.WorktreePath = wt.Path
+		run.Branch = wt.Branch
+		run.BaseBranch = wt.BaseBranch
+	}
+	if err := s.Store.CardRuns().Create(ctx, run); err != nil {
+		if wt != nil {
+			_ = s.Worktrees.Remove(board.RepoPath, wt)
+		}
+		return nil, fmt.Errorf("dispatch: create run: %w", err)
 	}
 
-	// Update card status.
+	// Update card status atomically
 	card.Status = "running"
-	card.Assignee = agentID
-	card.AssigneeType = "agent"
-	if err := s.store.BoardCards().Update(ctx, card); err != nil {
-		s.log.Warn("failed to update card status", zap.Error(err))
-	}
+	card.StartedAt = ptr(time.Now().UTC())
+	_ = s.Store.BoardCards().Update(ctx, card)
 
-	// Create worktree.
-	wtEnt, err := s.wtMgr.Create(ctx, run.ID, cardID, board.RepoURL, board.RepoPath, card.Branch, run.BaseBranch)
-	if err != nil {
-		s.log.Warn("worktree creation failed, continuing with local path",
-			zap.Error(err),
-			zap.String("repo_url", board.RepoURL),
-		)
-		wtEnt = &worktree.Entry{Path: board.RepoPath, Branch: card.Branch}
-	}
-
-	run.WorktreePath = wtEnt.Path
-	run.Branch = wtEnt.Branch
-	if err := s.store.CardRuns().Update(ctx, run); err != nil {
-		s.log.Warn("failed to update run worktree", zap.Error(err))
-	}
-
-	// Start the run in a goroutine.
-	runCtx, cancel := context.WithCancel(context.Background())
-	handle := &RunHandle{
-		RunID:  run.ID,
-		Cancel: cancel,
-		Done:   make(chan struct{}),
-	}
-	s.mu.Lock()
-	s.runs[run.ID] = handle
-	s.mu.Unlock()
-
-	go s.execute(runCtx, run, card, systemPrompt, handle)
+	// Start agent in background with a detached context.
+	// The HTTP request context will be cancelled when the client receives
+	// the 202 Accepted response, so we must not forward it.
+	bgCtx, bgCancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	go func() {
+		defer bgCancel()
+		s.runAgent(bgCtx, run, driver, card, wt, systemPrompt)
+	}()
 
 	return run, nil
 }
 
-// Stop cancels an in-flight run.
-func (s *Service) Stop(ctx context.Context, runID string) error {
-	s.mu.RLock()
-	handle, ok := s.runs[runID]
-	s.mu.RUnlock()
-	if ok && handle.Cancel != nil {
-		handle.Cancel()
+func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, driver dispatcher.AgentDriver, card *datastore.BoardCard, wt *worktree.Worktree, systemPrompt string) {
+	// Ensure worktree is cleaned up when the run reaches a terminal state.
+	defer s.cleanupWorktree(run, wt)
+
+	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nCard type: %s | Priority: %s | Effort: %s",
+		card.Title, card.Description, card.CardType, card.Priority, card.Effort)
+
+	opts := dispatcher.RunOpts{
+		RunID:        run.ID,
+		CardID:       run.CardID,
+		WorktreePath: run.WorktreePath,
+		Branch:       run.Branch,
+		BaseBranch:   run.BaseBranch,
+		Prompt:       prompt,
+		SystemPrompt: systemPrompt,
+		Model:        run.Model,
+	}
+
+	events, cancel, err := driver.Run(ctx, opts)
+	if err != nil {
+		s.failRun(ctx, run, err.Error())
+		return
+	}
+	defer cancel()
+
+	start := time.Now().UTC()
+	var totalTokensIn, totalTokensOut int64
+
+	// Batch events to reduce DB write amplification.
+	const batchSize = 50
+	const flushInterval = time.Second
+	batch := make([]*datastore.CardRunEvent, 0, batchSize)
+	flushTick := time.NewTicker(flushInterval)
+	defer flushTick.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		_ = s.Store.CardRunEvents().AppendBatch(ctx, batch)
+		batch = batch[:0]
+	}
+
+	for {
 		select {
-		case <-handle.Done:
-		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
+			flush()
+			s.failRun(ctx, run, "context cancelled")
+			return
+
+		case <-flushTick.C:
+			flush()
+
+		case ev, ok := <-events:
+			if !ok {
+				flush()
+				s.finalizeRun(ctx, run, card, start, totalTokensIn, totalTokensOut, "")
+				return
+			}
+
+			batch = append(batch, &datastore.CardRunEvent{
+				RunID:    run.ID,
+				Kind:     ev.Kind,
+				Phase:    ev.Phase,
+				Message:  ev.Message,
+				Metadata: ev.Metadata,
+			})
+			if len(batch) >= batchSize {
+				flush()
+			}
+
+			// Track tokens from metadata
+			if usage, ok := ev.Metadata["usage"].(map[string]any); ok {
+				if p, ok := usage["prompt_tokens"].(float64); ok {
+					totalTokensIn += int64(p)
+				}
+				if c, ok := usage["completion_tokens"].(float64); ok {
+					totalTokensOut += int64(c)
+				}
+			}
+
+			// Handle decision
+			if ev.IsDecision() {
+				flush()
+				s.pauseForDecision(ctx, run, ev)
+				return
+			}
+
+			// Handle completion
+			if ev.IsDone() {
+				flush()
+				var errMsg string
+				if ev.Kind == "error" {
+					errMsg = ev.Message
+				}
+				s.finalizeRun(ctx, run, card, start, totalTokensIn, totalTokensOut, errMsg)
+				return
+			}
+		}
+	}
+}
+
+func (s *DispatchService) finalizeRun(ctx context.Context, run *datastore.CardRun, card *datastore.BoardCard, start time.Time, tokensIn, tokensOut int64, errMsg string) {
+	elapsed := time.Since(start).Milliseconds()
+	costUSD := s.CostCalc.Calculate(run.Model, tokensIn, tokensOut)
+
+	if errMsg != "" {
+		run.Status = "failed"
+		run.Error = errMsg
+	} else {
+		run.Status = "completed"
+	}
+	run.ElapsedMs = elapsed
+	run.CostUSD = costUSD
+	run.TokenIn = tokensIn
+	run.TokenOut = tokensOut
+	now := time.Now().UTC()
+	run.CompletedAt = &now
+	_ = s.Store.CardRuns().Update(ctx, run)
+
+	// Atomic cost update to avoid lost-update race conditions.
+	_ = s.Store.BoardCards().AddCost(ctx, card.ID, costUSD, tokensIn, tokensOut)
+
+	// Update card status
+	card.Status = run.Status
+	card.CompletedAt = &now
+	_ = s.Store.BoardCards().Update(ctx, card)
+}
+
+func (s *DispatchService) cleanupWorktree(run *datastore.CardRun, wt *worktree.Worktree) {
+	if wt == nil || run.RepoPath == "" {
+		return
+	}
+	_ = s.Worktrees.Remove(run.RepoPath, wt)
+}
+
+func (s *DispatchService) pauseForDecision(ctx context.Context, run *datastore.CardRun, ev dispatcher.Event) {
+	run.Status = "awaiting"
+	_ = s.Store.CardRuns().Update(ctx, run)
+
+	options := []string{}
+	if opts, ok := ev.Metadata["options"].([]any); ok {
+		for _, o := range opts {
+			if str, ok := o.(string); ok {
+				options = append(options, str)
+			}
 		}
 	}
 
-	run, err := s.store.CardRuns().Get(ctx, runID)
+	decision := &datastore.PendingDecision{
+		ID:       uuid.NewString(),
+		RunID:    run.ID,
+		CardID:   run.CardID,
+		Question: ev.Message,
+		Options:  options,
+		Status:   "pending",
+	}
+	_ = s.Store.PendingDecisions().Create(ctx, decision)
+
+	// Update card
+	card, _ := s.Store.BoardCards().Get(ctx, run.CardID)
+	if card != nil {
+		card.Status = "awaiting"
+		_ = s.Store.BoardCards().Update(ctx, card)
+	}
+}
+
+func (s *DispatchService) failRun(ctx context.Context, run *datastore.CardRun, errMsg string) {
+	run.Status = "failed"
+	run.Error = errMsg
+	now := time.Now().UTC()
+	run.CompletedAt = &now
+	_ = s.Store.CardRuns().Update(ctx, run)
+
+	card, _ := s.Store.BoardCards().Get(ctx, run.CardID)
+	if card != nil {
+		card.Status = "failed"
+		_ = s.Store.BoardCards().Update(ctx, card)
+	}
+}
+
+func (s *DispatchService) resolveAgent(ctx context.Context, card *datastore.BoardCard, explicitID string) (*datastore.BoardAgent, error) {
+	if explicitID != "" {
+		return s.Store.BoardAgents().Get(ctx, explicitID)
+	}
+	if card.Assignee != "" && card.AssigneeType == "agent" {
+		return s.Store.BoardAgents().Get(ctx, card.Assignee)
+	}
+	agents, err := s.Store.BoardAgents().ListByBoard(ctx, card.BoardID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range agents {
+		if a.IsDefault && a.IsActive {
+			return &a, nil
+		}
+	}
+	if len(agents) > 0 {
+		return &agents[0], nil
+	}
+	return nil, fmt.Errorf("no agent available for board %s", card.BoardID)
+}
+
+func (s *DispatchService) buildSystemPrompt(ctx context.Context, personaID string, card *datastore.BoardCard) (string, error) {
+	base := "You are an AI software engineer. Implement the task described by the user. " +
+		"Use available tools to read files, write code, run tests, and inspect the repository. " +
+		"When you need clarification, ask a specific question with numbered options."
+
+	if personaID == "" {
+		return base, nil
+	}
+
+	persona, err := s.Store.Personas().Get(ctx, personaID)
+	if err != nil {
+		return base, nil // fallback to base if persona not found
+	}
+
+	return base + "\n\n" + persona.SystemPrompt, nil
+}
+
+// StopRun marks a run as stopped.
+func (s *DispatchService) StopRun(ctx context.Context, runID string) error {
+	run, err := s.Store.CardRuns().Get(ctx, runID)
 	if err != nil {
 		return err
 	}
 	run.Status = "stopped"
 	now := time.Now().UTC()
 	run.CompletedAt = &now
-	return s.store.CardRuns().Update(ctx, run)
-}
-
-// execute is the goroutine that drives the agent run.
-func (s *Service) execute(ctx context.Context, run *datastore.CardRun, card *datastore.BoardCard, systemPrompt string, handle *RunHandle) {
-	defer close(handle.Done)
-
-	driver, ok := s.registry.Get(run.AgentType)
-	if !ok {
-		s.failRun(ctx, run, fmt.Sprintf("no driver registered for agent type %q", run.AgentType))
-		return
+	if err := s.Store.CardRuns().Update(ctx, run); err != nil {
+		return err
 	}
 
-	events := make(chan dispatcher.Event, 64)
-	resultCh := make(chan dispatcher.Result, 1)
-
-	go func() {
-		resultCh <- driver.Run(ctx, dispatcher.RunRequest{
-			RunID:           run.ID,
-			CardID:          run.CardID,
-			AgentID:         run.AgentID,
-			PersonaID:       run.PersonaID,
-			Model:           run.Model,
-			WorktreePath:    run.WorktreePath,
-			Branch:          run.Branch,
-			BaseBranch:      run.BaseBranch,
-			CardTitle:       card.Title,
-			CardDescription: card.Description,
-			SystemPrompt:    systemPrompt,
-		}, events)
-	}()
-
-	// Drain events and persist them.
-	for {
-		select {
-		case <-ctx.Done():
-			s.finalizeRun(ctx, run, dispatcher.Result{Status: "stopped"})
-			return
-		case ev, ok := <-events:
-			if !ok {
-				// Events closed, wait for result.
-				result := <-resultCh
-				s.finalizeRun(ctx, run, result)
-				return
-			}
-			s.persistEvent(ctx, run, ev)
-			if ev.Kind == dispatcher.EventKindDecision {
-				s.handleDecision(ctx, run, ev)
-			}
-		}
-	}
-}
-
-func (s *Service) persistEvent(ctx context.Context, run *datastore.CardRun, ev dispatcher.Event) {
-	if ctx.Err() != nil {
-		return
-	}
-	ce := &datastore.CardRunEvent{
-		RunID:    run.ID,
-		Kind:     string(ev.Kind),
-		Phase:    ev.Phase,
-		Message:  ev.Message,
-		Metadata: ev.Metadata,
-	}
-	if err := s.store.CardRunEvents().Append(ctx, ce); err != nil {
-		s.log.Warn("failed to append event", zap.Error(err))
-	}
-}
-
-func (s *Service) handleDecision(ctx context.Context, run *datastore.CardRun, ev dispatcher.Event) {
-	d := NewDecisionDetector(s.log).Detect(run.ID, run.CardID, ev.Message)
-	if d == nil {
-		return
-	}
-	if err := s.store.PendingDecisions().Create(ctx, d); err != nil {
-		s.log.Warn("failed to create pending decision", zap.Error(err))
-		return
-	}
-	// Update run to awaiting status.
-	run.Status = "awaiting"
-	if err := s.store.CardRuns().Update(ctx, run); err != nil {
-		s.log.Warn("failed to update run status", zap.Error(err))
-	}
-	// Update card too.
-	card, _ := s.store.BoardCards().Get(ctx, run.CardID)
+	card, _ := s.Store.BoardCards().Get(ctx, run.CardID)
 	if card != nil {
-		card.Status = "awaiting"
-		_ = s.store.BoardCards().Update(ctx, card)
+		card.Status = "stopped"
+		_ = s.Store.BoardCards().Update(ctx, card)
 	}
+	return nil
 }
 
-func (s *Service) finalizeRun(ctx context.Context, run *datastore.CardRun, result dispatcher.Result) {
-	if ctx.Err() != nil {
-		result.Status = "stopped"
+// AnswerDecision resolves a pending decision and optionally resumes the run.
+func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer string) error {
+	decision, err := s.Store.PendingDecisions().Get(ctx, decisionID)
+	if err != nil {
+		return err
 	}
-	run.Status = result.Status
-	run.ResultSummary = result.ResultSummary
-	run.Error = result.Error
-	run.TokenIn = result.TokenIn
-	run.TokenOut = result.TokenOut
-	run.CostUSD = s.pricing.CostUSD(run.Model, result.TokenIn, result.TokenOut)
-	run.ElapsedMs = result.ElapsedMs
-	now := time.Now().UTC()
-	run.CompletedAt = &now
-
-	if err := s.store.CardRuns().Update(ctx, run); err != nil {
-		s.log.Warn("failed to finalize run", zap.Error(err))
+	if decision.Status != "pending" {
+		return fmt.Errorf("decision already %s", decision.Status)
 	}
 
-	// Update card status and cost rollup.
-	card, err := s.store.BoardCards().Get(ctx, run.CardID)
-	if err == nil && card != nil {
-		if result.Status == "completed" || result.Status == "failed" || result.Status == "stopped" {
-			card.Status = result.Status
-		}
-		card.CostUSD += run.CostUSD
-		card.TokenIn += run.TokenIn
-		card.TokenOut += run.TokenOut
-		card.WorktreePath = run.WorktreePath
-		card.Branch = run.Branch
-		if err := s.store.BoardCards().Update(ctx, card); err != nil {
-			s.log.Warn("failed to update card final state", zap.Error(err))
-		}
+	if err := s.Store.PendingDecisions().Answer(ctx, decisionID, answer); err != nil {
+		return err
 	}
 
-	s.mu.Lock()
-	delete(s.runs, run.ID)
-	s.mu.Unlock()
+	// Append answer as event
+	_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+		RunID:   decision.RunID,
+		Kind:    "text",
+		Message: "User answered: " + answer,
+		Metadata: map[string]any{
+			"decision_id": decisionID,
+			"answer":      answer,
+		},
+	})
+
+	// For now, mark run as completed after decision. In Phase 3, we will
+	// inject the answer back into the agent context and continue.
+	run, err := s.Store.CardRuns().Get(ctx, decision.RunID)
+	if err != nil {
+		return err
+	}
+	run.Status = "running"
+	_ = s.Store.CardRuns().Update(ctx, run)
+
+	card, _ := s.Store.BoardCards().Get(ctx, run.CardID)
+	if card != nil {
+		card.Status = "running"
+		_ = s.Store.BoardCards().Update(ctx, card)
+	}
+
+	return nil
 }
 
-func (s *Service) failRun(ctx context.Context, run *datastore.CardRun, reason string) {
-	s.finalizeRun(ctx, run, dispatcher.Result{Status: "failed", Error: reason})
-}
-
-// DispatchRequest is the payload for Dispatch.
-type DispatchRequest struct {
-	AgentID   string
-	AgentType string
-	PersonaID string
-	Model     string
-}
-
-// AnswerDecision forwards a human answer to a pending decision.
-func (s *Service) AnswerDecision(ctx context.Context, decisionID, answer string) error {
-	return s.decisions.Answer(ctx, decisionID, answer)
-}
+func ptr[T any](v T) *T { return &v }

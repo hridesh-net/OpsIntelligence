@@ -62,6 +62,8 @@ CREATE TABLE board_cards (
 CREATE INDEX idx_board_cards_board ON board_cards(board_id);
 CREATE INDEX idx_board_cards_column ON board_cards(column_id);
 CREATE INDEX idx_board_cards_status ON board_cards(status);
+CREATE INDEX idx_board_cards_board_column ON board_cards(board_id, column_id);
+CREATE INDEX idx_board_cards_assignee ON board_cards(assignee);
 
 -- Card runs: each agent execution on a card
 CREATE TABLE card_runs (
@@ -80,6 +82,7 @@ CREATE TABLE card_runs (
     worktree_path   TEXT,
     branch          TEXT,
     base_branch     TEXT,
+    repo_path       TEXT,
     result_summary  TEXT,
     error           TEXT,
     created_by      TEXT,
@@ -101,7 +104,7 @@ CREATE TABLE card_run_events (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_card_run_events_run ON card_run_events(run_id);
+CREATE INDEX idx_card_run_events_run ON card_run_events(run_id, id);
 
 -- Pending decisions: when an agent asks a question
 CREATE TABLE pending_decisions (

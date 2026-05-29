@@ -82,6 +82,7 @@ type BoardCardRepo interface {
 	Update(ctx context.Context, c *BoardCard) error
 	Delete(ctx context.Context, id string) error
 	Move(ctx context.Context, cardID, columnID string) error
+	AddCost(ctx context.Context, cardID string, costUSD float64, tokenIn, tokenOut int64) error
 	List(ctx context.Context, f BoardCardFilter) ([]BoardCard, error)
 }
 
@@ -96,6 +97,7 @@ type CardRunRepo interface {
 // CardRunEventRepo manages CardRunEvent rows.
 type CardRunEventRepo interface {
 	Append(ctx context.Context, e *CardRunEvent) error
+	AppendBatch(ctx context.Context, events []*CardRunEvent) error
 	List(ctx context.Context, f CardRunEventFilter) ([]CardRunEvent, error)
 }
 

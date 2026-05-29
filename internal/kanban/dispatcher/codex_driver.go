@@ -1,79 +1,80 @@
-// Package dispatcher provides the Codex CLI driver.
 package dispatcher
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"time"
-
-	"go.uber.org/zap"
 )
 
-// CodexDriver spawns the OpenAI Codex CLI.
-type CodexDriver struct {
-	log *zap.Logger
+// CodexDriver spawns the OpenAI Codex CLI and parses its output.
+type CodexDriver struct{}
+
+// NewCodexDriver creates a new Codex CLI driver.
+func NewCodexDriver() *CodexDriver {
+	return &CodexDriver{}
 }
 
-// NewCodexDriver creates a driver that spawns the codex CLI.
-func NewCodexDriver(log *zap.Logger) *CodexDriver {
-	if log == nil {
-		log = zap.NewNop()
-	}
-	return &CodexDriver{log: log}
+// Type returns "codex".
+func (d *CodexDriver) Type() string { return "codex" }
+
+// SupportedModels returns Codex model identifiers.
+func (d *CodexDriver) SupportedModels() []string {
+	return []string{"gpt-5", "gpt-4o", "gpt-4o-mini"}
 }
 
-// Name returns "codex".
-func (d *CodexDriver) Name() string { return "codex" }
+// Run spawns `codex` in the worktree.
+func (d *CodexDriver) Run(ctx context.Context, opts RunOpts) (<-chan Event, context.CancelFunc, error) {
+	events := make(chan Event, 64)
+	ctx, cancel := context.WithCancel(ctx)
 
-// Run executes codex in the worktree directory.
-func (d *CodexDriver) Run(ctx context.Context, req RunRequest, events chan<- Event) Result {
-	start := time.Now()
-	defer close(events)
-
-	emit := func(e Event) {
-		select {
-		case events <- e:
-		case <-ctx.Done():
-		}
-	}
-
-	emit(Event{Kind: EventKindLifecycle, Phase: "start", Message: "codex run started"})
-
-	prompt := fmt.Sprintf(
-		"You are working on a kanban card.\n\nTitle: %s\nDescription: %s\n\n%s",
-		req.CardTitle, req.CardDescription, req.SystemPrompt,
+	// Codex CLI accepts prompts via stdin or as arguments.
+	// We use the exec mode: `codex --approval-mode auto-quiet <prompt>`
+	cmd := exec.CommandContext(ctx, "codex",
+		"--approval-mode", "auto-quiet",
+		opts.Prompt,
 	)
-
-	promptFile := filepath.Join(req.WorktreePath, ".kanban_prompt.md")
-	if err := os.WriteFile(promptFile, []byte(prompt), 0o644); err != nil {
-		emit(Event{Kind: EventKindError, Message: err.Error()})
-		return Result{Status: "failed", Error: err.Error(), ElapsedMs: DurationMS(start)}
+	if opts.WorktreePath != "" {
+		cmd.Dir = opts.WorktreePath
 	}
-	defer os.Remove(promptFile)
+	cmd.Env = os.Environ()
 
-	cmd := exec.CommandContext(ctx, "codex", "-q", "-f", promptFile)
-	cmd.Dir = req.WorktreePath
-
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		emit(Event{Kind: EventKindLifecycle, Phase: "cancelled", Message: "run cancelled"})
-		return Result{Status: "stopped", ElapsedMs: DurationMS(start)}
-	}
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		emit(Event{Kind: EventKindError, Message: err.Error()})
-		return Result{Status: "failed", Error: err.Error(), ElapsedMs: DurationMS(start)}
+		cancel()
+		return nil, nil, fmt.Errorf("codex: stdout pipe: %w", err)
 	}
 
-	text := string(out)
-	emit(Event{Kind: EventKindText, Message: text})
-	emit(Event{Kind: EventKindLifecycle, Phase: "complete", Message: "codex run completed"})
-
-	return Result{
-		Status:        "completed",
-		ResultSummary: truncate(text, 500),
-		ElapsedMs:     DurationMS(start),
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("codex: start: %w", err)
 	}
+
+	go func() {
+		defer close(events)
+
+		go func() {
+			defer cancel()
+			scanner := bufio.NewScanner(stdout)
+			const maxCapacity = 1024 * 1024 // 1MB buffer for large output lines
+			buf := make([]byte, 64*1024)
+			scanner.Buffer(buf, maxCapacity)
+			for scanner.Scan() {
+				line := scanner.Text()
+				select {
+				case events <- Event{Kind: "text", Message: line}:
+				case <-ctx.Done():
+					return
+				}
+			}
+			_ = cmd.Wait()
+			events <- Event{Kind: "done"}
+		}()
+
+		<-ctx.Done()
+		_ = cmd.Process.Kill()
+	}()
+
+	return events, cancel, nil
 }

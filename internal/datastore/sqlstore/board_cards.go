@@ -71,6 +71,14 @@ func (r *boardCardRepo) Move(ctx context.Context, cardID, columnID string) error
 	return r.s.scanErr(err)
 }
 
+func (r *boardCardRepo) AddCost(ctx context.Context, cardID string, costUSD float64, tokenIn, tokenOut int64) error {
+	_, err := r.s.db.ExecContext(ctx, r.s.rebind(
+		`UPDATE board_cards SET cost_usd = cost_usd + ?, token_in = token_in + ?, token_out = token_out + ?, updated_at = ? WHERE id = ?`),
+		costUSD, tokenIn, tokenOut, time.Now().UTC(), cardID,
+	)
+	return r.s.scanErr(err)
+}
+
 func (r *boardCardRepo) List(ctx context.Context, f datastore.BoardCardFilter) ([]datastore.BoardCard, error) {
 	var where []string
 	var args []any

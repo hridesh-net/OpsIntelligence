@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
@@ -30,6 +31,41 @@ func (r *cardRunEventRepo) Append(ctx context.Context, e *datastore.CardRunEvent
 		`INSERT INTO card_run_events (run_id, kind, phase, message, metadata_json, created_at) VALUES (?,?,?,?,?,?)`),
 		e.RunID, e.Kind, nullable(e.Phase), e.Message, meta, e.CreatedAt,
 	)
+	return r.s.scanErr(err)
+}
+
+func (r *cardRunEventRepo) AppendBatch(ctx context.Context, events []*datastore.CardRunEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if len(events) == 1 {
+		return r.Append(ctx, events[0])
+	}
+
+	now := time.Now().UTC()
+	placeholders := make([]string, 0, len(events))
+	args := make([]any, 0, len(events)*6)
+
+	for _, e := range events {
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = now
+		}
+		var meta sql.NullString
+		if len(e.Metadata) > 0 {
+			b, err := json.Marshal(e.Metadata)
+			if err != nil {
+				return err
+			}
+			meta.String = string(b)
+			meta.Valid = true
+		}
+		placeholders = append(placeholders, "(?,?,?,?,?,?)")
+		args = append(args, e.RunID, e.Kind, nullable(e.Phase), e.Message, meta, e.CreatedAt)
+	}
+
+	q := `INSERT INTO card_run_events (run_id, kind, phase, message, metadata_json, created_at) VALUES ` +
+		strings.Join(placeholders, ", ")
+	_, err := r.s.db.ExecContext(ctx, r.s.rebind(q), args...)
 	return r.s.scanErr(err)
 }
 

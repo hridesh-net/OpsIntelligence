@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
@@ -530,22 +531,40 @@ func fetchPS(pid int) psResult {
 	if pid <= 0 {
 		return r
 	}
-	out, err := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "%cpu,rss,vsz,etime", "--no-headers").Output()
+	// Ground truth first: does the PID exist? `kill -0` (signal 0) returns
+	// no-op success if the process is alive, error otherwise. This catches the
+	// case where `ps -o` parsing fails on a platform whose column headers
+	// differ from what we expect — the pill should still say RUNNING.
+	if p, err := os.FindProcess(pid); err == nil {
+		if err := p.Signal(syscall.Signal(0)); err == nil {
+			r.alive = true
+		}
+	}
+
+	// `--no-headers` is procps-ng only; macOS / BSD `ps` rejects it. Try the
+	// portable form first; if both invocations fail or produce no data line,
+	// keep the defaults but preserve `alive` from the signal-0 probe above.
+	out, err := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "%cpu,rss,vsz,etime").Output()
 	if err != nil {
-		out, _ = exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "%cpu,rss,vsz,etime").Output()
+		out, _ = exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "%cpu,rss,vsz,etime", "--no-headers").Output()
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 4 && fields[0] != "%CPU" {
-			r.cpu = fields[0]
-			if kb, e := strconv.ParseInt(fields[1], 10, 64); e == nil {
-				r.rssKB = kb
-			}
-			r.vsz = fields[2]
-			r.etime = fields[3]
-			r.alive = true
-			break
+		if len(fields) < 4 {
+			continue
 		}
+		// Skip header row on platforms that print one (macOS/BSD always do).
+		if strings.EqualFold(fields[0], "%CPU") || strings.EqualFold(fields[0], "CPU") {
+			continue
+		}
+		r.cpu = fields[0]
+		if kb, e := strconv.ParseInt(fields[1], 10, 64); e == nil {
+			r.rssKB = kb
+		}
+		r.vsz = fields[2]
+		r.etime = fields[3]
+		r.alive = true
+		break
 	}
 	return r
 }

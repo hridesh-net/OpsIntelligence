@@ -1,131 +1,122 @@
-// Package kanban implements decision-prompt detection and resume for human-in-the-loop.
+// Package kanban provides decision prompt detection for agent runs.
 package kanban
 
 import (
-	"context"
-	"fmt"
 	"regexp"
 	"strings"
-	"sync"
-
-	"github.com/google/uuid"
-	"go.uber.org/zap"
-
-	"github.com/opsintelligence/opsintelligence/internal/datastore"
 )
 
-// DecisionDetector scans agent output for questions that need human input.
+// DecisionDetector scans agent output for human-decision prompts.
 type DecisionDetector struct {
-	log *zap.Logger
+	// Patterns for detecting questions with numbered options.
+	// These are heuristic patterns that catch common agent question formats.
+	optionPatterns []*regexp.Regexp
 }
 
-// NewDecisionDetector creates a detector.
-func NewDecisionDetector(log *zap.Logger) *DecisionDetector {
-	if log == nil {
-		log = zap.NewNop()
-	}
-	return &DecisionDetector{log: log}
-}
-
-// Detect scans text for decision prompts and returns a PendingDecision if found.
-func (d *DecisionDetector) Detect(runID, cardID, text string) *datastore.PendingDecision {
-	q := extractQuestion(text)
-	if q == "" {
-		return nil
-	}
-	return &datastore.PendingDecision{
-		ID:       uuid.NewString(),
-		RunID:    runID,
-		CardID:   cardID,
-		Question: q,
-		Options:  extractOptions(text),
-		Status:   "pending",
+// NewDecisionDetector creates a detector with default patterns.
+func NewDecisionDetector() *DecisionDetector {
+	return &DecisionDetector{
+		optionPatterns: []*regexp.Regexp{
+			// Numbered options: "1. Option text" or "1️⃣ Option text"
+			regexp.MustCompile(`(?m)^\s*(?:\d+[.):]|\d\p{Emoji}\s)\s+.+`),
+			// Lettered options: "A. Option text" or "a) Option text"
+			regexp.MustCompile(`(?m)^\s*(?:[A-Da-d][.):])\s+.+`),
+			// Bullet options with question prefix
+			regexp.MustCompile(`(?i)(?:which|what|how|should|choose|pick|select|option|approach)\s+(?:one|would|do|you|prefer|best)\s*[?\n]`),
+		},
 	}
 }
 
-var questionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(?:question|ask|confirm|should i|would you like|do you want|please choose|select one)\b[^.!?]*[?]`),
-	regexp.MustCompile(`(?i)\b(?:A|B|C|D|E)[).:]\s+\S+`),
-	regexp.MustCompile(`(?i)\b(?:yes|no|maybe)\b[^.!?]*[?]`),
-}
-
-func extractQuestion(text string) string {
-	// Look for the last sentence that ends with ? and contains decision keywords.
+// Detect scans agent output and returns a decision if found.
+// Returns nil if no decision prompt is detected.
+func (d *DecisionDetector) Detect(text string) *DetectedDecision {
+	// Look for a question followed by numbered/lettered options
 	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
+
+	var questionLines []string
+	var options []string
+	inOptions := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
 			continue
 		}
-		for _, re := range questionPatterns {
-			if re.MatchString(line) {
-				return line
+
+		// Check if this line looks like an option
+		isOption := d.isOptionLine(trimmed)
+
+		if isOption {
+			if !inOptions {
+				// Previous lines form the question
+				question := strings.Join(questionLines, " ")
+				question = strings.TrimSpace(question)
+				if len(question) > 10 {
+					inOptions = true
+				}
 			}
-		}
-		if strings.HasSuffix(line, "?") && len(line) > 10 {
-			return line
-		}
-	}
-	return ""
-}
-
-func extractOptions(text string) []string {
-	var opts []string
-	re := regexp.MustCompile(`(?im)^\s*(?:[-*•]|\d+[.)]|\w[.)])\s+(.+)$`)
-	for _, m := range re.FindAllStringSubmatch(text, -1) {
-		if len(m) > 1 {
-			opts = append(opts, strings.TrimSpace(m[1]))
-		}
-	}
-	return opts
-}
-
-// DecisionResume handles resuming runs after a decision is answered.
-type DecisionResume struct {
-	store datastore.Store
-	log   *zap.Logger
-	mu    sync.Mutex
-	// resolvers maps decisionID -> channel that receives the answer.
-	resolvers map[string]chan string
-}
-
-// NewDecisionResume creates a resume handler.
-func NewDecisionResume(store datastore.Store, log *zap.Logger) *DecisionResume {
-	if log == nil {
-		log = zap.NewNop()
-	}
-	return &DecisionResume{
-		store:     store,
-		log:       log,
-		resolvers: make(map[string]chan string),
-	}
-}
-
-// Register creates a resolver channel for a pending decision.
-func (r *DecisionResume) Register(decisionID string) chan string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ch := make(chan string, 1)
-	r.resolvers[decisionID] = ch
-	return ch
-}
-
-// Answer is called when a human answers a pending decision via the API.
-func (r *DecisionResume) Answer(ctx context.Context, decisionID, answer string) error {
-	if err := r.store.PendingDecisions().Answer(ctx, decisionID, answer); err != nil {
-		return fmt.Errorf("store answer: %w", err)
-	}
-	r.mu.Lock()
-	ch, ok := r.resolvers[decisionID]
-	if ok {
-		delete(r.resolvers, decisionID)
-	}
-	r.mu.Unlock()
-	if ok {
-		select {
-		case ch <- answer:
-		default:
+			if inOptions {
+				options = append(options, d.cleanOption(trimmed))
+			}
+		} else {
+			if inOptions {
+				// We were in options and now hit non-option text.
+				// If we have at least 2 options, return the decision.
+				if len(options) >= 2 {
+					question := strings.Join(questionLines, " ")
+					return &DetectedDecision{
+						Question: question,
+						Options:  options,
+						Raw:      strings.Join(lines[max(0, i-len(options)-len(questionLines)-1):i], "\n"),
+					}
+				}
+				// Reset and try again
+				questionLines = nil
+				options = nil
+				inOptions = false
+			}
+			questionLines = append(questionLines, trimmed)
 		}
 	}
+
+	// End of text: check if we have a valid decision
+	if inOptions && len(options) >= 2 {
+		question := strings.Join(questionLines, " ")
+		return &DetectedDecision{
+			Question: question,
+			Options:  options,
+			Raw:      strings.Join(lines, "\n"),
+		}
+	}
+
 	return nil
+}
+
+// DetectedDecision represents a decision prompt found in agent output.
+type DetectedDecision struct {
+	Question string   // The question text
+	Options  []string // Numbered/lettered options
+	Raw      string   // Original text segment
+}
+
+func (d *DecisionDetector) isOptionLine(line string) bool {
+	for _, re := range d.optionPatterns {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *DecisionDetector) cleanOption(line string) string {
+	// Strip leading number/letter and punctuation
+	re := regexp.MustCompile(`^\s*(?:\d+[.):]|\d\p{Emoji}\s|[A-Da-d][.):])\s*`)
+	return re.ReplaceAllString(line, "")
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

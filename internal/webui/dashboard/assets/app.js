@@ -3786,6 +3786,9 @@
 
   let currentBoardId = null;
 
+  let boardsRefreshing = false;
+  let boardViewRefreshing = false;
+
   function renderBoardsView(actionsEl) {
     const container = document.getElementById("boards-list");
     const detail = document.getElementById("board-detail");
@@ -3802,37 +3805,63 @@
 
     refreshBoardsList();
     clearBoardsPoll();
-    boardsPollId = setInterval(refreshBoardsList, 5000);
+    boardsPollId = setInterval(() => {
+      if (document.hidden || boardsRefreshing) return;
+      refreshBoardsList();
+    }, 5000);
   }
 
   async function refreshBoardsList() {
     const container = document.getElementById("boards-list");
-    if (!container || !container.classList.contains("hidden") === false) return;
+    if (!container || container.classList.contains("hidden")) return;
+    if (boardsRefreshing) return;
+    boardsRefreshing = true;
     try {
       const data = await getJSON(`${API}/boards`);
       const boards = data.boards || [];
       if (boards.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <p>No boards yet. Create your first kanban board to get started.</p>
-          </div>`;
+        if (container.children.length !== 1 || !container.querySelector(".empty-state")) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <p>No boards yet. Create your first kanban board to get started.</p>
+            </div>`;
+        }
         return;
       }
-      let html = `<div class="boards-grid">`;
-      for (const b of boards) {
-        html += `
-          <div class="board-card" data-id="${escapeHtml(b.id)}">
-            <div class="board-card-name">${escapeHtml(b.name)}</div>
-            <div class="board-card-meta">${escapeHtml(b.mode || "local")}${b.repo_url ? " · " + escapeHtml(b.repo_url) : ""}</div>
-          </div>`;
+      // Simple DOM diffing: reuse existing board cards, add/remove as needed
+      let grid = container.querySelector(".boards-grid");
+      if (!grid) {
+        container.innerHTML = `<div class="boards-grid"></div>`;
+        grid = container.querySelector(".boards-grid");
       }
-      html += `</div>`;
-      container.innerHTML = html;
-      container.querySelectorAll(".board-card").forEach((card) => {
-        card.addEventListener("click", () => openBoard(card.dataset.id));
+      const existing = new Map();
+      grid.querySelectorAll(".board-card").forEach((el) => {
+        existing.set(el.dataset.id, el);
       });
+      for (const b of boards) {
+        if (existing.has(b.id)) {
+          existing.delete(b.id);
+          continue;
+        }
+        const card = document.createElement("div");
+        card.className = "board-card";
+        card.dataset.id = b.id;
+        card.innerHTML = `
+          <div class="board-card-name">${escapeHtml(b.name)}</div>
+          <div class="board-card-meta">${escapeHtml(b.mode || "local")}${b.repo_url ? " · " + escapeHtml(b.repo_url) : ""}</div>`;
+        card.addEventListener("click", () => openBoard(b.id));
+        grid.appendChild(card);
+      }
+      // Remove stale boards
+      for (const el of existing.values()) {
+        el.remove();
+      }
     } catch (err) {
-      container.innerHTML = `<div class="error">Failed to load boards: ${escapeHtml(err.message)}</div>`;
+      if (!container.querySelector(".error")) {
+        container.innerHTML = `<div class="error">Failed to load boards: ${escapeHtml(err.message)}</div>`;
+      }
+    } finally {
+      boardsRefreshing = false;
     }
   }
 
@@ -3848,79 +3877,135 @@
 
     await refreshBoardView();
     clearBoardsPoll();
-    boardsPollId = setInterval(refreshBoardView, 5000);
+    boardsPollId = setInterval(() => {
+      if (document.hidden || boardViewRefreshing) return;
+      refreshBoardView();
+    }, 5000);
   }
 
   async function refreshBoardView() {
     const detail = document.getElementById("board-detail");
     if (!detail || detail.classList.contains("hidden")) return;
     if (!currentBoardId) return;
+    if (boardViewRefreshing) return;
+    boardViewRefreshing = true;
     try {
       const data = await getJSON(`${API}/boards/${currentBoardId}`);
-      const board = data.board;
       const columns = data.columns || [];
       const cards = data.cards || [];
 
-      let html = `<div class="kanban-toolbar">
-        <button class="ghost" id="board-back">← Back to boards</button>
-        <button class="primary" id="board-new-card">+ New task</button>
-      </div>`;
-      html += `<div class="kanban-board">`;
+      // Build or reuse DOM
+      let toolbar = detail.querySelector(".kanban-toolbar");
+      let boardEl = detail.querySelector(".kanban-board");
+      if (!toolbar) {
+        detail.innerHTML = `
+          <div class="kanban-toolbar">
+            <button class="ghost" id="board-back">← Back to boards</button>
+            <button class="primary" id="board-new-card">+ New task</button>
+          </div>
+          <div class="kanban-board"></div>`;
+        toolbar = detail.querySelector(".kanban-toolbar");
+        boardEl = detail.querySelector(".kanban-board");
+        document.getElementById("board-back").addEventListener("click", () => {
+          renderBoardsView(document.getElementById("content-actions"));
+        });
+        document.getElementById("board-new-card").addEventListener("click", () => {
+          showCreateCardModal(currentBoardId);
+        });
+      }
+
+      // Update columns and cards
+      const existingCols = new Map();
+      boardEl.querySelectorAll(".kanban-column").forEach((el) => {
+        existingCols.set(el.dataset.columnId, el);
+      });
+
       for (const col of columns) {
         const colCards = cards.filter((c) => c.column_id === col.id);
-        html += `<div class="kanban-column" data-column-id="${escapeHtml(col.id)}">
-          <div class="kanban-column-header">
-            <span class="kanban-column-name">${escapeHtml(col.name)}</span>
-            <span class="kanban-column-count">${colCards.length}</span>
-          </div>
-          <div class="kanban-column-cards">`;
+        let colEl = existingCols.get(col.id);
+        if (!colEl) {
+          colEl = document.createElement("div");
+          colEl.className = "kanban-column";
+          colEl.dataset.columnId = col.id;
+          colEl.innerHTML = `
+            <div class="kanban-column-header">
+              <span class="kanban-column-name"></span>
+              <span class="kanban-column-count"></span>
+            </div>
+            <div class="kanban-column-cards"></div>`;
+          boardEl.appendChild(colEl);
+        }
+        colEl.querySelector(".kanban-column-name").textContent = col.name;
+        colEl.querySelector(".kanban-column-count").textContent = colCards.length;
+
+        const cardsContainer = colEl.querySelector(".kanban-column-cards");
+        const existingCards = new Map();
+        cardsContainer.querySelectorAll(".kanban-card").forEach((el) => {
+          existingCards.set(el.dataset.cardId, el);
+        });
+
         for (const card of colCards) {
+          let cardEl = existingCards.get(card.id);
           const priorityClass = `priority-${card.priority || "p2"}`;
           const typeLabel = card.card_type ? card.card_type.toUpperCase() : "TASK";
           const statusIcon = card.status === "running" ? "⚡" : card.status === "awaiting" ? "⏸" : "";
-          html += `
-            <div class="kanban-card ${priorityClass}" draggable="true" data-card-id="${escapeHtml(card.id)}">
+
+          if (!cardEl) {
+            cardEl = document.createElement("div");
+            cardEl.className = `kanban-card ${priorityClass}`;
+            cardEl.draggable = true;
+            cardEl.dataset.cardId = card.id;
+            cardEl.innerHTML = `
               <div class="kanban-card-top">
-                <span class="kanban-card-type">${escapeHtml(typeLabel)}</span>
-                <span class="kanban-card-priority">${escapeHtml(card.priority || "p2")}</span>
+                <span class="kanban-card-type"></span>
+                <span class="kanban-card-priority"></span>
               </div>
-              <div class="kanban-card-title">${escapeHtml(card.title)}</div>
+              <div class="kanban-card-title"></div>
               <div class="kanban-card-bottom">
-                <span class="kanban-card-status">${statusIcon} ${escapeHtml(card.status || "queued")}</span>
-                ${card.cost_usd ? `<span class="kanban-card-cost">$${Number(card.cost_usd).toFixed(2)}</span>` : ""}
-              </div>
-            </div>`;
+                <span class="kanban-card-status"></span>
+                <span class="kanban-card-cost"></span>
+              </div>`;
+            cardEl.addEventListener("click", () => showCardDetailModal(card.id));
+            cardsContainer.appendChild(cardEl);
+          }
+          cardEl.querySelector(".kanban-card-type").textContent = typeLabel;
+          cardEl.querySelector(".kanban-card-priority").textContent = card.priority || "p2";
+          cardEl.querySelector(".kanban-card-title").textContent = card.title;
+          cardEl.querySelector(".kanban-card-status").textContent = (statusIcon + " " + (card.status || "queued")).trim();
+          const costEl = cardEl.querySelector(".kanban-card-cost");
+          if (card.cost_usd) {
+            costEl.textContent = "$" + Number(card.cost_usd).toFixed(2);
+          } else {
+            costEl.textContent = "";
+          }
+          existingCards.delete(card.id);
         }
-        html += `</div></div>`;
+        // Remove stale cards
+        for (const el of existingCards.values()) {
+          el.remove();
+        }
+        existingCols.delete(col.id);
       }
-      html += `</div>`;
-      detail.innerHTML = html;
+      // Remove stale columns
+      for (const el of existingCols.values()) {
+        el.remove();
+      }
 
-      // Wire back button
-      document.getElementById("board-back").addEventListener("click", () => {
-        renderBoardsView(document.getElementById("content-actions"));
-      });
-
-      // Wire new card button
-      document.getElementById("board-new-card").addEventListener("click", () => {
-        showCreateCardModal(currentBoardId);
-      });
-
-      // Wire card clicks
-      detail.querySelectorAll(".kanban-card").forEach((cardEl) => {
-        cardEl.addEventListener("click", () => showCardDetailModal(cardEl.dataset.cardId));
-      });
-
-      // Wire drag-and-drop
-      setupKanbanDragDrop(detail);
+      // Re-bind drag-and-drop (columns may have changed)
+      setupKanbanDragDrop(boardEl);
     } catch (err) {
-      detail.innerHTML = `<div class="error">Failed to load board: ${escapeHtml(err.message)}</div>`;
+      if (!detail.querySelector(".error")) {
+        detail.innerHTML = `<div class="error">Failed to load board: ${escapeHtml(err.message)}</div>`;
+      }
+    } finally {
+      boardViewRefreshing = false;
     }
   }
 
   function setupKanbanDragDrop(boardEl) {
     let draggedId = null;
-    boardEl.querySelectorAll(".kanban-card").forEach((card) => {
+    boardEl.querySelectorAll(".kanban-card:not([data-dd-wired])").forEach((card) => {
+      card.dataset.ddWired = "1";
       card.addEventListener("dragstart", (e) => {
         draggedId = card.dataset.cardId;
         e.dataTransfer.setData("text/plain", draggedId);
@@ -3931,7 +4016,8 @@
         draggedId = null;
       });
     });
-    boardEl.querySelectorAll(".kanban-column").forEach((col) => {
+    boardEl.querySelectorAll(".kanban-column:not([data-dd-wired])").forEach((col) => {
+      col.dataset.ddWired = "1";
       col.addEventListener("dragover", (e) => {
         e.preventDefault();
         col.classList.add("drag-over");
@@ -4000,16 +4086,31 @@
       const card = data.card;
       const runs = data.runs || [];
 
+      // Fetch personas for the picker
+      let personas = [];
+      try {
+        const pData = await getJSON(`${API}/personas`);
+        personas = pData.personas || [];
+      } catch (_) {}
+
       const modal = document.createElement("div");
       modal.className = "modal-overlay";
+      modal.id = "card-detail-modal";
+
       let runsHtml = "";
       for (const run of runs) {
         runsHtml += `<div class="run-row">
           <span class="run-status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
-          <span class="run-agent">${escapeHtml(run.agent_id)}</span>
+          <span class="run-agent">${escapeHtml(run.agent_id || "auto")}</span>
           ${run.cost_usd ? `<span class="run-cost">$${Number(run.cost_usd).toFixed(2)}</span>` : ""}
         </div>`;
       }
+
+      let personaOptions = `<option value="">No persona</option>`;
+      for (const p of personas) {
+        personaOptions += `<option value="${escapeHtml(p.id)}">${escapeHtml(p.icon || "")} ${escapeHtml(p.name)}</option>`;
+      }
+
       modal.innerHTML = `
         <div class="modal">
           <div class="modal-header">
@@ -4024,7 +4125,11 @@
             </div>
             <p class="card-description">${escapeHtml(card.description || "No description.")}</p>
             <h4>Runs</h4>
-            <div class="runs-list">${runsHtml || "<p>No runs yet.</p>"}</div>
+            <div class="runs-list" id="modal-runs-list">${runsHtml || "<p>No runs yet.</p>"}</div>
+            <div class="dispatch-controls">
+              <label>Persona</label>
+              <select id="dispatch-persona" class="input">${personaOptions}</select>
+            </div>
             <div class="modal-actions">
               <button class="primary" id="card-dispatch">Dispatch agent</button>
               <button class="danger" id="card-delete">Delete</button>
@@ -4039,12 +4144,13 @@
       });
 
       document.getElementById("card-dispatch").addEventListener("click", async () => {
+        const personaId = document.getElementById("dispatch-persona").value;
         try {
           const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/dispatch`, {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json", ...csrfHeaders() },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ persona_id: personaId }),
           });
           if (!res.ok) throw new Error((await res.json()).error || "dispatch failed");
           showToast("Agent dispatched");

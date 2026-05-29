@@ -2165,3 +2165,36 @@ button.ghost.danger:hover {
   padding: 60px 20px;
   color: var(--text-muted);
 }
+
+
+/* ── Dispatch Controls ── */
+
+.dispatch-controls {
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dispatch-controls label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dispatch-controls select {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.dispatch-controls select:focus {
+  outline: none;
+  border-color: var(--accent);
+}

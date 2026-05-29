@@ -30,6 +30,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -576,6 +577,19 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 				writeJSONError(w, http.StatusBadRequest, "column_id required")
 				return
 			}
+			// Enforce WIP limit
+			col, err := s.Store.BoardColumns().Get(r.Context(), req.ColumnID)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid column")
+				return
+			}
+			if col.WIPLimit != nil && *col.WIPLimit > 0 {
+				cardsInCol, err := s.Store.BoardCards().List(r.Context(), datastore.BoardCardFilter{ColumnID: req.ColumnID})
+				if err == nil && len(cardsInCol) >= *col.WIPLimit {
+					writeJSONError(w, http.StatusConflict, fmt.Sprintf("WIP limit (%d) reached for column %q", *col.WIPLimit, col.Name))
+					return
+				}
+			}
 			if err := s.Store.BoardCards().Move(r.Context(), cardID, req.ColumnID); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, err.Error())
 				return
@@ -597,7 +611,7 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 				writeJSONError(w, http.StatusServiceUnavailable, "kanban dispatch service not configured")
 				return
 			}
-			run, err := s.Kanban.Dispatch(r.Context(), boardID, cardID, kanban.DispatchRequest{
+			run, err := s.Kanban.Dispatch(r.Context(), cardID, kanban.DispatchOpts{
 				AgentID:   req.AgentID,
 				PersonaID: req.PersonaID,
 				Model:     req.Model,
@@ -660,7 +674,7 @@ func (s *AuthService) handleRunDetail(w http.ResponseWriter, r *http.Request, su
 				return
 			}
 			if s.Kanban != nil {
-				if err := s.Kanban.Stop(r.Context(), runID); err != nil {
+				if err := s.Kanban.StopRun(r.Context(), runID); err != nil {
 					if isNotFound(err) {
 						writeJSONError(w, http.StatusNotFound, "run not found")
 						return

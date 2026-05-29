@@ -1,89 +1,92 @@
-// Package cost calculates per-model token pricing and roll-up costs for kanban runs.
+// Package cost tracks per-run, per-card, and per-session LLM costs.
 package cost
 
-import (
-	"sync"
-)
+import "sync"
 
-// PricingTable maps model identifiers to per-million-token costs in USD.
-type PricingTable struct {
-	mu     sync.RWMutex
-	prices map[string]Price // key: "provider/model" or just "model"
+// ModelPricing holds per-1M-token pricing in USD.
+type ModelPricing struct {
+	InputPer1M  float64
+	OutputPer1M float64
 }
 
-// Price is the cost per million tokens.
-type Price struct {
-	InputCostPerM  float64
-	OutputCostPerM float64
+// Default pricing table. Override via Config() for custom providers.
+var defaultPricing = map[string]ModelPricing{
+	// Anthropic
+	"claude-opus-4":     {InputPer1M: 15.00, OutputPer1M: 75.00},
+	"claude-sonnet-4":   {InputPer1M: 3.00, OutputPer1M: 15.00},
+	"claude-haiku-4":    {InputPer1M: 0.25, OutputPer1M: 1.25},
+	"claude-3-opus":     {InputPer1M: 15.00, OutputPer1M: 75.00},
+	"claude-3-sonnet":   {InputPer1M: 3.00, OutputPer1M: 15.00},
+	"claude-3-haiku":    {InputPer1M: 0.25, OutputPer1M: 1.25},
+	// OpenAI
+	"gpt-4o":            {InputPer1M: 2.50, OutputPer1M: 10.00},
+	"gpt-4o-mini":       {InputPer1M: 0.15, OutputPer1M: 0.60},
+	"gpt-4-turbo":       {InputPer1M: 10.00, OutputPer1M: 30.00},
+	"gpt-4":             {InputPer1M: 30.00, OutputPer1M: 60.00},
+	"gpt-3.5-turbo":     {InputPer1M: 0.50, OutputPer1M: 1.50},
+	// Google
+	"gemini-1.5-pro":    {InputPer1M: 3.50, OutputPer1M: 10.50},
+	"gemini-1.5-flash":  {InputPer1M: 0.35, OutputPer1M: 0.53},
+	// Local / free
+	"gemma-2-2b":        {InputPer1M: 0.00, OutputPer1M: 0.00},
+	"llama3":            {InputPer1M: 0.00, OutputPer1M: 0.00},
 }
 
-// NewPricingTable creates a table pre-seeded with known model prices.
-func NewPricingTable() *PricingTable {
-	t := &PricingTable{prices: make(map[string]Price)}
-	t.seedDefaults()
-	return t
+// Calculator holds pricing and computes costs.
+type Calculator struct {
+	mu      sync.RWMutex
+	pricing map[string]ModelPricing
 }
 
-// CostUSD returns the dollar cost for the given token counts.
-func (t *PricingTable) CostUSD(model string, tokensIn, tokensOut int64) float64 {
-	t.mu.RLock()
-	p, ok := t.prices[model]
-	if !ok {
-		// Try fallback without provider prefix.
-		for k, v := range t.prices {
-			if stripProvider(k) == model {
-				p = v
-				ok = true
-				break
-			}
-		}
+// NewCalculator creates a calculator with default pricing.
+func NewCalculator() *Calculator {
+	c := &Calculator{pricing: make(map[string]ModelPricing)}
+	for k, v := range defaultPricing {
+		c.pricing[k] = v
 	}
-	t.mu.RUnlock()
+	return c
+}
 
+// SetPricing overrides pricing for a model.
+func (c *Calculator) SetPricing(model string, p ModelPricing) {
+	c.mu.Lock()
+	c.pricing[model] = p
+	c.mu.Unlock()
+}
+
+// Calculate returns the cost in USD for a given model and token counts.
+func (c *Calculator) Calculate(model string, tokensIn, tokensOut int64) float64 {
+	c.mu.RLock()
+	p, ok := c.pricing[model]
+	c.mu.RUnlock()
 	if !ok {
-		return 0
+		// Try prefix matching for versioned models (e.g., "claude-sonnet-4.7" → "claude-sonnet-4")
+		p = c.matchPrefix(model)
 	}
-	inCost := float64(tokensIn) * p.InputCostPerM / 1e6
-	outCost := float64(tokensOut) * p.OutputCostPerM / 1e6
+	inCost := float64(tokensIn) * p.InputPer1M / 1e6
+	outCost := float64(tokensOut) * p.OutputPer1M / 1e6
 	return inCost + outCost
 }
 
-// SetPrice overrides or adds a price for a model.
-func (t *PricingTable) SetPrice(model string, inputCostPerM, outputCostPerM float64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.prices[model] = Price{InputCostPerM: inputCostPerM, OutputCostPerM: outputCostPerM}
-}
-
-func (t *PricingTable) seedDefaults() {
-	defaults := map[string]Price{
-		"gemini-2.5-flash":        {0.15, 0.60},
-		"gemini-2.5-pro":          {1.25, 10.00},
-		"gemini-2.0-flash":        {0.10, 0.40},
-		"gemini-1.5-flash":        {0.075, 0.30},
-		"gemini-1.5-pro":          {1.25, 5.00},
-		"gpt-4o":                  {2.50, 10.00},
-		"gpt-4o-mini":             {0.15, 0.60},
-		"gpt-4-turbo":             {10.00, 30.00},
-		"claude-3-5-sonnet":       {3.00, 15.00},
-		"claude-3-5-haiku":        {0.80, 4.00},
-		"claude-3-opus":           {15.00, 75.00},
-		"deepseek-chat":           {0.27, 1.10},
-		"deepseek-reasoner":       {0.55, 2.19},
-		"openai/gpt-4o":           {2.50, 10.00},
-		"anthropic/claude-3-5-sonnet": {3.00, 15.00},
-		"google/gemini-2.5-flash": {0.15, 0.60},
-	}
-	for k, v := range defaults {
-		t.prices[k] = v
-	}
-}
-
-func stripProvider(s string) string {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '/' {
-			return s[i+1:]
+func (c *Calculator) matchPrefix(model string) ModelPricing {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	// Try progressively shorter prefixes
+	for i := len(model); i > 0; i-- {
+		if p, ok := c.pricing[model[:i]]; ok {
+			return p
 		}
 	}
-	return s
+	return ModelPricing{} // free if unknown
+}
+
+// SupportedModels returns the list of models with known pricing.
+func (c *Calculator) SupportedModels() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]string, 0, len(c.pricing))
+	for k := range c.pricing {
+		out = append(out, k)
+	}
+	return out
 }
