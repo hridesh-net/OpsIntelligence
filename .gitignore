@@ -8,7 +8,6 @@
 !vendor/github.com/jupiterrider/ffi/assets/libffi/darwin_arm64/libffi.8.dylib
 !vendor/github.com/jupiterrider/ffi/assets/libffi/darwin_amd64/libffi.8.dylib
 !vendor/github.com/jupiterrider/ffi/assets/libffi/windows_amd64/libffi-8.dll
-bin/
 /opsintelligence
 /opsintel_dev
 opsintel_*
@@ -70,10 +69,16 @@ yarn-error.log*
 # Legacy / Reference
 sqlite3.h
 sqlite3ext.h
-dist/
 
 # MkDocs output
 /site/
 .venv/
 # Graphify knowledge graph output
 graphify-out/
+
+# Rust / Cargo
+/target/
+Cargo.lock
+
+# Staged Rust TUI binaries (built per-platform via `make tui`)
+internal/tuibridge/assets/opsintel-tui-*
