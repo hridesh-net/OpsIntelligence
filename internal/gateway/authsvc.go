@@ -85,6 +85,14 @@ type AuthService struct {
 	// 503 Service Unavailable.
 	KanbanGitHub KanbanGitHubSync
 
+	// AttachmentRoot is the directory where uploaded kanban-card
+	// attachments are stored. Subdirectory per card: <root>/<card_id>/...
+	// When empty, persistAttachment falls back to a TempDir path.
+	AttachmentRoot string
+
+	// KanbanSentry pulls Sentry issues into a board. Optional.
+	KanbanSentry KanbanSentryImporter
+
 	Log *zap.Logger
 }
 
@@ -641,5 +649,6 @@ func (f *sessionStoreFacade) CardRunEvents() datastore.CardRunEventRepo         
 func (f *sessionStoreFacade) PendingDecisions() datastore.PendingDecisionRepo    { return f.store.PendingDecisions() }
 func (f *sessionStoreFacade) BoardAgents() datastore.BoardAgentRepo              { return f.store.BoardAgents() }
 func (f *sessionStoreFacade) Personas() datastore.PersonaRepo                    { return f.store.Personas() }
+func (f *sessionStoreFacade) CardAttachments() datastore.CardAttachmentRepo      { return f.store.CardAttachments() }
 
 var _ datastore.Store = (*sessionStoreFacade)(nil)

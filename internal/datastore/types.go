@@ -318,6 +318,21 @@ type BoardAgent struct {
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
+// CardAttachment is one file attached to a kanban card. The file bytes
+// live on disk under <state_dir>/workspace/kanban/attachments/<card_id>/;
+// this row carries the metadata so the UI and API can list / download /
+// delete without scanning the filesystem.
+type CardAttachment struct {
+	ID        string    `json:"id"`
+	CardID    string    `json:"card_id"`
+	Filename  string    `json:"filename"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	Path      string    `json:"path"`
+	CreatedBy string    `json:"created_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Persona is a named system prompt lens.
 type Persona struct {
 	ID           string    `json:"id"`

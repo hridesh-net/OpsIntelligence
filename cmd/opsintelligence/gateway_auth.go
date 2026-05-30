@@ -21,6 +21,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/githubmode"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/sentry"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
@@ -274,6 +275,10 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 	calc := cost.NewCalculator()
 	svc := kanban.NewDispatchService(store, wtMgr, drivers, calc)
 	srv.AuthService.Kanban = svc
+	// Card attachments live next to the worktrees so they share the same
+	// state-dir-scoped lifecycle (cleaned up when the board is deleted /
+	// state-dir purged).
+	srv.AuthService.AttachmentRoot = filepath.Join(cfg.StateDir, "workspace", "kanban", "attachments")
 
 	// Autopilot — feature-dev / qa loop runner. Bound to the same dispatch
 	// service so child runs flow through the standard pipeline.
@@ -296,6 +301,18 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 		log.Info("kanban: github workspace mode wired", zap.String("base_url", ghBase))
 	} else {
 		log.Info("kanban: github workspace mode not configured (no token); skipping")
+	}
+
+	// Sentry importer — pulls Sentry issues into board cards on demand.
+	sentryToken := strings.TrimSpace(cfg.DevOps.Sentry.Token)
+	if sentryToken == "" {
+		sentryToken = os.Getenv("OPSINTELLIGENCE_SENTRY_TOKEN")
+	}
+	if sentryToken != "" {
+		sentryBase := cfg.DevOps.Sentry.BaseURL
+		sentryClient := sentry.NewClient(sentryBase, sentryToken)
+		srv.AuthService.KanbanSentry = sentry.New(store, sentryClient)
+		log.Info("kanban: sentry importer wired")
 	}
 
 	log.Info("kanban dispatch service wired",

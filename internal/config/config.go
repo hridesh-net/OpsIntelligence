@@ -389,10 +389,22 @@ type DevOpsConfig struct {
 	GitLab   GitLabConfig   `yaml:"gitlab"`
 	Jenkins  JenkinsConfig  `yaml:"jenkins"`
 	Sonar    SonarConfig    `yaml:"sonar"`
+	Sentry   SentryConfig   `yaml:"sentry"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
 	// Cloud configures read-only AWS / Azure / GCP integrations for inventory,
 	// cost summaries, and audit-style activity (see doc/cloud-devops-iam.md).
 	Cloud CloudConfig `yaml:"cloud"`
+}
+
+// SentryConfig configures the kanban Sentry importer. Optional everywhere:
+// only used when an operator explicitly triggers /api/v1/boards/{id}/sentry/import.
+type SentryConfig struct {
+	// Token is a Sentry Auth Token (Project → Settings → Auth Tokens).
+	// Scopes needed: event:read, project:read.
+	Token string `yaml:"token"`
+	// BaseURL is the Sentry instance root. Defaults to https://sentry.io
+	// for sentry.io; set this for self-hosted Sentry instances.
+	BaseURL string `yaml:"base_url"`
 }
 
 // CloudConfig groups optional multi-cloud read integrations used by devops.cloud.* tools.

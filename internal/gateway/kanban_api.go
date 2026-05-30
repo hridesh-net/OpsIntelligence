@@ -31,7 +31,10 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -132,18 +135,26 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 	case path == "boards" || path == "boards/":
 		s.handleBoards(w, r)
 	case strings.HasPrefix(path, "boards/"):
-		// /boards/{id}/github/sync is special: triggers a pull from GitHub.
-		// Routed here before the generic detail handler so it isn't
-		// shadowed by the {sub} dispatch table.
+		// /boards/{id}/github/sync and /boards/{id}/sentry/import are
+		// special endpoints that trigger an external pull. Route them
+		// here before the generic detail handler so the {sub} dispatch
+		// table doesn't shadow them.
 		rest := strings.TrimPrefix(path, "boards/")
 		if i := strings.Index(rest, "/github/sync"); i > 0 {
 			boardID := rest[:i]
 			s.handleGitHubSync(w, r, boardID)
 			return
 		}
+		if i := strings.Index(rest, "/sentry/import"); i > 0 {
+			boardID := rest[:i]
+			s.handleSentryImport(w, r, boardID)
+			return
+		}
 		s.handleBoardDetail(w, r, rest)
 	case strings.HasPrefix(path, "runs/"):
 		s.handleRunDetail(w, r, strings.TrimPrefix(path, "runs/"))
+	case strings.HasPrefix(path, "attachments/"):
+		s.handleAttachmentDetail(w, r, strings.TrimPrefix(path, "attachments/"))
 	case path == "personas" || path == "personas/":
 		s.handlePersonas(w, r)
 	case path == "autopilot" || path == "autopilot/":
@@ -170,6 +181,44 @@ func (s *AuthService) handleGitHubSync(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 	added, updated, err := s.KanbanGitHub.PullIssues(r.Context(), boardID)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"added":   added,
+		"updated": updated,
+	})
+}
+
+func (s *AuthService) handleSentryImport(w http.ResponseWriter, r *http.Request, boardID string) {
+	p := auth.PrincipalFrom(r.Context())
+	if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.KanbanSentry == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "sentry importer not configured")
+		return
+	}
+	var req struct {
+		Org     string `json:"org"`
+		Project string `json:"project"`
+		Query   string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Org == "" || req.Project == "" {
+		writeJSONError(w, http.StatusBadRequest, "org and project are required")
+		return
+	}
+	added, updated, err := s.KanbanSentry.Import(r.Context(), boardID, req.Org, req.Project, req.Query)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, err.Error())
 		return
@@ -702,6 +751,10 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 			writeJSON(w, http.StatusAccepted, run)
 			return
 		}
+		if sub == "attachments" || sub == "attachments/" {
+			s.handleCardAttachments(w, r, cardID)
+			return
+		}
 		writeJSONError(w, http.StatusNotFound, "not found")
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1001,6 +1054,147 @@ func (s *AuthService) handleAutopilotList(w http.ResponseWriter, r *http.Request
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// ── Attachments ───────────────────────────────────────────────────────────
+//
+//	GET    /api/v1/boards/{bid}/cards/{cid}/attachments
+//	POST   /api/v1/boards/{bid}/cards/{cid}/attachments   (multipart, field "file")
+//	GET    /api/v1/attachments/{id}                        (download bytes)
+//	DELETE /api/v1/attachments/{id}                        (remove row + file)
+//
+// Files live under <attachmentRoot>/<card_id>/<id>-<filename>. Set
+// AuthService.AttachmentRoot at wire time (defaults to a temp dir).
+
+func (s *AuthService) handleCardAttachments(w http.ResponseWriter, r *http.Request, cardID string) {
+	p := auth.PrincipalFrom(r.Context())
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		list, err := s.Store.CardAttachments().ListByCard(r.Context(), cardID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	case http.MethodPost:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermCardsEdit); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		// 32 MB cap — kanban attachments are screenshots / logs / small
+		// diffs, not source trees. Crank the limit later if operators ask.
+		const maxUpload = 32 << 20
+		if err := r.ParseMultipartForm(maxUpload); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "form field 'file' missing")
+			return
+		}
+		defer file.Close()
+		att, err := s.persistAttachment(cardID, header.Filename, header.Header.Get("Content-Type"), file)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if p != nil {
+			att.CreatedBy = p.Username
+		}
+		if err := s.Store.CardAttachments().Create(r.Context(), att); err != nil {
+			_ = os.Remove(att.Path)
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, att)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *AuthService) handleAttachmentDetail(w http.ResponseWriter, r *http.Request, id string) {
+	p := auth.PrincipalFrom(r.Context())
+	id = strings.TrimSuffix(id, "/")
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		att, err := s.Store.CardAttachments().Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "attachment not found")
+			return
+		}
+		f, err := os.Open(att.Path)
+		if err != nil {
+			writeJSONError(w, http.StatusGone, "attachment file missing on disk")
+			return
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", att.MimeType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+att.Filename+`"`)
+		w.Header().Set("Content-Length", strconv.FormatInt(att.SizeBytes, 10))
+		_, _ = io.Copy(w, f)
+	case http.MethodDelete:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermCardsDelete); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		att, err := s.Store.CardAttachments().Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "attachment not found")
+			return
+		}
+		if err := s.Store.CardAttachments().Delete(r.Context(), id); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_ = os.Remove(att.Path)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *AuthService) persistAttachment(cardID, filename, mime string, body io.Reader) (*datastore.CardAttachment, error) {
+	root := s.AttachmentRoot
+	if root == "" {
+		root = filepath.Join(os.TempDir(), "opsintelligence-kanban-attachments")
+	}
+	dir := filepath.Join(root, cardID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("attachment dir: %w", err)
+	}
+	id := uuid.NewString()
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	safe := strings.ReplaceAll(filename, string(os.PathSeparator), "_")
+	full := filepath.Join(dir, id+"-"+safe)
+	f, err := os.Create(full)
+	if err != nil {
+		return nil, fmt.Errorf("create attachment file: %w", err)
+	}
+	defer f.Close()
+	n, err := io.Copy(f, body)
+	if err != nil {
+		_ = os.Remove(full)
+		return nil, fmt.Errorf("write attachment: %w", err)
+	}
+	return &datastore.CardAttachment{
+		ID:        id,
+		CardID:    cardID,
+		Filename:  safe,
+		MimeType:  mime,
+		SizeBytes: n,
+		Path:      full,
+	}, nil
 }
 
 func (s *AuthService) handleAutopilotDetail(w http.ResponseWriter, r *http.Request, path string) {

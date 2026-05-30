@@ -34,3 +34,8 @@ type KanbanGitHubSync interface {
 	PushCardMoved(ctx context.Context, cardID string, newColumnID string) error
 	PostRunComment(ctx context.Context, run *datastore.CardRun) error
 }
+
+// KanbanSentryImporter pulls Sentry issues into a board's first column.
+type KanbanSentryImporter interface {
+	Import(ctx context.Context, boardID, org, project, query string) (added, updated int, err error)
+}

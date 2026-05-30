@@ -6,6 +6,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.44] — 2026-05-30
+
+### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 3)
+
+**File attachments on cards** — kanbots.dev's "drop a file onto a card" affordance:
+
+- New `card_attachments` table (migration `0004_attachments.sql` for both sqlite + postgres).
+- `datastore.CardAttachmentRepo` + sqlstore implementation.
+- HTTP API:
+  - `GET /api/v1/boards/{bid}/cards/{cid}/attachments` — list
+  - `POST /api/v1/boards/{bid}/cards/{cid}/attachments` — multipart upload (field `file`, 32 MB cap)
+  - `GET /api/v1/attachments/{id}` — download with proper `Content-Disposition`
+  - `DELETE /api/v1/attachments/{id}` — remove row + on-disk file
+- Files stored under `<state_dir>/workspace/kanban/attachments/<card_id>/<id>-<filename>`.
+- CLI: `opsintelligence kanban attachments list|upload`.
+
+**Sentry → kanban importer** — kanbots.dev's "Auto-pull error groups onto board; one click dispatches to agent":
+
+- New `internal/kanban/sentry/import.go` adapter with `Importer.Import(boardID, org, project, query)`.
+- Fetches Sentry issues via the REST API and upserts them as cards in the board's first column.
+- Idempotent: cards are matched by `metadata.sentry_id`, so re-running refreshes title + description without duplicating.
+- Card priority is derived from Sentry level (fatal/error → p1, warning → p2, info → p3); `card_type` set to `bug`.
+- Card description embeds the culprit, the metadata value, and a permalink back to Sentry.
+- HTTP endpoint: `POST /api/v1/boards/{id}/sentry/import` (`PermBoardsManage`).
+- CLI: `opsintelligence kanban sentry-import --board <id> --org <slug> --project <slug> [--query is:unresolved]`.
+- Wired automatically when a token is configured (`devops.sentry.token` in opsintelligence.yaml or `OPSINTELLIGENCE_SENTRY_TOKEN`).
+
+**Config additions:**
+
+- `devops.sentry.token` — Sentry Auth Token (scopes `event:read`, `project:read`).
+- `devops.sentry.base_url` — defaults to `https://sentry.io`; override for self-hosted instances.
+
+### Changed
+
+- `gateway.AuthService` grew `AttachmentRoot string` and `KanbanSentry KanbanSentryImporter`.
+- `datastore.Store` grew `CardAttachments() CardAttachmentRepo`.
+- Crate version bumped to `0.2.17`.
+
+### Still missing vs kanbots.dev (next wave)
+
+- Branch preview public URL (tunneling)
+- UI: drag-to-move, decision modal, cost dashboard
+
 ## [1.0.43] — 2026-05-30
 
 ### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 2)

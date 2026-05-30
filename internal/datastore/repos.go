@@ -55,6 +55,7 @@ type Store interface {
 	PendingDecisions() PendingDecisionRepo
 	BoardAgents() BoardAgentRepo
 	Personas() PersonaRepo
+	CardAttachments() CardAttachmentRepo
 }
 
 // BoardRepo manages Board rows.
@@ -127,6 +128,14 @@ type PersonaRepo interface {
 	Update(ctx context.Context, p *Persona) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, f PersonaFilter) ([]Persona, error)
+}
+
+// CardAttachmentRepo manages CardAttachment rows.
+type CardAttachmentRepo interface {
+	Create(ctx context.Context, a *CardAttachment) error
+	Get(ctx context.Context, id string) (*CardAttachment, error)
+	Delete(ctx context.Context, id string) error
+	ListByCard(ctx context.Context, cardID string) ([]CardAttachment, error)
 }
 
 // UserRepo manages User rows.

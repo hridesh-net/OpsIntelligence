@@ -26,10 +26,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,6 +66,8 @@ Common flows:
 		kanbanAutopilotCmd(gf),
 		kanbanAgentsCmd(gf),
 		kanbanGitHubSyncCmd(gf),
+		kanbanSentryImportCmd(gf),
+		kanbanAttachmentsCmd(gf),
 	)
 	return root
 }
@@ -461,6 +465,95 @@ OPSINTELLIGENCE_GITHUB_TOKEN).`,
 	return cmd
 }
 
+// ── sentry import ──────────────────────────────────────────────────────────
+
+func kanbanSentryImportCmd(gf *globalFlags) *cobra.Command {
+	var boardID, org, project, query string
+	cmd := &cobra.Command{
+		Use:   "sentry-import",
+		Short: "Pull Sentry issues into a board",
+		Long: `Fetch Sentry issues for an org/project and upsert them as cards in the
+board's first column ("Inbox"). Re-running is idempotent — cards matched
+by metadata.sentry_id get their title and description refreshed.
+
+Requires the daemon to be running and a Sentry token configured under
+devops.sentry.token in opsintelligence.yaml (or OPSINTELLIGENCE_SENTRY_TOKEN).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || org == "" || project == "" {
+				return fmt.Errorf("--board, --org, --project are all required")
+			}
+			body := map[string]any{"org": org, "project": project}
+			if query != "" {
+				body["query"] = query
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/sentry/import", url.PathEscape(boardID))
+			out, err := kanbanPOST(gf, u, body)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	cmd.Flags().StringVar(&org, "org", "", "Sentry org slug (required)")
+	cmd.Flags().StringVar(&project, "project", "", "Sentry project slug (required)")
+	cmd.Flags().StringVar(&query, "query", "is:unresolved", "Sentry search expression")
+	return cmd
+}
+
+// ── attachments ────────────────────────────────────────────────────────────
+
+func kanbanAttachmentsCmd(gf *globalFlags) *cobra.Command {
+	root := &cobra.Command{Use: "attachments", Short: "Upload and list kanban-card attachments"}
+
+	var boardID, cardID string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List attachments on a card",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || cardID == "" {
+				return fmt.Errorf("--board and --card are required")
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/cards/%s/attachments",
+				url.PathEscape(boardID), url.PathEscape(cardID))
+			out, err := kanbanGET(gf, u)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	list.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	list.Flags().StringVar(&cardID, "card", "", "Card ID (required)")
+	root.AddCommand(list)
+
+	var filePath string
+	upload := &cobra.Command{
+		Use:   "upload",
+		Short: "Upload a file to a card",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || cardID == "" || filePath == "" {
+				return fmt.Errorf("--board, --card, --file are all required")
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/cards/%s/attachments",
+				url.PathEscape(boardID), url.PathEscape(cardID))
+			out, err := kanbanUpload(gf, u, filePath)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	upload.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	upload.Flags().StringVar(&cardID, "card", "", "Card ID (required)")
+	upload.Flags().StringVar(&filePath, "file", "", "Path to file to upload (required)")
+	root.AddCommand(upload)
+	return root
+}
+
 // ── HTTP helpers ───────────────────────────────────────────────────────────
 
 func kanbanGET(gf *globalFlags, path string) (string, error) {
@@ -510,6 +603,56 @@ func kanbanRequest(gf *globalFlags, method, p string, body any) (string, error) 
 	if json.Unmarshal(out, &pretty) == nil {
 		b, _ := json.MarshalIndent(pretty, "", "  ")
 		return string(b), nil
+	}
+	return string(out), nil
+}
+
+// kanbanUpload POSTs a multipart form with a single "file" field. Used for
+// attachment uploads; the gateway responds with the persisted attachment
+// row (or {card, github_error} when github-mode mirroring partial-fails).
+func kanbanUpload(gf *globalFlags, p, filePath string) (string, error) {
+	base, token, err := kanbanGatewayBase(gf)
+	if err != nil {
+		return "", err
+	}
+	full := strings.TrimSuffix(base, "/") + path.Clean("/"+p)
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	part, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return "", err
+	}
+	if err := mw.Close(); err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, full, body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("kanban upload: %w", err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("kanban upload: gateway returned %s: %s", resp.Status, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }
