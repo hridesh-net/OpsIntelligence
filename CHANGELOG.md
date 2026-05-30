@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.40] — 2026-05-30
+
+### Fixed — Repos TUI showed "No repos configured" despite registry having entries
+
+Same root cause as v1.0.38's Status fix, but on the repos snapshot path: Go's `scanJSON.{CVEs,Bottlenecks,Suggestions}` and `findingJSON.CVEIDs` are slices without `omitempty`, so when a repo's scan has no findings (the common case) Go emitted `"cves":null` / `"bottlenecks":null` / `"suggestions":null` / `"cve_ids":null`. Rust's matching `Vec<Finding>` / `Vec<String>` with bare `#[serde(default)]` rejected null, the nested `ScanResultView` deserialization failed, the parent `ReposSnapshot` deserialization failed, the snapshot was silently dropped, and the TUI fell back to the empty-default state — exactly the "No repos configured" symptom on a registry that `opsintelligence repos list` shows 3 entries for.
+
+Comprehensive sweep on the Rust side: every `Vec<T>` field that comes from a Go-serialized payload now uses `deserialize_with = "null_as_empty_vec"`. 29 fields updated across `WizardPlan`, `WizardForm`, `WizardDone`, `WizardField{Select,MultiSelect}`, `ReposSnapshot`, `RepoMemoryView`, `ScanResultView`, `Finding`, `CallGraphView`, `DashboardSnapshot`, `DashboardStatus`, etc.
+
+### Changed
+
+- Crate version bumped to `0.2.13`.
+
 ## [1.0.39] — 2026-05-30
 
 ### Added

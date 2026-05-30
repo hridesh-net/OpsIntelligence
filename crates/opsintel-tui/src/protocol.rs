@@ -127,7 +127,7 @@ pub struct WizardState {
 /// index when each `wizard.step` arrives.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WizardPlan {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub steps: Vec<WizardPlanItem>,
 }
 
@@ -166,9 +166,9 @@ pub struct WizardDone {
     pub headline: String,
     #[serde(default)]
     pub subline: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub summary: Vec<WizardDonePair>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub next: Vec<WizardDonePair>,
     #[serde(default)]
     pub message: String,
@@ -191,6 +191,7 @@ pub struct WizardForm {
     pub subtitle: String,
     pub step_num: u32,
     pub step_total: u32,
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub fields: Vec<WizardField>,
 }
 
@@ -289,7 +290,7 @@ pub struct DoctorState {}
 pub struct DoctorSnapshot {
     #[serde(default)]
     pub running: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub checks: Vec<DoctorCheckView>,
 }
 
@@ -313,7 +314,7 @@ pub struct MonitorState {
 pub struct MonitorSnapshot {
     #[serde(default)]
     pub status: DashboardStatus,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub events: Vec<MonitorEvent>,
 }
 
@@ -404,13 +405,13 @@ pub struct RepoMemoryView {
     pub architecture: String,
     #[serde(default)]
     pub primary_lang: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub languages: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub key_files: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub conventions: Vec<NameValue>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub dependencies: Vec<NameValue>,
     #[serde(default)]
     pub test_patterns: String,
@@ -418,7 +419,7 @@ pub struct RepoMemoryView {
     pub ci_summary: String,
     #[serde(default)]
     pub review_hints: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub common_issues: Vec<String>,
     #[serde(default)]
     pub user_context: String,
@@ -439,11 +440,11 @@ pub struct ScanResultView {
     pub risk_level: String,
     #[serde(default)]
     pub summary: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub cves: Vec<Finding>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub bottlenecks: Vec<Finding>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub suggestions: Vec<Finding>,
 }
 
@@ -461,7 +462,7 @@ pub struct Finding {
     pub description: String,
     #[serde(default)]
     pub fix: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub cve_ids: Vec<String>,
 }
 
@@ -485,11 +486,11 @@ pub struct CallGraphView {
     #[serde(default)]
     pub selected_idx: usize,
     /// Sample of nodes (capped server-side at ~200) for left-pane navigation.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub nodes: Vec<CallNodeView>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub callees: Vec<CallNodeView>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub callers: Vec<CallNodeView>,
 }
 
@@ -613,7 +614,7 @@ pub struct KeyValue {
     /// Optional select choices. When non-empty the editor presents these as
     /// a vertical list instead of a free-form text input. Useful for booleans
     /// and enumerations like `routing.default` / `planning.mode`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub choices: Vec<String>,
     /// Optional short hint shown under the editor (e.g. "integer ≥ 1").
     #[serde(default)]
