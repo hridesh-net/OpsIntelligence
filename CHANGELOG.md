@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.36] — 2026-05-29
+
+### Added — Realtime progress streaming for out-of-process Repo Intel TUI
+
+- **`opsintelligence repos` now sees daemon progress in real time** even when running as a separate CLI process from the daemon. A 1s poller in the bridge re-reads `<memory_dir>/progress.json` (which the daemon's `Manager.writeProgressFile` already writes on every index/scan event) and merges new events into the snapshot. The Repos tab progress bars and percentages update live without needing the bridge to share an in-process `Manager`.
+
+### Changed
+
+- Crate version bumped to `0.2.9`.
+
 ## [1.0.35] — 2026-05-29
 
 ### Fixed

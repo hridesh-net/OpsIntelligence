@@ -4,11 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/repointel"
+)
+
+// Aliases so the file-poller code below stays terse without `os.` everywhere.
+var (
+	osStat     = os.Stat
+	osReadFile = os.ReadFile
 )
 
 // ReposOptions configures RunReposTUI.
@@ -124,8 +131,16 @@ func RunReposTUI(ctx context.Context, opts ReposOptions) error {
 	send("repos.snapshot", st.snapshot())
 
 	// Subscribe to Manager.Progress (non-blocking; events are merged into state).
+	// In-process: live channel events arrive instantly. Out-of-process (CLI
+	// invocation): the daemon writes progress.json which the file poller
+	// (below) picks up on a 1s tick.
 	if opts.Manager != nil {
 		go st.subscribeProgress(ctx, opts.Manager, requestRefresh)
+	}
+	// File-backed progress poller for out-of-process TUI runs. Cheap (just an
+	// os.ReadFile every second); only mutates state when the JSON has changed.
+	if opts.MemoryDir != "" {
+		go st.pollProgressFile(ctx, opts.MemoryDir, requestRefresh)
 	}
 
 	// Periodic registry reload (every 3s).
@@ -263,6 +278,49 @@ func (s *reposState) saveMemoryEdit(arch, hints, userCtx string) error {
 	}
 	s.memory = &mem
 	return nil
+}
+
+// pollProgressFile re-reads <MemoryDir>/progress.json every second and merges
+// any new events into reposState.progress. Used when the CLI TUI runs in a
+// separate process from the daemon and therefore can't subscribe to the
+// in-process Manager.Progress channel directly.
+func (s *reposState) pollProgressFile(ctx context.Context, memDir string, refresh func()) {
+	path := filepath.Join(memDir, "progress.json")
+	var lastSize int64 = -1
+	var lastMod time.Time
+	tk := time.NewTicker(time.Second)
+	defer tk.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tk.C:
+		}
+		fi, err := osStat(path)
+		if err != nil {
+			continue
+		}
+		// Skip when file hasn't changed (cheap noop).
+		if fi.Size() == lastSize && fi.ModTime().Equal(lastMod) {
+			continue
+		}
+		raw, err := osReadFile(path)
+		if err != nil {
+			continue
+		}
+		state := map[string]repointel.ProgressEvent{}
+		if err := json.Unmarshal(raw, &state); err != nil {
+			continue
+		}
+		s.mu.Lock()
+		for id, ev := range state {
+			s.progress[id] = ev
+		}
+		s.mu.Unlock()
+		lastSize = fi.Size()
+		lastMod = fi.ModTime()
+		refresh()
+	}
 }
 
 func (s *reposState) subscribeProgress(ctx context.Context, mgr *repointel.Manager, refresh func()) {
