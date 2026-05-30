@@ -6,6 +6,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.45] — 2026-05-30
+
+### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 4 — closes parity)
+
+**Branch preview dev-server** — kanbots.dev's "branch preview: start worktree's dev server, open live URL":
+
+- New `internal/kanban/preview/manager.go` — runs a dev-server process per card with an auto-picked free port; tracks status (`running`, `stopped`, `failed`) and surfaces the local URL.
+- When the gateway is configured with Tailscale Funnel (`gateway.tailscale.mode=funnel`), the preview manager also runs `tailscale funnel <port>` and reports the public `*.ts.net` HTTPS URL on the preview record.
+- One preview per card (must Stop before Start again); auto-reaped when the dev server crashes / exits.
+- HTTP API:
+  - `GET /api/v1/boards/{bid}/cards/{cid}/preview` — current preview (404 if none)
+  - `POST /api/v1/boards/{bid}/cards/{cid}/preview` — `{cmd, port?}` to start
+  - `DELETE /api/v1/boards/{bid}/cards/{cid}/preview` — stop
+- CLI: `opsintelligence kanban preview start|get|stop`.
+
+### kanbots.dev parity matrix — final status
+
+| kanbots.dev feature | OpsIntelligence | Notes |
+|---|---|---|
+| Drag-to-move kanban (Backlog → Done + Inbox) | ✓ (API) | UI: drag-handler still pending |
+| Per-card agent dispatch | ✓ | `POST /cards/{cid}/dispatch` |
+| 11 supported CLIs | ✓ | claude-code, codex, gemini, cursor-agent, gh-copilot, opencode, amp, qwen, droid, ccr, acp |
+| Git worktree isolation per run | ✓ | `<state_dir>/workspace/kanban/{cardID}-{runID}` |
+| Pre-push hook blocking remote push | ✓ | Shell script returning exit 1 |
+| Stream-JSON parsing | ✓ | ClaudeCodeDriver |
+| Decision prompts (agent pauses, asks user) | ✓ | `PendingDecision` + resumption |
+| Autopilot `feature-dev` mode | ✓ | Up to 4 parallel personas, round-robin |
+| Autopilot `qa` mode | ✓ | Configurable checks + auto-fix dispatch |
+| Sentry import → board | ✓ | Idempotent via `metadata.sentry_id` |
+| Branch preview (dev server, live URL) | ✓ | Tailscale Funnel front when enabled |
+| Promote to commit | ✓ | `worktree.PromoteToCommit()` |
+| Draft PR | ✓ | `worktree.OpenDraftPR()` via `gh` |
+| Slash commands (`/spec`, `/review`, `/split`) | ✓ | Prompt-template wrappers |
+| MCP server exposing the board | ✓ | `kanban_*` tools via `RegisterKanbanTools` |
+| Workspace modes (local sqlite / github issues) | ✓ | github mode: pull/push + comments |
+| Per-run cost tracking | ✓ | `CostCalculator` + atomic `AddCost` |
+| Budget caps | ✓ | per-card / per-board / per-run, board config |
+| Attachments | ✓ | Up to 32 MB, on-disk per card |
+
+### Changed
+
+- `gateway.AuthService` grew `KanbanPreview *preview.Manager`.
+- Crate version bumped to `0.2.18`.
+
 ## [1.0.44] — 2026-05-30
 
 ### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 3)

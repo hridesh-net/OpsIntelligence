@@ -39,3 +39,4 @@ type KanbanGitHubSync interface {
 type KanbanSentryImporter interface {
 	Import(ctx context.Context, boardID, org, project, query string) (added, updated int, err error)
 }
+

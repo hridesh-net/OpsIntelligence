@@ -68,6 +68,7 @@ Common flows:
 		kanbanGitHubSyncCmd(gf),
 		kanbanSentryImportCmd(gf),
 		kanbanAttachmentsCmd(gf),
+		kanbanPreviewCmd(gf),
 	)
 	return root
 }
@@ -463,6 +464,84 @@ OPSINTELLIGENCE_GITHUB_TOKEN).`,
 	}
 	cmd.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
 	return cmd
+}
+
+// ── branch preview ─────────────────────────────────────────────────────────
+
+func kanbanPreviewCmd(gf *globalFlags) *cobra.Command {
+	root := &cobra.Command{Use: "preview", Short: "Start, inspect, and stop card branch previews"}
+
+	var boardID, cardID, cmdStr string
+	var port int
+	start := &cobra.Command{
+		Use:   "start",
+		Short: "Start a dev-server preview on a card's worktree",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || cardID == "" || cmdStr == "" {
+				return fmt.Errorf("--board, --card, --cmd are all required")
+			}
+			body := map[string]any{"cmd": cmdStr}
+			if port > 0 {
+				body["port"] = port
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/cards/%s/preview",
+				url.PathEscape(boardID), url.PathEscape(cardID))
+			out, err := kanbanPOST(gf, u, body)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	start.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	start.Flags().StringVar(&cardID, "card", "", "Card ID (required)")
+	start.Flags().StringVar(&cmdStr, "cmd", "", "Dev-server command to run in the worktree (required)")
+	start.Flags().IntVar(&port, "port", 0, "Port to bind on (0 = pick a free port)")
+	root.AddCommand(start)
+
+	get := &cobra.Command{
+		Use:   "get",
+		Short: "Show the running preview for a card",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || cardID == "" {
+				return fmt.Errorf("--board and --card are required")
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/cards/%s/preview",
+				url.PathEscape(boardID), url.PathEscape(cardID))
+			out, err := kanbanGET(gf, u)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	get.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	get.Flags().StringVar(&cardID, "card", "", "Card ID (required)")
+	root.AddCommand(get)
+
+	stop := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the running preview for a card",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" || cardID == "" {
+				return fmt.Errorf("--board and --card are required")
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/cards/%s/preview",
+				url.PathEscape(boardID), url.PathEscape(cardID))
+			out, err := kanbanRequest(gf, http.MethodDelete, u, nil)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	stop.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	stop.Flags().StringVar(&cardID, "card", "", "Card ID (required)")
+	root.AddCommand(stop)
+	return root
 }
 
 // ── sentry import ──────────────────────────────────────────────────────────

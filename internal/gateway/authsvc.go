@@ -16,6 +16,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
 )
@@ -92,6 +93,11 @@ type AuthService struct {
 
 	// KanbanSentry pulls Sentry issues into a board. Optional.
 	KanbanSentry KanbanSentryImporter
+
+	// KanbanPreview manages per-card dev-server previews. Optional;
+	// nil makes the /boards/{bid}/cards/{cid}/preview endpoints return
+	// 503 Service Unavailable.
+	KanbanPreview *preview.Manager
 
 	Log *zap.Logger
 }

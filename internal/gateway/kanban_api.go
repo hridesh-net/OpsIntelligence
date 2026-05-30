@@ -43,6 +43,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/kanban"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 )
 
@@ -755,6 +756,10 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 			s.handleCardAttachments(w, r, cardID)
 			return
 		}
+		if sub == "preview" || sub == "preview/" {
+			s.handleCardPreview(w, r, cardID)
+			return
+		}
 		writeJSONError(w, http.StatusNotFound, "not found")
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1157,6 +1162,87 @@ func (s *AuthService) handleAttachmentDetail(w http.ResponseWriter, r *http.Requ
 		}
 		_ = os.Remove(att.Path)
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// ── Branch preview ────────────────────────────────────────────────────────
+//
+//	GET    /api/v1/boards/{bid}/cards/{cid}/preview
+//	POST   /api/v1/boards/{bid}/cards/{cid}/preview   {cmd, port}
+//	DELETE /api/v1/boards/{bid}/cards/{cid}/preview
+//
+// The preview is bound to the card's current worktree (the run's branch);
+// callers should dispatch a run first so a worktree exists. We don't
+// auto-discover the dev-server command — the caller passes it explicitly
+// ("npm run dev", "make dev-server", etc).
+
+func (s *AuthService) handleCardPreview(w http.ResponseWriter, r *http.Request, cardID string) {
+	p := auth.PrincipalFrom(r.Context())
+	if s.KanbanPreview == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "preview manager not configured")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		pv := s.KanbanPreview.GetByCard(cardID)
+		if pv == nil {
+			writeJSONError(w, http.StatusNotFound, "no preview running for this card")
+			return
+		}
+		writeJSON(w, http.StatusOK, pv)
+	case http.MethodPost:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsDispatch); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		var req struct {
+			Cmd  string `json:"cmd"`
+			Port int    `json:"port"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		card, err := s.Store.BoardCards().Get(r.Context(), cardID)
+		if err != nil || card == nil {
+			writeJSONError(w, http.StatusNotFound, "card not found")
+			return
+		}
+		if card.WorktreePath == "" {
+			writeJSONError(w, http.StatusConflict, "card has no active worktree (dispatch a run first)")
+			return
+		}
+		pv, err := s.KanbanPreview.Start(r.Context(), cardID, preview.StartOpts{
+			WorktreePath: card.WorktreePath,
+			Cmd:          req.Cmd,
+			Port:         req.Port,
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, pv)
+	case http.MethodDelete:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsCancel); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		pv := s.KanbanPreview.GetByCard(cardID)
+		if pv == nil {
+			writeJSONError(w, http.StatusNotFound, "no preview running for this card")
+			return
+		}
+		if err := s.KanbanPreview.Stop(pv.ID); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"stopped": true})
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

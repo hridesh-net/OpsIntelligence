@@ -21,6 +21,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/githubmode"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/sentry"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
@@ -314,6 +315,12 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 		srv.AuthService.KanbanSentry = sentry.New(store, sentryClient)
 		log.Info("kanban: sentry importer wired")
 	}
+
+	// Branch preview manager — uses Tailscale Funnel for a public URL
+	// when the daemon is configured for it (gateway.tailscale.mode=funnel).
+	funnelEnabled := strings.EqualFold(strings.TrimSpace(cfg.Gateway.Tailscale.Mode), "funnel")
+	srv.AuthService.KanbanPreview = preview.New(funnelEnabled)
+	log.Info("kanban: branch preview manager wired", zap.Bool("funnel_enabled", funnelEnabled))
 
 	log.Info("kanban dispatch service wired",
 		zap.String("worktree_base", wtBase),
