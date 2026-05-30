@@ -244,14 +244,38 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 		log.Info("kanban: registered Go driver")
 	}
 
-	// Register CLI adapters (best-effort; they work if the binary is on PATH).
-	drivers["claude-code"] = dispatcher.NewClaudeCodeDriver()
+	// Register CLI adapters (best-effort; each one works if the binary is
+	// on PATH and authenticated. Operators see "no driver for type X" when
+	// they dispatch to an agent_type whose binary isn't installed; we
+	// don't probe at startup to keep cold-start cheap.)
+	drivers["claude-code"] = dispatcher.NewClaudeCodeDriver() // stream-json
 	drivers["codex"] = dispatcher.NewCodexDriver()
-	log.Info("kanban: registered CLI drivers", zap.Strings("drivers", []string{"claude-code", "codex"}))
+	drivers["gemini"] = dispatcher.NewGeminiDriver()
+	drivers["cursor-agent"] = dispatcher.NewCursorDriver()
+	drivers["gh-copilot"] = dispatcher.NewCopilotDriver()
+	drivers["opencode"] = dispatcher.NewOpenCodeDriver()
+	drivers["amp"] = dispatcher.NewAmpDriver()
+	drivers["qwen"] = dispatcher.NewQwenDriver()
+	drivers["droid"] = dispatcher.NewDroidDriver()
+	drivers["ccr"] = dispatcher.NewCCRDriver()
+	// Generic ACP driver — board agents with agent_type "acp" let the
+	// operator point at any ACP-compliant CLI by setting `binary` in the
+	// agent's config_json (wired up in dispatchAgentResolver, separate PR).
+	drivers["acp"] = dispatcher.NewACPDriver("acp-agent")
+
+	driverNames := make([]string, 0, len(drivers))
+	for n := range drivers {
+		driverNames = append(driverNames, n)
+	}
+	log.Info("kanban: registered CLI drivers", zap.Strings("drivers", driverNames))
 
 	calc := cost.NewCalculator()
 	svc := kanban.NewDispatchService(store, wtMgr, drivers, calc)
 	srv.AuthService.Kanban = svc
+
+	// Autopilot — feature-dev / qa loop runner. Bound to the same dispatch
+	// service so child runs flow through the standard pipeline.
+	srv.AuthService.KanbanAutopilot = kanban.NewAutopilot(svc)
 
 	log.Info("kanban dispatch service wired",
 		zap.String("worktree_base", wtBase),

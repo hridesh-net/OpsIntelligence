@@ -13,3 +13,14 @@ type KanbanDispatcher interface {
 	StopRun(ctx context.Context, runID string) error
 	AnswerDecision(ctx context.Context, decisionID, answer string) error
 }
+
+// KanbanAutopilot is the subset of kanban.Autopilot used by gateway handlers.
+// Kept separate from KanbanDispatcher so the dispatcher can be wired without
+// autopilot when an operator wants the one-shot path only.
+type KanbanAutopilot interface {
+	StartFeatureDev(ctx context.Context, cardID string, opts kanban.FeatureDevOpts) (*kanban.AutopilotSession, error)
+	StartQA(ctx context.Context, cardID string, opts kanban.QAOpts) (*kanban.AutopilotSession, error)
+	Stop(sessionID string) error
+	Get(sessionID string) *kanban.AutopilotSession
+	List() []kanban.AutopilotSession
+}

@@ -76,6 +76,10 @@ type AuthService struct {
 	// Kanban is the card dispatch service (optional). Set from cmd/opsintelligence.
 	Kanban KanbanDispatcher
 
+	// KanbanAutopilot is the multi-cycle agent loop runner (feature-dev /
+	// qa). Optional; nil disables the /autopilot endpoints.
+	KanbanAutopilot KanbanAutopilot
+
 	Log *zap.Logger
 }
 

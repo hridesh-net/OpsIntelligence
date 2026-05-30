@@ -6,6 +6,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.42] — 2026-05-30
+
+### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 1)
+
+Closes the largest gap against [kanbots.dev](https://www.kanbots.dev/). The previous kanban implementation already had drag-to-move boards + git-worktree-per-run + decision prompts + Claude Code / Codex drivers. This wave adds the orchestration layer.
+
+**8 new agent CLI drivers** (registered alongside the existing Claude Code / Codex / in-process Go runner; bring the total to 11 — matching the kanbots.dev roster):
+
+- `gemini` — Google Gemini CLI
+- `cursor-agent` — Cursor agent CLI
+- `gh-copilot` — GitHub Copilot CLI (`gh copilot suggest`)
+- `opencode` — OpenCode CLI
+- `amp` — Sourcegraph Amp CLI
+- `qwen` — Qwen Code CLI
+- `droid` — Factory Droid CLI
+- `ccr` — Claude Code Router CLI (reuses Claude Code auth)
+- `acp` — generic Agent Client Protocol driver for any ACP-compliant CLI
+
+A new `GenericLineDriver` factors the common spawn / stdout / event-emit plumbing so adding a CLI is now ~15 lines of config.
+
+**Autopilot**:
+- `feature-dev` mode: round-robin a set of personas across up to 4 parallel slots on the same card. Stops on completion, operator stop, or session budget cap.
+- `qa` mode: run a list of shell checks (typecheck / tests / lint / build / e2e) inside the card's worktree and dispatch fix-runs against each failure, up to `--max-fix-attempts` per check.
+- New `kanban.Autopilot` type with in-memory session tracking, `Start{FeatureDev,QA}` / `Stop` / `Get` / `List`.
+
+**Budget caps** (parsed from a board's `config_json` under the `budget` key):
+- `per_card_usd` — refuses dispatch if a card has already accrued more.
+- `per_board_usd` — refuses dispatch when summed cost across all the board's cards exceeds the cap.
+- `per_run_usd` — enforced mid-stream by `runAgent`: cancels the agent process and finalizes the run as "stopped_budget" the moment the running cost crosses the ceiling.
+
+**Slash commands** (`/spec`, `/review`, `/split`) — front-loaded into the prompt before it reaches the agent. Match kanbots.dev's templates:
+- `/spec` asks the agent to write an implementation spec and stop before coding.
+- `/review` asks the agent to inspect the branch's existing work and produce a go/no-go.
+- `/split N` asks the agent to emit N independently-dispatchable subtasks as strict JSON.
+
+**Decision-prompt resumption** — the long-standing "Phase 3 TODO" in `dispatch_service.go`. `AnswerDecision` now finalizes the paused run as `completed_paused`, then dispatches a follow-up that reuses the same worktree + branch with the question + answer + a "continue from where the previous run left off" directive baked into the prompt.
+
+### Added — `opsintelligence kanban` CLI
+
+Thin client over the gateway's `/api/v1/boards` + `/api/v1/autopilot` endpoints so the operator can drive the whole flow from a terminal:
+
+```
+opsintelligence kanban boards   list | create
+opsintelligence kanban cards    list | add | move
+opsintelligence kanban dispatch
+opsintelligence kanban runs     stop | get
+opsintelligence kanban autopilot start | list | stop
+opsintelligence kanban agents   list
+```
+
+`dispatch` accepts `--slash spec|review|split` and `--slash-args` so slash commands flow end-to-end from the CLI.
+
+### Added — `/api/v1/autopilot` HTTP API
+
+- `GET /api/v1/autopilot` — list sessions
+- `POST /api/v1/autopilot` — start (`mode=feature-dev|qa` + opts)
+- `GET /api/v1/autopilot/{id}` — session detail (cycles, child runs, total cost)
+- `POST /api/v1/autopilot/{id}/stop` — stop a running session
+
+Permission-gated via existing RBAC (`PermRunsDispatch`, `PermRunsCancel`, `PermRunsRead`).
+
+### Still missing vs kanbots.dev (next waves)
+
+- GitHub workspace mode (Octokit-equivalent issue sync)
+- Sentry import → board
+- Branch preview public URL (tunneling)
+- Attachments
+- MCP server exposing the board (`kanbots-mcp-server` equivalent)
+- UI: drag-to-move, decision modal, cost dashboard
+
+### Changed
+
+- Crate version bumped to `0.2.15`.
+
 ## [1.0.41] — 2026-05-30
 
 ### Fixed

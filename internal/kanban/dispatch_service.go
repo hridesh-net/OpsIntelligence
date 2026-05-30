@@ -46,6 +46,27 @@ type DispatchOpts struct {
 	PersonaID string
 	Model     string
 	CreatedBy string
+
+	// PromptOverride, when non-empty, replaces the auto-built
+	// "Task: title / Description: ..." prompt. Used by decision-resumption
+	// and autopilot continuations.
+	PromptOverride string
+	// ReuseWorktreePath and ReuseBranch let a follow-up run pick up the
+	// previous run's git worktree instead of creating a fresh one. Both
+	// must be set together; if either is empty a new worktree is created.
+	ReuseWorktreePath string
+	ReuseBranch       string
+	// ParentRunID, when set, marks this run as a continuation of an earlier
+	// run (e.g. after a decision was answered). Useful for grouping runs
+	// in autopilot sessions and the UI.
+	ParentRunID string
+
+	// SlashCommand, when non-empty, post-processes the prompt with one of
+	// the built-in templates ("spec", "review", "split"). See applySlash.
+	SlashCommand string
+	// SlashArgs is the trailing text after a slash command (e.g. for
+	// /split, the desired number of subtasks).
+	SlashArgs string
 }
 
 // Dispatch starts an agent run on a card.
@@ -80,12 +101,27 @@ func (s *DispatchService) Dispatch(ctx context.Context, cardID string, opts Disp
 		opts.RunID = uuid.NewString()
 	}
 
-	// Create worktree if repo_path is configured
+	// Budget cap: bail before allocating any agent resources.
+	if err := s.enforceBudget(ctx, card, board); err != nil {
+		return nil, err
+	}
+
+	// Create worktree if repo_path is configured. Reuse an existing
+	// worktree if the caller passed one (decision resumption, autopilot
+	// continuation) so the follow-up agent sees the partial work.
 	var wt *worktree.Worktree
 	if board.RepoPath != "" {
-		wt, err = s.Worktrees.Create(cardID, opts.RunID, board.RepoPath, "main")
-		if err != nil {
-			return nil, fmt.Errorf("dispatch: create worktree: %w", err)
+		if opts.ReuseWorktreePath != "" && opts.ReuseBranch != "" {
+			wt = &worktree.Worktree{
+				Path:       opts.ReuseWorktreePath,
+				Branch:     opts.ReuseBranch,
+				BaseBranch: "main",
+			}
+		} else {
+			wt, err = s.Worktrees.Create(cardID, opts.RunID, board.RepoPath, "main")
+			if err != nil {
+				return nil, fmt.Errorf("dispatch: create worktree: %w", err)
+			}
 		}
 	}
 
@@ -119,24 +155,39 @@ func (s *DispatchService) Dispatch(ctx context.Context, cardID string, opts Disp
 	card.StartedAt = ptr(time.Now().UTC())
 	_ = s.Store.BoardCards().Update(ctx, card)
 
+	// Capture per-run options (prompt override, slash command, reuse flag)
+	// so the goroutine doesn't reach back into the caller's value.
+	runOpts := opts
+
 	// Start agent in background with a detached context.
 	// The HTTP request context will be cancelled when the client receives
 	// the 202 Accepted response, so we must not forward it.
 	bgCtx, bgCancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	go func() {
 		defer bgCancel()
-		s.runAgent(bgCtx, run, driver, card, wt, systemPrompt)
+		s.runAgent(bgCtx, run, driver, card, wt, systemPrompt, runOpts)
 	}()
 
 	return run, nil
 }
 
-func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, driver dispatcher.AgentDriver, card *datastore.BoardCard, wt *worktree.Worktree, systemPrompt string) {
-	// Ensure worktree is cleaned up when the run reaches a terminal state.
-	defer s.cleanupWorktree(run, wt)
+func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, driver dispatcher.AgentDriver, card *datastore.BoardCard, wt *worktree.Worktree, systemPrompt string, dispatchOpts DispatchOpts) {
+	// Ensure worktree is cleaned up when the run reaches a terminal state —
+	// but ONLY when this dispatch actually created the worktree. Follow-up
+	// runs that reuse a parent's worktree must not delete it on completion;
+	// the autopilot loop or promote-to-commit step owns its lifecycle.
+	if dispatchOpts.ReuseWorktreePath == "" {
+		defer s.cleanupWorktree(run, wt)
+	}
 
-	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nCard type: %s | Priority: %s | Effort: %s",
-		card.Title, card.Description, card.CardType, card.Priority, card.Effort)
+	prompt := dispatchOpts.PromptOverride
+	if prompt == "" {
+		prompt = fmt.Sprintf("Task: %s\n\nDescription: %s\n\nCard type: %s | Priority: %s | Effort: %s",
+			card.Title, card.Description, card.CardType, card.Priority, card.Effort)
+	}
+	// Slash commands wrap the prompt with a directive template before the
+	// agent sees it. Idempotent: empty SlashCommand is a no-op.
+	prompt = applySlashCommand(prompt, dispatchOpts.SlashCommand, dispatchOpts.SlashArgs, card)
 
 	opts := dispatcher.RunOpts{
 		RunID:        run.ID,
@@ -155,6 +206,13 @@ func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, 
 		return
 	}
 	defer cancel()
+
+	// Per-run budget cap. 0 = no cap (the common case).
+	board, _ := s.Store.Boards().Get(ctx, card.BoardID)
+	perRunCap := 0.0
+	if board != nil {
+		perRunCap = s.perRunCap(board)
+	}
 
 	start := time.Now().UTC()
 	var totalTokensIn, totalTokensOut int64
@@ -209,6 +267,24 @@ func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, 
 				}
 				if c, ok := usage["completion_tokens"].(float64); ok {
 					totalTokensOut += int64(c)
+				}
+			}
+
+			// Per-run budget enforcement: if we've already spent more than
+			// the cap, cancel the agent process and finalize as
+			// "stopped_budget". The cost calculator is cheap enough to call
+			// on every event.
+			if perRunCap > 0 {
+				if cost := s.CostCalc.Calculate(run.Model, totalTokensIn, totalTokensOut); cost >= perRunCap {
+					flush()
+					_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+						RunID:   run.ID,
+						Kind:    "error",
+						Message: fmt.Sprintf("Per-run budget cap reached ($%.4f >= $%.4f). Cancelling agent.", cost, perRunCap),
+					})
+					cancel()
+					s.finalizeRun(ctx, run, card, start, totalTokensIn, totalTokensOut, "per-run budget cap exceeded")
+					return
 				}
 			}
 
@@ -372,7 +448,10 @@ func (s *DispatchService) StopRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-// AnswerDecision resolves a pending decision and optionally resumes the run.
+// AnswerDecision resolves a pending decision and resumes the run by
+// dispatching a continuation against the same card with the answer
+// injected into the prompt. The original worktree is preserved so the
+// follow-up agent picks up the in-progress branch.
 func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer string) error {
 	decision, err := s.Store.PendingDecisions().Get(ctx, decisionID)
 	if err != nil {
@@ -386,7 +465,7 @@ func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer
 		return err
 	}
 
-	// Append answer as event
+	// Append answer as event so the run timeline shows the user's reply.
 	_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
 		RunID:   decision.RunID,
 		Kind:    "text",
@@ -397,21 +476,56 @@ func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer
 		},
 	})
 
-	// For now, mark run as completed after decision. In Phase 3, we will
-	// inject the answer back into the agent context and continue.
-	run, err := s.Store.CardRuns().Get(ctx, decision.RunID)
+	// Close the paused run (it can't be resumed in-process for CLI drivers —
+	// the underlying CLI has already exited or is blocked on a TTY we don't
+	// own). Finalize it as "completed_paused" so cost / token totals stick.
+	pausedRun, err := s.Store.CardRuns().Get(ctx, decision.RunID)
 	if err != nil {
 		return err
 	}
-	run.Status = "running"
-	_ = s.Store.CardRuns().Update(ctx, run)
+	now := time.Now().UTC()
+	pausedRun.Status = "completed_paused"
+	pausedRun.CompletedAt = &now
+	_ = s.Store.CardRuns().Update(ctx, pausedRun)
 
-	card, _ := s.Store.BoardCards().Get(ctx, run.CardID)
-	if card != nil {
-		card.Status = "running"
-		_ = s.Store.BoardCards().Update(ctx, card)
+	card, err := s.Store.BoardCards().Get(ctx, pausedRun.CardID)
+	if err != nil {
+		return err
 	}
 
+	// Build the continuation prompt: include the original question, the
+	// answer the user chose, and a directive to continue from where the
+	// previous run left off. The follow-up dispatch goes through the
+	// normal Dispatch path (worktree, driver, event stream) so the user
+	// sees a fresh run in the UI tied to the same card.
+	continuation := fmt.Sprintf(
+		"Continuing the previous run. The decision-prompt question was:\n\n%s\n\nThe operator answered: %s\n\nProceed with that choice. The git worktree from the previous run is at %q on branch %q; pick up from there.",
+		decision.Question, answer, pausedRun.WorktreePath, pausedRun.Branch,
+	)
+
+	followUp := DispatchOpts{
+		AgentID:   pausedRun.AgentID,
+		PersonaID: pausedRun.PersonaID,
+		Model:     pausedRun.Model,
+		CreatedBy: pausedRun.CreatedBy,
+		// PromptOverride bypasses the default "Task: ..." prompt and uses
+		// the continuation message verbatim. See runAgent + Dispatch.
+		PromptOverride:     continuation,
+		ReuseWorktreePath:  pausedRun.WorktreePath,
+		ReuseBranch:        pausedRun.Branch,
+		ParentRunID:        pausedRun.ID,
+	}
+	if _, err := s.Dispatch(ctx, card.ID, followUp); err != nil {
+		// Surface the failure as a card-run event so the user sees why
+		// the continuation never started; the paused run is already
+		// closed so we don't need to roll back.
+		_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+			RunID:   pausedRun.ID,
+			Kind:    "error",
+			Message: "Failed to dispatch continuation: " + err.Error(),
+		})
+		return err
+	}
 	return nil
 }
 

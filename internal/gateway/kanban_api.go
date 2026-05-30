@@ -83,9 +83,23 @@ type moveCardRequest struct {
 }
 
 type dispatchRequest struct {
-	AgentID   string `json:"agent_id"`
-	PersonaID string `json:"persona_id,omitempty"`
-	Model     string `json:"model,omitempty"`
+	AgentID      string `json:"agent_id"`
+	PersonaID    string `json:"persona_id,omitempty"`
+	Model        string `json:"model,omitempty"`
+	SlashCommand string `json:"slash_command,omitempty"`
+	SlashArgs    string `json:"slash_args,omitempty"`
+}
+
+type autopilotRequest struct {
+	CardID         string           `json:"card_id"`
+	Mode           string           `json:"mode"` // "feature-dev" | "qa"
+	PersonaIDs     []string         `json:"persona_ids,omitempty"`
+	Parallelism    int              `json:"parallelism,omitempty"`
+	BudgetUSD      float64          `json:"budget_usd,omitempty"`
+	MaxCycles      int              `json:"max_cycles,omitempty"`
+	Checks         []kanban.QACheck `json:"checks,omitempty"`
+	FixAgentID     string           `json:"fix_agent_id,omitempty"`
+	MaxFixAttempts int              `json:"max_fix_attempts,omitempty"`
 }
 
 type createAgentRequest struct {
@@ -123,6 +137,10 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 		s.handleRunDetail(w, r, strings.TrimPrefix(path, "runs/"))
 	case path == "personas" || path == "personas/":
 		s.handlePersonas(w, r)
+	case path == "autopilot" || path == "autopilot/":
+		s.handleAutopilotList(w, r)
+	case strings.HasPrefix(path, "autopilot/"):
+		s.handleAutopilotDetail(w, r, strings.TrimPrefix(path, "autopilot/"))
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -612,9 +630,11 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 				return
 			}
 			run, err := s.Kanban.Dispatch(r.Context(), cardID, kanban.DispatchOpts{
-				AgentID:   req.AgentID,
-				PersonaID: req.PersonaID,
-				Model:     req.Model,
+				AgentID:      req.AgentID,
+				PersonaID:    req.PersonaID,
+				Model:        req.Model,
+				SlashCommand: req.SlashCommand,
+				SlashArgs:    req.SlashArgs,
 			})
 			if err != nil {
 				writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -851,4 +871,115 @@ func parseLimit(s string, def int) int {
 func parseInt(s string) int {
 	v, _ := strconv.Atoi(s)
 	return v
+}
+
+// ── Autopilot ─────────────────────────────────────────────────────────────
+//
+//	GET  /api/v1/autopilot             list all sessions
+//	POST /api/v1/autopilot             start a session (mode=feature-dev|qa)
+//	GET  /api/v1/autopilot/{id}        session detail
+//	POST /api/v1/autopilot/{id}/stop   stop a running session
+//
+// Permissions: PermRunsDispatch for start/stop, PermRunsRead for list/detail.
+
+func (s *AuthService) handleAutopilotList(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFrom(r.Context())
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		if s.KanbanAutopilot == nil {
+			writeJSON(w, http.StatusOK, []kanban.AutopilotSession{})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.KanbanAutopilot.List())
+	case http.MethodPost:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsDispatch); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		if s.KanbanAutopilot == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "autopilot not configured")
+			return
+		}
+		var req autopilotRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.CardID == "" {
+			writeJSONError(w, http.StatusBadRequest, "card_id is required")
+			return
+		}
+		var sess *kanban.AutopilotSession
+		var err error
+		switch req.Mode {
+		case "feature-dev", "":
+			sess, err = s.KanbanAutopilot.StartFeatureDev(r.Context(), req.CardID, kanban.FeatureDevOpts{
+				PersonaIDs:  req.PersonaIDs,
+				Parallelism: req.Parallelism,
+				BudgetUSD:   req.BudgetUSD,
+				MaxCycles:   req.MaxCycles,
+			})
+		case "qa":
+			sess, err = s.KanbanAutopilot.StartQA(r.Context(), req.CardID, kanban.QAOpts{
+				Checks:         req.Checks,
+				FixAgentID:     req.FixAgentID,
+				MaxFixAttempts: req.MaxFixAttempts,
+				BudgetUSD:      req.BudgetUSD,
+			})
+		default:
+			writeJSONError(w, http.StatusBadRequest, "mode must be feature-dev or qa")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, sess)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *AuthService) handleAutopilotDetail(w http.ResponseWriter, r *http.Request, path string) {
+	p := auth.PrincipalFrom(r.Context())
+	parts := strings.SplitN(path, "/", 2)
+	sessID := parts[0]
+	sub := ""
+	if len(parts) > 1 {
+		sub = parts[1]
+	}
+	if s.KanbanAutopilot == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "autopilot not configured")
+		return
+	}
+
+	switch {
+	case sub == "" && r.Method == http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		sess := s.KanbanAutopilot.Get(sessID)
+		if sess == nil {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, sess)
+	case (sub == "stop" || sub == "stop/") && r.Method == http.MethodPost:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermRunsCancel); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		if err := s.KanbanAutopilot.Stop(sessID); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"stopped": true})
+	default:
+		writeJSONError(w, http.StatusNotFound, "not found")
+	}
 }
