@@ -326,6 +326,12 @@ fn main_loop<B: ratatui::backend::Backend>(
                             let _ = tx_out
                                 .send(Message::notification("repos.refresh", Value::Null));
                         }
+                        ReposOutbound::GraphSelect(id) => {
+                            let _ = tx_out.send(Message::notification(
+                                "repos.graph_select",
+                                json!({ "id": id }),
+                            ));
+                        }
                         ReposOutbound::EditSubmit {
                             architecture,
                             review_hints,

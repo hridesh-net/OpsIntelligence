@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.34] — 2026-05-29
+
+### Added — Repo Intelligence parity pass
+
+Restores feature parity with the legacy Go `cmd/opsintelligence/tui/repos_tui.go`:
+
+- **`/` search / filter on the Repos tab**. Matches case-insensitive substrings of name / language / index status / scan status / risk. The status pill switches to `matched/total repos` while a filter is active. `Esc` clears the query; `Enter` exits search mode but keeps the filter applied.
+- **Vim keys**: `h`/`l` for left/right tab cycle, `j`/`k` for up/down, `g`/`G` for jump-to-top / jump-to-bottom, plus `Ctrl-U` / `Ctrl-D` for half-page scroll.
+- **Graph tab is navigable now**. Go ships up to 200 nodes per snapshot; Rust shows the full list with a `►` cursor and `↑↓` (or `j`/`k`) moves between nodes. The selected node's callers + callees are rendered live, fed back over a new `repos.graph_select` notification.
+- New `repos.graph_select` notification (Rust → Go) and `CallGraphView.selected_idx` / `CallGraphView.nodes` protocol fields.
+
+### Changed
+
+- Crate version bumped to `0.2.7`.
+
 ## [1.0.33] — 2026-05-29
 
 ### Added — Editable, persistable config from the Status dashboard

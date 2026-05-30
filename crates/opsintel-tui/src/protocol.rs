@@ -481,6 +481,12 @@ pub struct CallGraphView {
     pub edge_count: usize,
     #[serde(default)]
     pub selected: Option<CallNodeView>,
+    /// 0-based index of `selected` within `nodes` (when nodes is non-empty).
+    #[serde(default)]
+    pub selected_idx: usize,
+    /// Sample of nodes (capped server-side at ~200) for left-pane navigation.
+    #[serde(default)]
+    pub nodes: Vec<CallNodeView>,
     #[serde(default)]
     pub callees: Vec<CallNodeView>,
     #[serde(default)]

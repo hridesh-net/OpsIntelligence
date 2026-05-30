@@ -84,6 +84,14 @@ func RunReposTUI(ctx context.Context, opts ReposOptions) error {
 				}
 				requestRefresh()
 			}
+		case "repos.graph_select":
+			var p struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(msg.Params, &p); err == nil {
+				st.setGraphSelected(p.ID)
+				requestRefresh()
+			}
 		case "repos.edit_submit":
 			var p struct {
 				Architecture string `json:"architecture"`
@@ -152,6 +160,11 @@ type reposState struct {
 	scan      *repointel.ScanResult
 	callGraph *repointel.CallGraph
 
+	// selectedNodeID is the user's current node selection within the call
+	// graph of the selected repo. Reset to "" whenever the selected repo
+	// changes; the renderer then falls back to the first node.
+	selectedNodeID string
+
 	progress map[string]repointel.ProgressEvent
 }
 
@@ -169,6 +182,12 @@ func (s *reposState) setSelected(idx int) {
 	}
 	s.selected = idx
 	s.unlockedRefreshSelectedContent()
+}
+
+func (s *reposState) setGraphSelected(nodeID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selectedNodeID = nodeID
 }
 
 func (s *reposState) reloadRegistry() {
@@ -192,6 +211,8 @@ func (s *reposState) unlockedRefreshSelectedContent() {
 	s.memory = nil
 	s.scan = nil
 	s.callGraph = nil
+	// Reset the per-repo graph cursor when the active repo changes.
+	s.selectedNodeID = ""
 	if s.selected >= len(s.entries) {
 		return
 	}
@@ -341,11 +362,13 @@ type userJSON struct {
 }
 
 type graphJSON struct {
-	NodeCount int            `json:"node_count"`
-	EdgeCount int            `json:"edge_count"`
-	Selected  *callNodeJSON  `json:"selected,omitempty"`
-	Callees   []callNodeJSON `json:"callees"`
-	Callers   []callNodeJSON `json:"callers"`
+	NodeCount    int            `json:"node_count"`
+	EdgeCount    int            `json:"edge_count"`
+	Selected     *callNodeJSON  `json:"selected,omitempty"`
+	SelectedIdx  int            `json:"selected_idx"`
+	Nodes        []callNodeJSON `json:"nodes"`
+	Callees      []callNodeJSON `json:"callees"`
+	Callers      []callNodeJSON `json:"callers"`
 }
 
 type callNodeJSON struct {
@@ -446,8 +469,38 @@ func (s *reposState) snapshot() reposSnapshot {
 			NodeCount: len(s.callGraph.Nodes),
 			EdgeCount: len(s.callGraph.Edges),
 		}
-		if len(s.callGraph.Nodes) > 0 {
-			n := s.callGraph.Nodes[0]
+		// Cap the node list so very large graphs don't blow up the JSON
+		// payload. 200 is plenty for navigation; the user can still pick any
+		// node beyond this via search / sync.
+		const nodeListCap = 200
+		idIdx := map[string]repointel.CallNode{}
+		for _, nn := range s.callGraph.Nodes {
+			idIdx[nn.ID] = nn
+		}
+		for i, nn := range s.callGraph.Nodes {
+			if i >= nodeListCap {
+				break
+			}
+			graphOut.Nodes = append(graphOut.Nodes, callNodeJSON{
+				ID: nn.ID, Name: nn.Name, Kind: nn.Kind,
+				File: nn.File, Line: nn.Line, Package: nn.Package,
+			})
+		}
+		// Pick selected node: explicit selectedNodeID > index 0.
+		picked := -1
+		if s.selectedNodeID != "" {
+			for i, nn := range s.callGraph.Nodes {
+				if nn.ID == s.selectedNodeID {
+					picked = i
+					break
+				}
+			}
+		}
+		if picked < 0 && len(s.callGraph.Nodes) > 0 {
+			picked = 0
+		}
+		if picked >= 0 {
+			n := s.callGraph.Nodes[picked]
 			graphOut.Selected = &callNodeJSON{
 				ID:      n.ID,
 				Name:    n.Name,
@@ -456,10 +509,7 @@ func (s *reposState) snapshot() reposSnapshot {
 				Line:    n.Line,
 				Package: n.Package,
 			}
-			idIdx := map[string]repointel.CallNode{}
-			for _, nn := range s.callGraph.Nodes {
-				idIdx[nn.ID] = nn
-			}
+			graphOut.SelectedIdx = picked
 			for _, id := range s.callGraph.Callees(n.ID) {
 				if nn, ok := idIdx[id]; ok {
 					graphOut.Callees = append(graphOut.Callees, callNodeJSON{

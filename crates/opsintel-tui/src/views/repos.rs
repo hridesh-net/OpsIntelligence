@@ -31,6 +31,8 @@ pub enum ReposOutbound {
         review_hints: String,
         user_context: String,
     },
+    /// User picked a different call-graph node (Graph tab navigation).
+    GraphSelect(String),
     /// Quit the program.
     Quit,
 }
@@ -50,6 +52,10 @@ pub struct ReposView {
     mode: Mode,
     edit_field: usize, // 0 = architecture, 1 = review_hints, 2 = user_context
     edit_fields: [TextArea; 3],
+    /// `/` opens a search query that filters the Repos list by name /
+    /// language / status (case-insensitive substring match).
+    search: TextArea,
+    search_active: bool,
     #[allow(dead_code)]
     last_error: String,
 }
@@ -69,8 +75,38 @@ impl ReposView {
                 TextArea::new("Review focus / hints…"),
                 TextArea::new("Operator notes…"),
             ],
+            search: TextArea::new("Filter by name / language / status…"),
+            search_active: false,
             last_error: String::new(),
         }
+    }
+
+    /// Filtered list of (original_index, entry) for the Repos tab. Used by the
+    /// renderer when `search.value()` is non-empty so the search shrinks the
+    /// list to matching repos. `selected` is kept as an *original-list*
+    /// index; the renderer maps it to the filtered view.
+    fn filtered_entries(&self) -> Vec<(usize, &RepoEntry)> {
+        let q = self.search.value().trim().to_lowercase();
+        if q.is_empty() {
+            return self
+                .snap
+                .entries
+                .iter()
+                .enumerate()
+                .collect();
+        }
+        self.snap
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                e.full_name.to_lowercase().contains(&q)
+                    || e.language.to_lowercase().contains(&q)
+                    || e.index_status.to_lowercase().contains(&q)
+                    || e.scan_status.to_lowercase().contains(&q)
+                    || e.risk_level.to_lowercase().contains(&q)
+            })
+            .collect()
     }
 
     pub fn apply_snapshot(&mut self, snap: ReposSnapshot) {
@@ -90,43 +126,128 @@ impl ReposView {
         if self.mode == Mode::Edit {
             return self.handle_edit_key(key);
         }
+        if self.search_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.search_active = false;
+                    self.search.set_value(String::new());
+                    return ReposOutbound::None;
+                }
+                KeyCode::Enter => {
+                    self.search_active = false;
+                    return ReposOutbound::None;
+                }
+                _ => {
+                    let _ = self.search.handle_key(key);
+                    return ReposOutbound::None;
+                }
+            }
+        }
 
         match key.code {
-            KeyCode::Esc => return ReposOutbound::Quit,
+            KeyCode::Esc => {
+                if !self.search.value().is_empty() {
+                    self.search.set_value(String::new());
+                    return ReposOutbound::None;
+                }
+                return ReposOutbound::Quit;
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return ReposOutbound::Quit;
             }
             KeyCode::Char('q') | KeyCode::Char('Q') => return ReposOutbound::Quit,
-            KeyCode::Left | KeyCode::BackTab => {
+            KeyCode::Char('/') => {
+                self.search_active = true;
+                return ReposOutbound::None;
+            }
+            KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Char('H') => {
                 self.active_tab = (self.active_tab + TABS.len() - 1) % TABS.len();
                 self.scroll = 0;
             }
-            KeyCode::Right | KeyCode::Tab => {
+            KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') | KeyCode::Char('L') => {
                 self.active_tab = (self.active_tab + 1) % TABS.len();
                 self.scroll = 0;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
                 if self.active_tab == 0 {
-                    if self.selected > 0 {
-                        self.selected -= 1;
+                    // Move the cursor within the FILTERED view, then translate
+                    // back to the original-list index so Select() agrees with Go.
+                    let filtered = self.filtered_entries();
+                    let cur_pos = filtered
+                        .iter()
+                        .position(|(orig, _)| *orig == self.selected)
+                        .unwrap_or(0);
+                    if cur_pos > 0 {
+                        let new_orig = filtered[cur_pos - 1].0;
+                        self.selected = new_orig;
                         return ReposOutbound::Select(self.selected);
+                    }
+                } else if self.active_tab == 4 {
+                    if let Some(g) = self.snap.graph.as_ref() {
+                        if g.selected_idx > 0 && !g.nodes.is_empty() {
+                            if let Some(prev) =
+                                g.nodes.get(g.selected_idx.saturating_sub(1))
+                            {
+                                return ReposOutbound::GraphSelect(prev.id.clone());
+                            }
+                        }
                     }
                 } else {
                     self.scroll = self.scroll.saturating_sub(1);
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
                 if self.active_tab == 0 {
-                    if self.selected + 1 < self.snap.entries.len() {
-                        self.selected += 1;
+                    let filtered = self.filtered_entries();
+                    let cur_pos = filtered
+                        .iter()
+                        .position(|(orig, _)| *orig == self.selected)
+                        .unwrap_or(0);
+                    if cur_pos + 1 < filtered.len() {
+                        let new_orig = filtered[cur_pos + 1].0;
+                        self.selected = new_orig;
                         return ReposOutbound::Select(self.selected);
+                    }
+                } else if self.active_tab == 4 {
+                    if let Some(g) = self.snap.graph.as_ref() {
+                        if g.selected_idx + 1 < g.nodes.len() {
+                            if let Some(next) = g.nodes.get(g.selected_idx + 1) {
+                                return ReposOutbound::GraphSelect(next.id.clone());
+                            }
+                        }
                     }
                 } else {
                     self.scroll = self.scroll.saturating_add(1);
                 }
             }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Vim ctrl-U: half-page up.
+                self.scroll = self.scroll.saturating_sub(10);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Vim ctrl-D: half-page down.
+                self.scroll = self.scroll.saturating_add(10);
+            }
             KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
             KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.scroll = 0;
+                if self.active_tab == 0 {
+                    if let Some((idx, _)) = self.filtered_entries().first() {
+                        self.selected = *idx;
+                        return ReposOutbound::Select(self.selected);
+                    }
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.scroll = u16::MAX / 2;
+                if self.active_tab == 0 {
+                    if let Some((idx, _)) = self.filtered_entries().last() {
+                        self.selected = *idx;
+                        return ReposOutbound::Select(self.selected);
+                    }
+                }
+            }
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 if let Some(entry) = self.snap.entries.get(self.selected) {
                     return ReposOutbound::Sync(entry.id.clone());
@@ -197,18 +318,41 @@ impl ReposView {
             "Repo Intelligence",
             None,
         );
-        // Status pill: total repo count.
-        let pill_text = format!(" {} repos ", self.snap.entries.len());
+        // Status pill: total repo count (with filter ratio when active).
+        let filter_q = self.search.value().to_string();
+        let total = self.snap.entries.len();
+        let pill_text = if filter_q.is_empty() {
+            format!(" {} repos ", total)
+        } else {
+            let matched = self.filtered_entries().len();
+            format!(" {}/{} repos ", matched, total)
+        };
         crate::widgets::chrome::render_pill(f, area, &pill_text, theme::PRIMARY);
 
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // tab row
-                Constraint::Min(3),    // body panel
-                Constraint::Length(1), // command bar
-            ])
-            .split(inner);
+        // Reserve a search row when the user is actively searching OR has a
+        // non-empty query, so the result is always visible.
+        let show_search = self.search_active || !filter_q.is_empty();
+        let layout = if show_search {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // tab row
+                    Constraint::Length(3), // search bar
+                    Constraint::Min(3),    // body panel
+                    Constraint::Length(1), // command bar
+                ])
+                .split(inner)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // tab row
+                    Constraint::Min(3),    // body panel
+                    Constraint::Length(1), // command bar
+                ])
+                .split(inner)
+        };
+        let (body_idx, cmd_idx) = if show_search { (2, 3) } else { (1, 2) };
 
         // Tab row.
         let mut tab_spans: Vec<Span> = vec![Span::raw(" ")];
@@ -230,6 +374,24 @@ impl ReposView {
         }
         f.render_widget(Paragraph::new(Line::from(tab_spans)), layout[0]);
 
+        // Search bar (when active or query non-empty).
+        if show_search {
+            let search_block = crate::widgets::chrome::panel_block(
+                "/ Filter",
+                if self.search_active { theme::PRIMARY } else { theme::OUTLINE_VARIANT },
+                self.search_active,
+            );
+            let s_inner = search_block.inner(layout[1]);
+            f.render_widget(search_block, layout[1]);
+            let view = TextAreaView {
+                area: &self.search,
+                style: Style::default().fg(theme::ON_SURFACE),
+                placeholder_style: theme::muted(),
+                focused: self.search_active,
+            };
+            f.render_widget(view, s_inner);
+        }
+
         // Body panel — titled with active tab + selected repo name.
         let mut title = TABS[self.active_tab.min(TABS.len() - 1)].to_string();
         if let Some(entry) = self.snap.entries.get(self.selected) {
@@ -238,11 +400,29 @@ impl ReposView {
             }
         }
         let body_block = crate::widgets::chrome::panel_block(&title, theme::PRIMARY, true);
-        let body_inner = body_block.inner(layout[1]);
-        f.render_widget(body_block, layout[1]);
+        let body_inner = body_block.inner(layout[body_idx]);
+        f.render_widget(body_block, layout[body_idx]);
 
+        // For the Repos tab, render the filtered list (the others are
+        // selected-repo-scoped and stay full-fat).
+        let filtered_entries_owned: Vec<RepoEntry> = if self.active_tab == 0 {
+            self.filtered_entries()
+                .into_iter()
+                .map(|(_, e)| e.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let filtered_selected = if self.active_tab == 0 {
+            self.filtered_entries()
+                .iter()
+                .position(|(orig, _)| *orig == self.selected)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let lines = match self.active_tab {
-            0 => render_repos_tab(&self.snap.entries, self.selected),
+            0 => render_repos_tab(&filtered_entries_owned, filtered_selected),
             1 => render_memory_tab(&self.snap.memory),
             2 => render_scans_tab(&self.snap.scan),
             3 => render_users_tab(&self.snap.users),
@@ -264,22 +444,23 @@ impl ReposView {
         let entries: &[(&str, &str)] = if self.active_tab == 0 {
             &[
                 ("↑↓", "Select"),
+                ("/", "Filter"),
                 ("S", "Sync"),
                 ("R", "Refresh"),
                 ("⇥", "Tab"),
-                ("⎋", "Quit"),
+                ("Q", "Quit"),
             ]
         } else if self.active_tab == 1 {
             &[
                 ("E", "Edit"),
                 ("↑↓", "Scroll"),
                 ("⇥", "Tab"),
-                ("⎋", "Quit"),
+                ("Q", "Quit"),
             ]
         } else {
-            &[("↑↓", "Scroll"), ("⇥", "Tab"), ("⎋", "Quit")]
+            &[("↑↓", "Scroll"), ("⇥", "Tab"), ("Q", "Quit")]
         };
-        crate::widgets::chrome::render_command_bar(f, layout[2], entries);
+        crate::widgets::chrome::render_command_bar(f, layout[cmd_idx], entries);
     }
 
     fn render_edit_form(&self, f: &mut Frame, area: Rect) {
@@ -659,12 +840,49 @@ fn render_graph_tab(graph: &Option<CallGraphView>) -> Vec<Line<'static>> {
         theme::header(),
     ))];
     out.push(Line::from(vec![
+        Span::styled(format!("{} nodes  ", g.node_count), theme::muted()),
+        Span::styled(format!("{} edges  ", g.edge_count), theme::muted()),
         Span::styled(
-            format!("{} nodes  ", g.node_count),
+            format!("·  showing {} of {}  ·  ↑↓ navigate", g.nodes.len(), g.node_count),
             theme::muted(),
         ),
-        Span::styled(format!("{} edges", g.edge_count), theme::muted()),
     ]));
+    out.push(Line::raw(""));
+
+    // Node list (top-down). Highlight `selected_idx`. We draw the focused
+    // node with a ► marker; the detail block below shows callers/callees.
+    out.push(Line::from(Span::styled("Nodes", theme::neon())));
+    if g.nodes.is_empty() {
+        out.push(Line::from(Span::styled("  (none)", theme::muted())));
+    } else {
+        let scroll_start = g.selected_idx.saturating_sub(4);
+        let window = g.nodes.iter().enumerate().skip(scroll_start).take(20);
+        for (i, n) in window {
+            let active = i == g.selected_idx;
+            let marker = if active { "► " } else { "  " };
+            let name_style = if active {
+                Style::default()
+                    .fg(theme::PRIMARY)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::ON_SURFACE)
+            };
+            out.push(Line::from(vec![
+                Span::styled(marker, Style::default().fg(theme::PRIMARY)),
+                Span::styled(n.name.clone(), name_style),
+                Span::raw("  "),
+                Span::styled(format!("({})", n.kind), theme::muted()),
+                Span::raw("  "),
+                Span::styled(format!("{}:{}", n.file, n.line), theme::muted()),
+            ]));
+        }
+        if g.nodes.len() > 20 {
+            out.push(Line::from(Span::styled(
+                format!("  … {} more", g.nodes.len().saturating_sub(20)),
+                theme::muted(),
+            )));
+        }
+    }
     out.push(Line::raw(""));
 
     if let Some(s) = &g.selected {
@@ -674,10 +892,7 @@ fn render_graph_tab(graph: &Option<CallGraphView>) -> Vec<Line<'static>> {
         )));
         out.push(Line::from(vec![
             Span::styled("   ", theme::muted()),
-            Span::styled(
-                format!("{}:{}", s.file, s.line),
-                theme::muted(),
-            ),
+            Span::styled(format!("{}:{}", s.file, s.line), theme::muted()),
         ]));
         if !s.package.is_empty() {
             out.push(Line::from(vec![
