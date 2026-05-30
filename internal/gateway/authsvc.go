@@ -80,6 +80,11 @@ type AuthService struct {
 	// qa). Optional; nil disables the /autopilot endpoints.
 	KanbanAutopilot KanbanAutopilot
 
+	// KanbanGitHub bridges board cards ↔ GitHub issues (per-board mode).
+	// Optional; nil makes the /boards/{id}/github/sync endpoint return
+	// 503 Service Unavailable.
+	KanbanGitHub KanbanGitHubSync
+
 	Log *zap.Logger
 }
 

@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.43] — 2026-05-30
+
+### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 2)
+
+**GitHub workspace mode** (`Board.Mode = "github"`):
+- New `internal/kanban/githubmode/sync.go` adapter bridges board cards ↔ real GitHub issues for a per-board configured repo.
+- `Sync.PullIssues` pulls open issues from `owner/repo` and upserts them as cards in the first column (Inbox). Existing cards (matched by `issue_number`) get title/body refreshed.
+- `Sync.PushCardCreated` opens a new GitHub issue when a card is created in a github-mode board.
+- `Sync.PushCardMoved` updates GitHub labels to `kanban/<column-slug>` + `type/<card-type>` + `priority/<priority>`; closes the issue when the card moves to a "Done"-style column.
+- `Sync.PostRunComment` writes a Markdown summary (status, model, branch, elapsed, cost, error) to the GitHub issue after each agent run finishes.
+- New GitHub-client methods `CreateIssue`, `SetIssueLabels`, `CloseIssue` in `internal/devops/github/github.go`.
+- HTTP endpoint `POST /api/v1/boards/{id}/github/sync` (gated on `PermBoardsManage`) triggers a pull on demand.
+- CLI: `opsintelligence kanban sync-github --board <id>`.
+- Wired automatically when a GitHub token is configured (`devops.github.token` or `OPSINTELLIGENCE_GITHUB_TOKEN`).
+
+**MCP server exposes the board** (`internal/mcp/kanban_adapter.go`):
+- Read-only tools: `kanban_list_boards`, `kanban_get_board`, `kanban_list_cards`, `kanban_get_run`.
+- Write-side tools (when a dispatch service is wired): `kanban_create_card`, `kanban_move_card`, `kanban_dispatch`, `kanban_stop_run`, `kanban_answer_decision`.
+- `opsintelligence mcp` automatically registers the read-only tool set when a datastore is available, so external MCP clients (Claude Desktop, Cursor, Codex) can browse the board without an extra server.
+
+### Changed
+
+- `BoardCards.Create` HTTP handler now mirrors github-mode card creation to GitHub before responding; on partial failure it returns `{card, github_error}` so the operator can retry.
+- `BoardCards.Move` HTTP handler now mirrors the column change to GitHub labels (best-effort; logged in the response on failure).
+- Crate version bumped to `0.2.16`.
+
+### Still missing vs kanbots.dev (next wave)
+
+- Sentry import → board
+- Branch preview public URL (tunneling)
+- Attachments
+- UI: drag-to-move, decision modal, cost dashboard
+
 ## [1.0.42] — 2026-05-30
 
 ### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 1)

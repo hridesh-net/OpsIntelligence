@@ -69,6 +69,15 @@ func mcpServeCmd(gf *globalFlags) *cobra.Command {
 			_ = skillReg.LoadAll(cmd.Context(), customDir)
 
 			srv := mcp.NewServer(serverCfg, skillReg, log)
+			// Expose kanban over MCP if a datastore is available so external
+			// MCP clients (Claude Desktop, Cursor, …) can drive the board.
+			// Read-only mode here — the dispatch service runs inside the
+			// gateway process; cross-process dispatch would need an HTTP
+			// shim which is a follow-up.
+			if store, err := openDatastoreFromConfig(cmd.Context(), cfg); err == nil && store != nil {
+				mcp.RegisterKanbanTools(srv, store, nil)
+				log.Info("mcp: registered kanban tools (read-only)")
+			}
 			return srv.Serve(cmd.Context())
 		},
 	}

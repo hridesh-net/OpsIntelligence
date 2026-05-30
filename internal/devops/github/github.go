@@ -592,3 +592,75 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo, state string) ([]I
 	}
 	return out, nil
 }
+
+// CreateIssue opens a new issue. Used by the kanban GitHub-mode adapter
+// when a card is created locally and needs to mirror to the remote repo.
+func (c *Client) CreateIssue(ctx context.Context, owner, repo, title, body string, labels []string) (*Issue, error) {
+	payload := map[string]any{"title": title}
+	if body != "" {
+		payload["body"] = body
+	}
+	if len(labels) > 0 {
+		payload["labels"] = labels
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues", c.cfg.BaseURL, owner, repo)
+	req, err := c.newRequest(ctx, http.MethodPost, u, raw)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var buf bytes.Buffer
+	if _, err := devops.DoJSON(ctx, c.http, req, &buf); err != nil {
+		return nil, err
+	}
+	var iss Issue
+	if err := json.Unmarshal(buf.Bytes(), &iss); err != nil {
+		return nil, fmt.Errorf("github: decode created issue: %w", err)
+	}
+	return &iss, nil
+}
+
+// SetIssueLabels replaces the labels on an issue with the given list. The
+// kanban adapter calls this when a card moves columns so the GitHub board
+// reflects the local status without polluting the issue with stale tags.
+func (c *Client) SetIssueLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+	payload := map[string]any{"labels": labels}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/labels", c.cfg.BaseURL, owner, repo, number)
+	req, err := c.newRequest(ctx, http.MethodPut, u, raw)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if _, err := devops.DoJSON(ctx, c.http, req, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CloseIssue marks the issue closed. Used when a kanban card moves to the
+// "Done" column in GitHub mode.
+func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int) error {
+	payload := map[string]string{"state": "closed"}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", c.cfg.BaseURL, owner, repo, number)
+	req, err := c.newRequest(ctx, http.MethodPatch, u, raw)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if _, err := devops.DoJSON(ctx, c.http, req, nil); err != nil {
+		return err
+	}
+	return nil
+}

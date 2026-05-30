@@ -24,3 +24,13 @@ type KanbanAutopilot interface {
 	Get(sessionID string) *kanban.AutopilotSession
 	List() []kanban.AutopilotSession
 }
+
+// KanbanGitHubSync is the subset of kanban/githubmode.Sync the gateway calls.
+// Kept tiny and behind an interface so the gateway package doesn't import
+// the github client transitively when GitHub mode isn't wired.
+type KanbanGitHubSync interface {
+	PullIssues(ctx context.Context, boardID string) (added, updated int, err error)
+	PushCardCreated(ctx context.Context, card *datastore.BoardCard) error
+	PushCardMoved(ctx context.Context, cardID string, newColumnID string) error
+	PostRunComment(ctx context.Context, run *datastore.CardRun) error
+}

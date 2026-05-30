@@ -132,7 +132,16 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 	case path == "boards" || path == "boards/":
 		s.handleBoards(w, r)
 	case strings.HasPrefix(path, "boards/"):
-		s.handleBoardDetail(w, r, strings.TrimPrefix(path, "boards/"))
+		// /boards/{id}/github/sync is special: triggers a pull from GitHub.
+		// Routed here before the generic detail handler so it isn't
+		// shadowed by the {sub} dispatch table.
+		rest := strings.TrimPrefix(path, "boards/")
+		if i := strings.Index(rest, "/github/sync"); i > 0 {
+			boardID := rest[:i]
+			s.handleGitHubSync(w, r, boardID)
+			return
+		}
+		s.handleBoardDetail(w, r, rest)
 	case strings.HasPrefix(path, "runs/"):
 		s.handleRunDetail(w, r, strings.TrimPrefix(path, "runs/"))
 	case path == "personas" || path == "personas/":
@@ -144,6 +153,31 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func (s *AuthService) handleGitHubSync(w http.ResponseWriter, r *http.Request, boardID string) {
+	p := auth.PrincipalFrom(r.Context())
+	if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.KanbanGitHub == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "github mode not configured")
+		return
+	}
+	added, updated, err := s.KanbanGitHub.PullIssues(r.Context(), boardID)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"added":   added,
+		"updated": updated,
+	})
 }
 
 // ── Boards ────────────────────────────────────────────────────────────
@@ -480,6 +514,19 @@ func (s *AuthService) handleBoardCards(w http.ResponseWriter, r *http.Request, b
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// Mirror to GitHub for github-mode boards (best-effort; surface
+		// the error in the response so the operator notices).
+		if s.KanbanGitHub != nil {
+			if err := s.KanbanGitHub.PushCardCreated(r.Context(), card); err != nil {
+				// We've already persisted locally; report the partial
+				// success so the operator can decide whether to retry.
+				writeJSON(w, http.StatusCreated, map[string]any{
+					"card":         card,
+					"github_error": err.Error(),
+				})
+				return
+			}
+		}
 		writeJSON(w, http.StatusCreated, card)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -611,6 +658,18 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 			if err := s.Store.BoardCards().Move(r.Context(), cardID, req.ColumnID); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, err.Error())
 				return
+			}
+			// Mirror the column change to the GH issue's labels.
+			// Best-effort: log the error to the response but don't fail
+			// the local move that already succeeded.
+			if s.KanbanGitHub != nil {
+				if err := s.KanbanGitHub.PushCardMoved(r.Context(), cardID, req.ColumnID); err != nil {
+					writeJSON(w, http.StatusOK, map[string]any{
+						"moved":        true,
+						"github_error": err.Error(),
+					})
+					return
+				}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"moved": true})
 			return

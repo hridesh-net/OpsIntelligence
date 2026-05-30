@@ -63,6 +63,7 @@ Common flows:
 		kanbanRunsCmd(gf),
 		kanbanAutopilotCmd(gf),
 		kanbanAgentsCmd(gf),
+		kanbanGitHubSyncCmd(gf),
 	)
 	return root
 }
@@ -427,6 +428,37 @@ func kanbanAgentsCmd(gf *globalFlags) *cobra.Command {
 	list.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
 	root.AddCommand(list)
 	return root
+}
+
+// ── github mode sync ────────────────────────────────────────────────────────
+
+func kanbanGitHubSyncCmd(gf *globalFlags) *cobra.Command {
+	var boardID string
+	cmd := &cobra.Command{
+		Use:   "sync-github",
+		Short: "Pull GitHub issues into a github-mode board",
+		Long: `For a board configured with mode=github, fetch open issues from the linked
+repository and upsert them as cards in the first column ("Inbox").
+Existing cards (matched by issue_number) have their title and body refreshed.
+
+Requires the daemon to be running and a GitHub token to be available
+(set in opsintelligence.yaml under devops.github.token or via
+OPSINTELLIGENCE_GITHUB_TOKEN).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if boardID == "" {
+				return fmt.Errorf("--board is required")
+			}
+			u := fmt.Sprintf("/api/v1/boards/%s/github/sync", url.PathEscape(boardID))
+			out, err := kanbanPOST(gf, u, map[string]any{})
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&boardID, "board", "", "Board ID (required)")
+	return cmd
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────

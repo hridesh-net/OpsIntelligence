@@ -14,11 +14,13 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/config"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	_ "github.com/opsintelligence/opsintelligence/internal/datastore/drivers" // register sqlite+postgres
+	"github.com/opsintelligence/opsintelligence/internal/devops/github"
 	"github.com/opsintelligence/opsintelligence/internal/gateway"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
 	"github.com/opsintelligence/opsintelligence/internal/kanban"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/githubmode"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 	"github.com/opsintelligence/opsintelligence/internal/memory"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
@@ -276,6 +278,25 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 	// Autopilot — feature-dev / qa loop runner. Bound to the same dispatch
 	// service so child runs flow through the standard pipeline.
 	srv.AuthService.KanbanAutopilot = kanban.NewAutopilot(svc)
+
+	// GitHub workspace mode — bridges Board.Mode="github" cards to
+	// real GH issues. Wired only when a GitHub token is available;
+	// boards without mode=github simply never call into this.
+	ghToken := strings.TrimSpace(cfg.DevOps.GitHub.Token)
+	if ghToken == "" {
+		ghToken = os.Getenv("OPSINTELLIGENCE_GITHUB_TOKEN")
+	}
+	if ghToken != "" {
+		ghBase := cfg.DevOps.GitHub.BaseURL
+		if ghBase == "" {
+			ghBase = "https://api.github.com"
+		}
+		ghClient := github.New(github.Config{Token: ghToken, BaseURL: ghBase}, nil)
+		srv.AuthService.KanbanGitHub = githubmode.New(store, ghClient)
+		log.Info("kanban: github workspace mode wired", zap.String("base_url", ghBase))
+	} else {
+		log.Info("kanban: github workspace mode not configured (no token); skipping")
+	}
 
 	log.Info("kanban dispatch service wired",
 		zap.String("worktree_base", wtBase),
