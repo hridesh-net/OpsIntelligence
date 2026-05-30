@@ -442,6 +442,20 @@ func (s *reposState) snapshot() reposSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if path := os.Getenv("OPSINTEL_TUI_DEBUG"); path != "" {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "[repos-snap] entries=%d memory=%v scan=%v users=%d\n",
+				len(s.entries), s.memory != nil, s.scan != nil,
+				func() int {
+					if s.selected < len(s.entries) {
+						return len(s.entries[s.selected].Users)
+					}
+					return 0
+				}())
+			_ = f.Close()
+		}
+	}
+
 	entries := make([]repoEntryJSON, 0, len(s.entries))
 	for _, e := range s.entries {
 		ej := repoEntryJSON{

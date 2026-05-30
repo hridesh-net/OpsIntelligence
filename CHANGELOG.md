@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.39] — 2026-05-30
+
+### Added
+
+- **`OPSINTEL_TUI_DEBUG`** now also logs `repos.snapshot` builds: `[repos-snap] entries=N memory=BOOL scan=BOOL users=N`. Use to verify whether the registry-side load is actually populating the snapshot Go ships, when the TUI shows "No repos configured" but `opsintelligence repos list` shows entries.
+
+### Changed
+
+- Crate version bumped to `0.2.12`.
+
 ## [1.0.38] — 2026-05-29
 
 ### Fixed — the big "Status TUI shows STOPPED + empty Config/Limits/Usage" bug
