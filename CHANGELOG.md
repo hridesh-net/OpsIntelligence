@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.47] — 2026-05-30
+
+### Added — Scrun board UI mounted at `#/boards`
+
+The standalone Scrun mockup (`/Scrun/`) is now embedded in the dashboard. Visiting **Boards** loads the full Scrun shell — nav rail, layout segmented (columns / compact / swimlanes), live activity rail, theme toggle, card detail panel with HITL gate, task create / agent config / workflow / analytics screens — instead of the legacy kanban list. Branding stays "Scrun" inside the boards section; the rest of the dashboard remains OpsIntelligence.
+
+- Scrun JS/CSS copied to `internal/webui/dashboard/assets/scrun/` and shipped via the existing `go:embed` bundle. No build step.
+- `app.html` inlines the Scrun shell HTML inside `#view-boards`. Scrun's setup wizard is hidden in embedded mode; the board exists on the server already.
+- `app.js`'s `#/boards` route now calls `window.scrunMount()` (defined in `scrun/app.js`) instead of the legacy `renderBoardsView`. Legacy kanban code stays defined-but-unreachable; planned removal in v1.0.48.
+- CSS isolation: Scrun stylesheets are fetched on first /boards visit, with their `:root { … }` token blocks rewritten to `body.scrun-active { … }` so the design tokens don't leak into Overview / Tasks / Settings.
+- Demo mode by default. Cards are seeded from Scrun's bundled fixture (`data.js`). A live API adapter that reads `/api/v1/boards/{id}` and writes back via the existing endpoints lands in v1.0.48.
+
+### Added — Backend extensions enabling the Scrun feature surface
+
+- `GET /api/v1/workflow-presets` returns five preset templates (default / dev / research / support / ops) for the setup wizard.
+- `POST /api/v1/boards` now accepts an atomic seed body: `preset` (slug) or explicit `columns[]` (each with optional `gate` and `automation`), plus `agents[]` to register the board's agent workforce in one call. Per-column gate/automation overrides are persisted under `board.config.column_overrides[<column_id>]` so no schema migration is required.
+- `POST /api/v1/boards/{id}/columns` and `PUT /api/v1/boards/{id}/columns/{cid}` accept the same `gate` + `automation` fields, written through `setColumnOverride()`.
+- `POST /api/v1/boards/{id}/cards` accepts `column_id`, `assignee`, and an arbitrary `metadata` map — the Scrun forms persist `acceptance_criteria`, `labels`, `confidence`, `eta_minutes`, `hitl` etc. on the existing `metadata_json` column.
+- `PUT /api/v1/boards/{id}/cards/{cid}` merges incoming `metadata` into the card's existing metadata (set a key to `null` to remove it).
+
+### Still missing vs target (next wave)
+
+- Live API adapter wiring the Scrun UI to real boards / cards / runs (currently Demo-mode fixtures).
+- `GET /api/v1/boards/{id}/analytics` aggregation endpoint for the Analytics screen.
+- SSE `GET /api/v1/runs/{rid}/stream` for the conversation tab (Scrun panel currently polls).
+- Removal of the legacy `renderBoardsView` / `refreshBoardView` / `openBoard` / card-detail modal functions from `assets/app.js`.
+
 ## [1.0.46] — 2026-05-30
 
 ### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 5 — closes UI)

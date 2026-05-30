@@ -29,6 +29,7 @@ package gateway
 //   POST   /api/v1/personas                 Create persona
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,31 +56,59 @@ type createBoardRequest struct {
 	RepoURL  string `json:"repo_url,omitempty"`
 	RepoPath string `json:"repo_path,omitempty"`
 	Mode     string `json:"mode,omitempty"`
+	// Scrun setup-wizard: atomic seed. When `preset` is set, the seed
+	// columns are taken from the named preset (see workflowPresets).
+	// When `agents` is non-empty, each entry is registered as a
+	// BoardAgent in the same request so the wizard finishes in one shot.
+	Preset string                 `json:"preset,omitempty"`
+	Config map[string]any         `json:"config,omitempty"`
+	Agents []createAgentRequest   `json:"agents,omitempty"`
+	Columns []wizardColumn        `json:"columns,omitempty"`
+}
+
+type wizardColumn struct {
+	Name       string         `json:"name"`
+	Position   int            `json:"position"`
+	Color      string         `json:"color,omitempty"`
+	WIPLimit   *int           `json:"wip_limit,omitempty"`
+	Gate       string         `json:"gate,omitempty"`       // none | human | auto-validate
+	Automation map[string]any `json:"automation,omitempty"` // auto_assign / keep_agent / auto_validate
 }
 
 type createColumnRequest struct {
-	Name     string `json:"name"`
-	Position int    `json:"position"`
-	Color    string `json:"color,omitempty"`
-	WIPLimit *int   `json:"wip_limit,omitempty"`
+	Name       string         `json:"name"`
+	Position   int            `json:"position"`
+	Color      string         `json:"color,omitempty"`
+	WIPLimit   *int           `json:"wip_limit,omitempty"`
+	Gate       string         `json:"gate,omitempty"`
+	Automation map[string]any `json:"automation,omitempty"`
 }
 
 type createCardRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	CardType    string `json:"card_type,omitempty"`
-	Priority    string `json:"priority,omitempty"`
-	Effort      string `json:"effort,omitempty"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	CardType    string         `json:"card_type,omitempty"`
+	Priority    string         `json:"priority,omitempty"`
+	Effort      string         `json:"effort,omitempty"`
+	ColumnID    string         `json:"column_id,omitempty"`
+	Assignee    string         `json:"assignee,omitempty"`
+	// Scrun extra fields ride on metadata: acceptance_criteria, labels,
+	// confidence, eta_minutes, hitl, branch_hint, etc.
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type updateCardRequest struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	CardType    string `json:"card_type,omitempty"`
-	Priority    string `json:"priority,omitempty"`
-	Effort      string `json:"effort,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Assignee    string `json:"assignee,omitempty"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description,omitempty"`
+	CardType    string         `json:"card_type,omitempty"`
+	Priority    string         `json:"priority,omitempty"`
+	Effort      string         `json:"effort,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Assignee    string         `json:"assignee,omitempty"`
+	ColumnID    string         `json:"column_id,omitempty"`
+	// Metadata merges into the card's existing metadata. Pass null inside
+	// a key to remove it.
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type moveCardRequest struct {
@@ -158,6 +187,8 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 		s.handleAttachmentDetail(w, r, strings.TrimPrefix(path, "attachments/"))
 	case path == "personas" || path == "personas/":
 		s.handlePersonas(w, r)
+	case path == "workflow-presets" || path == "workflow-presets/":
+		s.handleWorkflowPresets(w, r)
 	case path == "autopilot" || path == "autopilot/":
 		s.handleAutopilotList(w, r)
 	case strings.HasPrefix(path, "autopilot/"):
@@ -270,18 +301,63 @@ func (s *AuthService) handleBoards(w http.ResponseWriter, r *http.Request) {
 			RepoURL:  req.RepoURL,
 			RepoPath: req.RepoPath,
 			Mode:     mode,
+			Config:   req.Config,
+		}
+		// Store per-column gate/automation overrides on board.Config so
+		// the Scrun UI can render them without a schema migration. Keyed
+		// by column position; resolved to column_id after columns insert.
+		colSpecs := req.Columns
+		if len(colSpecs) == 0 {
+			colSpecs = presetColumns(req.Preset)
+		}
+		if board.Config == nil && hasColumnOverrides(colSpecs) {
+			board.Config = map[string]any{}
 		}
 		if err := s.Store.Boards().Create(r.Context(), board); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		// Seed default columns
-		defaults := []struct{ name string; pos int }{
-			{"Inbox", 0}, {"Backlog", 1}, {"Todo", 2}, {"In Progress", 3}, {"Review", 4}, {"Done", 5},
+		overrides := map[string]any{}
+		for _, d := range colSpecs {
+			col := &datastore.BoardColumn{
+				BoardID:  board.ID,
+				Name:     d.Name,
+				Position: d.Position,
+				Color:    d.Color,
+				WIPLimit: d.WIPLimit,
+			}
+			if err := s.Store.BoardColumns().Create(r.Context(), col); err != nil {
+				continue
+			}
+			if d.Gate != "" || len(d.Automation) > 0 {
+				overrides[col.ID] = map[string]any{
+					"gate":       d.Gate,
+					"automation": d.Automation,
+				}
+			}
 		}
-		for _, d := range defaults {
-			col := &datastore.BoardColumn{BoardID: board.ID, Name: d.name, Position: d.pos}
-			_ = s.Store.BoardColumns().Create(r.Context(), col)
+		if len(overrides) > 0 {
+			if board.Config == nil {
+				board.Config = map[string]any{}
+			}
+			board.Config["column_overrides"] = overrides
+			_ = s.Store.Boards().Update(r.Context(), board)
+		}
+		// Optional: register agents in one shot.
+		for _, a := range req.Agents {
+			if a.Name == "" || a.AgentType == "" {
+				continue
+			}
+			agent := &datastore.BoardAgent{
+				BoardID:    board.ID,
+				Name:       a.Name,
+				AgentType:  a.AgentType,
+				ProviderID: a.ProviderID,
+				Config:     a.Config,
+				IsDefault:  a.IsDefault,
+				IsActive:   true,
+			}
+			_ = s.Store.BoardAgents().Create(r.Context(), agent)
 		}
 		writeJSON(w, http.StatusCreated, board)
 	default:
@@ -440,10 +516,33 @@ func (s *AuthService) handleBoardColumns(w http.ResponseWriter, r *http.Request,
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if req.Gate != "" || len(req.Automation) > 0 {
+			s.setColumnOverride(r.Context(), boardID, col.ID, req.Gate, req.Automation)
+		}
 		writeJSON(w, http.StatusCreated, col)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// setColumnOverride writes a per-column gate/automation override onto
+// the board's Config map so the Scrun UI can read it back. Stored under
+// board.config.column_overrides.<column_id> = {gate, automation}.
+func (s *AuthService) setColumnOverride(ctx context.Context, boardID, columnID, gate string, automation map[string]any) {
+	board, err := s.Store.Boards().Get(ctx, boardID)
+	if err != nil || board == nil {
+		return
+	}
+	if board.Config == nil {
+		board.Config = map[string]any{}
+	}
+	ovRaw, _ := board.Config["column_overrides"].(map[string]any)
+	if ovRaw == nil {
+		ovRaw = map[string]any{}
+	}
+	ovRaw[columnID] = map[string]any{"gate": gate, "automation": automation}
+	board.Config["column_overrides"] = ovRaw
+	_ = s.Store.Boards().Update(ctx, board)
 }
 
 func (s *AuthService) handleSingleColumn(w http.ResponseWriter, r *http.Request, boardID, columnID string) {
@@ -478,6 +577,9 @@ func (s *AuthService) handleSingleColumn(w http.ResponseWriter, r *http.Request,
 		col.Position = req.Position
 		col.Color = req.Color
 		col.WIPLimit = req.WIPLimit
+		if req.Gate != "" || len(req.Automation) > 0 {
+			s.setColumnOverride(r.Context(), boardID, col.ID, req.Gate, req.Automation)
+		}
 		if err := s.Store.BoardColumns().Update(r.Context(), col); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -536,13 +638,17 @@ func (s *AuthService) handleBoardCards(w http.ResponseWriter, r *http.Request, b
 			writeJSONError(w, http.StatusBadRequest, "title required")
 			return
 		}
-		// Place new cards in the first column (Inbox, position 0)
+		// Place new cards in the first column (Inbox, position 0) unless
+		// the caller explicitly picked one (Scrun's task form does).
 		cols, err := s.Store.BoardColumns().ListByBoard(r.Context(), boardID)
 		if err != nil || len(cols) == 0 {
 			writeJSONError(w, http.StatusInternalServerError, "no columns found")
 			return
 		}
-		columnID := cols[0].ID
+		columnID := req.ColumnID
+		if columnID == "" {
+			columnID = cols[0].ID
+		}
 		cardType := req.CardType
 		if cardType == "" {
 			cardType = "feature"
@@ -551,14 +657,21 @@ func (s *AuthService) handleBoardCards(w http.ResponseWriter, r *http.Request, b
 		if priority == "" {
 			priority = "p2"
 		}
+		assigneeType := ""
+		if req.Assignee != "" {
+			assigneeType = "agent"
+		}
 		card := &datastore.BoardCard{
-			BoardID:     boardID,
-			ColumnID:    columnID,
-			Title:       req.Title,
-			Description: req.Description,
-			CardType:    cardType,
-			Priority:    priority,
-			Effort:      req.Effort,
+			BoardID:      boardID,
+			ColumnID:     columnID,
+			Title:        req.Title,
+			Description:  req.Description,
+			CardType:     cardType,
+			Priority:     priority,
+			Effort:       req.Effort,
+			Assignee:     req.Assignee,
+			AssigneeType: assigneeType,
+			Metadata:     req.Metadata,
 		}
 		if err := s.Store.BoardCards().Create(r.Context(), card); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -661,6 +774,24 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 		}
 		if req.Assignee != "" {
 			card.Assignee = req.Assignee
+			if card.AssigneeType == "" {
+				card.AssigneeType = "agent"
+			}
+		}
+		if req.ColumnID != "" {
+			card.ColumnID = req.ColumnID
+		}
+		if len(req.Metadata) > 0 {
+			if card.Metadata == nil {
+				card.Metadata = map[string]any{}
+			}
+			for k, v := range req.Metadata {
+				if v == nil {
+					delete(card.Metadata, k)
+				} else {
+					card.Metadata[k] = v
+				}
+			}
 		}
 		if err := s.Store.BoardCards().Update(r.Context(), card); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -1321,4 +1452,110 @@ func (s *AuthService) handleAutopilotDetail(w http.ResponseWriter, r *http.Reque
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
+}
+
+// ── Workflow presets ──────────────────────────────────────────────────
+//
+// Static templates that the Scrun setup wizard renders as one-click
+// starting points. The "default" preset matches the legacy
+// 6-column seed so old callers don't lose their muscle memory.
+
+type workflowPresetDef struct {
+	Slug        string         `json:"slug"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Columns     []wizardColumn `json:"columns"`
+}
+
+func intPtr(v int) *int { return &v }
+
+var workflowPresets = []workflowPresetDef{
+	{
+		Slug: "default", Name: "Default", Description: "Inbox → Backlog → Todo → In Progress → Review → Done",
+		Columns: []wizardColumn{
+			{Name: "Inbox", Position: 0, Color: "#94a3b8"},
+			{Name: "Backlog", Position: 1, Color: "#64748b"},
+			{Name: "Todo", Position: 2, Color: "#3b82f6", WIPLimit: intPtr(8)},
+			{Name: "In Progress", Position: 3, Color: "#f59e0b", WIPLimit: intPtr(4)},
+			{Name: "Review", Position: 4, Color: "#a855f7", Gate: "human"},
+			{Name: "Done", Position: 5, Color: "#10b981"},
+		},
+	},
+	{
+		Slug: "dev", Name: "Development", Description: "Standard agent dev flow with auto-validate gate before Review.",
+		Columns: []wizardColumn{
+			{Name: "Backlog", Position: 0, Color: "#64748b"},
+			{Name: "Spec", Position: 1, Color: "#3b82f6", WIPLimit: intPtr(4)},
+			{Name: "Build", Position: 2, Color: "#f59e0b", WIPLimit: intPtr(3), Automation: map[string]any{"auto_assign": true, "keep_agent": true}},
+			{Name: "Validate", Position: 3, Color: "#06b6d4", Gate: "auto-validate"},
+			{Name: "Review", Position: 4, Color: "#a855f7", Gate: "human"},
+			{Name: "Done", Position: 5, Color: "#10b981"},
+		},
+	},
+	{
+		Slug: "research", Name: "Research", Description: "Lighter pipeline tuned for spikes and discovery work.",
+		Columns: []wizardColumn{
+			{Name: "Ideas", Position: 0, Color: "#94a3b8"},
+			{Name: "Investigating", Position: 1, Color: "#3b82f6", WIPLimit: intPtr(3)},
+			{Name: "Writing", Position: 2, Color: "#a855f7"},
+			{Name: "Shared", Position: 3, Color: "#10b981"},
+		},
+	},
+	{
+		Slug: "support", Name: "Support", Description: "Triage queue for inbound bugs / Sentry imports.",
+		Columns: []wizardColumn{
+			{Name: "Triage", Position: 0, Color: "#ef4444"},
+			{Name: "Diagnosing", Position: 1, Color: "#f59e0b", WIPLimit: intPtr(4)},
+			{Name: "Fix", Position: 2, Color: "#3b82f6", WIPLimit: intPtr(3), Automation: map[string]any{"auto_assign": true}},
+			{Name: "Verifying", Position: 3, Color: "#06b6d4", Gate: "auto-validate"},
+			{Name: "Closed", Position: 4, Color: "#10b981"},
+		},
+	},
+	{
+		Slug: "ops", Name: "Operations", Description: "Change-management style flow with a human gate on rollout.",
+		Columns: []wizardColumn{
+			{Name: "Backlog", Position: 0, Color: "#64748b"},
+			{Name: "Planned", Position: 1, Color: "#3b82f6"},
+			{Name: "Executing", Position: 2, Color: "#f59e0b", WIPLimit: intPtr(2)},
+			{Name: "Rollout", Position: 3, Color: "#a855f7", Gate: "human"},
+			{Name: "Done", Position: 4, Color: "#10b981"},
+		},
+	},
+}
+
+func presetColumns(slug string) []wizardColumn {
+	if slug == "" {
+		slug = "default"
+	}
+	for _, p := range workflowPresets {
+		if p.Slug == slug {
+			out := make([]wizardColumn, len(p.Columns))
+			copy(out, p.Columns)
+			return out
+		}
+	}
+	// Unknown preset → fall back to default so the board still seeds.
+	return workflowPresets[0].Columns
+}
+
+func hasColumnOverrides(cols []wizardColumn) bool {
+	for _, c := range cols {
+		if c.Gate != "" || len(c.Automation) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	p := auth.PrincipalFrom(r.Context())
+	if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
 }

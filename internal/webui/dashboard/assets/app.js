@@ -208,6 +208,37 @@
     }
   }
 
+  // Inject Scrun stylesheets on first /boards visit, scoping the
+  // ":root" design-token blocks to body.scrun-active so they don't
+  // bleed into the rest of the dashboard once loaded.
+  let scrunStylesLoaded = false;
+  async function ensureScrunStyles() {
+    if (scrunStylesLoaded) return;
+    scrunStylesLoaded = true;
+    const sheets = [
+      "scrun/scrun.css",
+      "scrun/scrun-board.css",
+      "scrun/scrun-screens.css",
+      "scrun/scrun-analytics.css",
+      "scrun/setup.css",
+    ];
+    for (const href of sheets) {
+      try {
+        const res = await fetch(href);
+        let css = await res.text();
+        // Scope :root token blocks so dashboard's own tokens win when
+        // the user navigates away from /boards.
+        css = css.replace(/:root\s*\{/g, "body.scrun-active {");
+        const style = document.createElement("style");
+        style.dataset.scrun = href;
+        style.textContent = css;
+        document.head.appendChild(style);
+      } catch (e) {
+        console.warn("scrun css load failed", href, e);
+      }
+    }
+  }
+
   async function bootAppPage() {
     const me = await getJSON(`${API}/whoami`).catch(() => null);
     if (!me || me.type !== "user") {
@@ -269,6 +300,9 @@
     clearOverviewPoll();
     clearBoardsPoll();
     const { view, sub } = parseHash();
+    // Leaving the Scrun shell? Drop the body class so the dashboard's
+    // header padding comes back.
+    if (view !== "boards") document.body.classList.remove("scrun-active");
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
     if (target) {
@@ -295,9 +329,16 @@
         overviewPollId = setInterval(refreshOverviewStatus, 10000);
         break;
       case "boards":
-        titleEl.textContent = "Kanban Boards";
-        subEl.textContent = "Agent-driven kanban boards for your projects.";
-        renderBoardsView(actionsEl);
+        // Scrun shell takes over the section; the dashboard header
+        // (title/sub/actions) is hidden by scrun-bridge.css when
+        // body.scrun-active is set. CSS is injected on first mount
+        // because Scrun's :root tokens would otherwise leak into the
+        // rest of the dashboard.
+        document.body.classList.add("scrun-active");
+        ensureScrunStyles();
+        if (typeof window.scrunMount === "function") {
+          try { window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
+        }
         break;
       case "tasks":
         titleEl.textContent = "Tasks";
