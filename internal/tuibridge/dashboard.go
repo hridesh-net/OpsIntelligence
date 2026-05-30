@@ -93,6 +93,14 @@ type DashboardOptions struct {
 	SessionUsage *SessionUsage
 	Overlay      bool
 	LogDir       string
+
+	// EditConfig, when non-nil, lets the Rust TUI patch opsintelligence.yaml
+	// directly from the dashboard via `e` on an editable row. The callback
+	// receives the dotted yaml_path (e.g. "agent.max_iterations") and the new
+	// value as a string. Return `(humanMsg, nil)` on success and `(_, err)`
+	// to surface a one-line error to the user. The host typically wires this
+	// to mergeOnboardYAML + os.WriteFile.
+	EditConfig func(yamlPath, value string) (string, error)
 }
 
 // RunDashboard launches the embedded Rust TUI in dashboard mode and pumps a
@@ -100,6 +108,13 @@ type DashboardOptions struct {
 // subprocess exits.
 func RunDashboard(ctx context.Context, opts DashboardOptions) error {
 	quit := make(chan struct{})
+	var bridge *Bridge
+	sendBack := func(method string, params any) {
+		if bridge != nil {
+			_ = bridge.Send(method, params)
+		}
+	}
+
 	handler := func(msg Message) {
 		switch msg.Method {
 		case "view.exit", "view.dismiss":
@@ -108,6 +123,38 @@ func RunDashboard(ctx context.Context, opts DashboardOptions) error {
 			default:
 				close(quit)
 			}
+		case "dashboard.edit":
+			// {yaml_path: "...", value: "..."} — patch opsintelligence.yaml
+			// via the same merge path the wizard uses, then echo a result.
+			var p struct {
+				YamlPath string `json:"yaml_path"`
+				Value    string `json:"value"`
+			}
+			if err := json.Unmarshal(msg.Params, &p); err != nil {
+				sendBack("dashboard.edit_result", map[string]any{
+					"ok":    false,
+					"error": fmt.Sprintf("parse: %v", err),
+				})
+				return
+			}
+			if opts.EditConfig == nil {
+				sendBack("dashboard.edit_result", map[string]any{
+					"ok":        false,
+					"yaml_path": p.YamlPath,
+					"error":     "edit handler not configured by host",
+				})
+				return
+			}
+			msgStr, err := opts.EditConfig(p.YamlPath, p.Value)
+			res := map[string]any{
+				"ok":        err == nil,
+				"yaml_path": p.YamlPath,
+				"message":   msgStr,
+			}
+			if err != nil {
+				res["error"] = err.Error()
+			}
+			sendBack("dashboard.edit_result", res)
 		}
 	}
 
@@ -115,6 +162,7 @@ func RunDashboard(ctx context.Context, opts DashboardOptions) error {
 	if err != nil {
 		return err
 	}
+	bridge = b
 	defer func() { _ = b.Close(2 * time.Second) }()
 
 	if err := b.Send("view.push", map[string]any{
@@ -166,9 +214,31 @@ func newDashboardCache(info DashboardInfo) *dashboardCache {
 	}
 }
 
+// kvPair is one row on the Config / Limits / Usage tabs. YamlPath, when set,
+// flags the row as editable in the Rust TUI: pressing `e` opens an inline
+// editor and the resulting value is patched into opsintelligence.yaml via
+// the dashboard.edit handler.
 type kvPair struct {
-	K string `json:"k"`
-	V string `json:"v"`
+	K        string   `json:"k"`
+	V        string   `json:"v"`
+	YamlPath string   `json:"yaml_path,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Hint     string   `json:"hint,omitempty"`
+}
+
+// kv constructs a read-only row (no yaml_path, no edit).
+func kv(k, v string) kvPair { return kvPair{K: k, V: v} }
+
+// kvEdit constructs an editable row backed by a yaml path. `hint` is a
+// short one-line description shown under the editor (e.g. "integer ≥ 1").
+func kvEdit(k, v, yamlPath, hint string) kvPair {
+	return kvPair{K: k, V: v, YamlPath: yamlPath, Hint: hint}
+}
+
+// kvSelect is like kvEdit but presents `choices` as a vertical select list
+// instead of free-form text input. Use for booleans and enums.
+func kvSelect(k, v, yamlPath string, choices []string) kvPair {
+	return kvPair{K: k, V: v, YamlPath: yamlPath, Choices: choices}
 }
 
 type snapStatus struct {
@@ -258,18 +328,24 @@ func (c *dashboardCache) buildStatus(ps psResult) snapStatus {
 func (c *dashboardCache) buildConfig() []kvPair {
 	i := c.info
 	return []kvPair{
-		{"config file", nz(i.ConfigPath)},
-		{"state_dir", nz(i.StateDir)},
-		{"cwd", nz(i.CWD)},
-		{"routing.default", nz(i.RoutingModel)},
-		{"gateway.listen", nz(i.GatewayHostPort)},
-		{"gateway.public", nz(i.GatewayPublicBase)},
-		{"enterprise", boolStr(i.Enterprise)},
-		{"planning", nz(i.Planning)},
-		{"reflection", nz(i.Reflection)},
-		{"mempalace", boolStr(i.MemPalaceEnabled)},
-		{"local_intel", boolStr(i.LocalIntelEnabled)},
-		{"mcp.clients", strconv.Itoa(i.MCPClientCount)},
+		kv("config file", nz(i.ConfigPath)),
+		kv("state_dir", nz(i.StateDir)),
+		kv("cwd", nz(i.CWD)),
+		kvEdit("routing.default", nz(i.RoutingModel), "routing.default",
+			"<provider>/<model> — e.g. anthropic/claude-sonnet-4-5"),
+		kv("gateway.listen", nz(i.GatewayHostPort)),       // host:port; restart-required
+		kv("gateway.public", nz(i.GatewayPublicBase)),     // derived
+		kvSelect("enterprise", boolStr(i.Enterprise), "enterprise.enabled",
+			[]string{"true", "false"}),
+		kvSelect("planning", nz(i.Planning), "agent.planning.mode",
+			[]string{"off", "lightweight", "auto", "deep"}),
+		kvSelect("reflection", nz(i.Reflection), "agent.reflection",
+			[]string{"true", "false"}),
+		kvSelect("mempalace", boolStr(i.MemPalaceEnabled), "memory.mempalace.enabled",
+			[]string{"true", "false"}),
+		kvSelect("local_intel", boolStr(i.LocalIntelEnabled), "agent.local_intel.enabled",
+			[]string{"true", "false"}),
+		kv("mcp.clients", strconv.Itoa(i.MCPClientCount)),
 	}
 }
 
@@ -284,36 +360,44 @@ func (c *dashboardCache) buildLimits() []kvPair {
 		maxSessions = "~500+  (tune max_open_conns)"
 	}
 	return []kvPair{
-		{"max_iterations", strconv.Itoa(L.MaxIterations)},
-		{"working_token_budget", strconv.Itoa(L.WorkingTokenBudget)},
-		{"mempalace.search_limit", strconv.Itoa(L.MemPalaceSearchLimit)},
-		{"gateway.max_ws_clients", strconv.Itoa(L.MaxWebSocketClients)},
-		{"subagent.max_concurrent", strconv.Itoa(L.SubagentMaxConcurrent)},
-		{"subagent.retain_limit", strconv.Itoa(L.SubagentRetainLimit)},
-		{"local_intel.max_tokens", strconv.Itoa(L.LocalIntelMaxTokens)},
-		{"local_intel.smart_route_max", strconv.Itoa(L.SmartRoutingMaxTokens)},
-		{"session_store", "in-process RAM"},
-		{"datastore", ds},
-		{"horizontal_scaling", "✗  single-instance"},
-		{"recommended_max_sessions", maxSessions},
+		kvEdit("max_iterations", strconv.Itoa(L.MaxIterations), "agent.max_iterations",
+			"integer ≥ 1 — agent's per-turn step budget"),
+		kvEdit("working_token_budget", strconv.Itoa(L.WorkingTokenBudget), "memory.working_token_budget",
+			"integer ≥ 1 — running-conversation token budget"),
+		kvEdit("mempalace.search_limit", strconv.Itoa(L.MemPalaceSearchLimit), "memory.mempalace.search_limit",
+			"integer ≥ 1 — top-K memory hits per turn"),
+		kvEdit("gateway.max_ws_clients", strconv.Itoa(L.MaxWebSocketClients), "gateway.max_websocket_clients",
+			"integer ≥ 1 — concurrent dashboard WS connections"),
+		kvEdit("subagent.max_concurrent", strconv.Itoa(L.SubagentMaxConcurrent), "agent.subagent_tasks.max_concurrent",
+			"integer ≥ 1 — parallel sub-agents per turn"),
+		kvEdit("subagent.retain_limit", strconv.Itoa(L.SubagentRetainLimit), "agent.subagent_tasks.retain_limit",
+			"integer ≥ 1 — finished sub-tasks kept for replay"),
+		kvEdit("local_intel.max_tokens", strconv.Itoa(L.LocalIntelMaxTokens), "agent.local_intel.max_tokens",
+			"integer ≥ 0"),
+		kvEdit("local_intel.smart_route_max", strconv.Itoa(L.SmartRoutingMaxTokens), "agent.local_intel.smart_routing_max_tokens",
+			"integer ≥ 0"),
+		kv("session_store", "in-process RAM"),
+		kv("datastore", ds),
+		kv("horizontal_scaling", "✗  single-instance"),
+		kv("recommended_max_sessions", maxSessions),
 	}
 }
 
 func (c *dashboardCache) buildUsage(s *SessionUsage, ps psResult) []kvPair {
 	if s != nil && s.Turns > 0 {
 		return []kvPair{
-			{"turns_completed", strconv.Itoa(s.Turns)},
-			{"prompt_tokens", fmtNumInt(s.PromptTokens)},
-			{"completion_tokens", fmtNumInt(s.CompletionTokens)},
-			{"cache_read", fmtNumInt(s.CacheReadTokens)},
-			{"cache_write", fmtNumInt(s.CacheWriteTokens)},
-			{"total_tokens", fmtNumInt(s.TotalTokens)},
+			kv("turns_completed", strconv.Itoa(s.Turns)),
+			kv("prompt_tokens", fmtNumInt(s.PromptTokens)),
+			kv("completion_tokens", fmtNumInt(s.CompletionTokens)),
+			kv("cache_read", fmtNumInt(s.CacheReadTokens)),
+			kv("cache_write", fmtNumInt(s.CacheWriteTokens)),
+			kv("total_tokens", fmtNumInt(s.TotalTokens)),
 		}
 	}
 	if c.info.Status.PID > 0 && ps.alive {
 		return []kvPair{
-			{"process_rss", fmt.Sprintf("%.1f MB", float64(ps.rssKB)/1024.0)},
-			{"pid", strconv.Itoa(c.info.Status.PID)},
+			kv("process_rss", fmt.Sprintf("%.1f MB", float64(ps.rssKB)/1024.0)),
+			kv("pid", strconv.Itoa(c.info.Status.PID)),
 		}
 	}
 	return nil

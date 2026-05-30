@@ -582,6 +582,36 @@ pub struct ToggleInfo {
 pub struct KeyValue {
     pub k: String,
     pub v: String,
+    /// When set, pressing `e` on this row opens an inline editor; submitting
+    /// the new value ships a `dashboard.edit` request to Go with this
+    /// `yaml_path` (e.g. "agent.max_iterations") so it can patch the on-disk
+    /// opsintelligence.yaml via mergeOnboardYAML.
+    #[serde(default)]
+    pub yaml_path: String,
+    /// Optional select choices. When non-empty the editor presents these as
+    /// a vertical list instead of a free-form text input. Useful for booleans
+    /// and enumerations like `routing.default` / `planning.mode`.
+    #[serde(default)]
+    pub choices: Vec<String>,
+    /// Optional short hint shown under the editor (e.g. "integer ≥ 1").
+    #[serde(default)]
+    pub hint: String,
+}
+
+/// Sent by Go back to Rust after a `dashboard.edit` request. `ok=true` means
+/// the YAML was patched on disk; `error` carries a one-line reason on failure
+/// (parse error, validation failure, write error). The Rust side shows the
+/// message as a transient toast at the bottom of the dashboard.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DashboardEditResult {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub yaml_path: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

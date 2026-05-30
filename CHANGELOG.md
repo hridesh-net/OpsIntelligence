@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.33] — 2026-05-29
+
+### Added — Editable, persistable config from the Status dashboard
+
+- **Inline config editor on the `status` TUI**. Press `e` on the Config or Limits tabs to edit any flagged row. Free-form values open a text input; boolean / enum rows open a vertical select. Hitting `⏎` ships the new value to Go which patches `opsintelligence.yaml` via the same `mergeOnboardYAML` path the wizard uses, so edits survive restart.
+- **Editable rows** (this wave):
+  - Config: `routing.default`, `enterprise`, `agent.planning.mode`, `agent.reflection`, `memory.mempalace.enabled`, `agent.local_intel.enabled`.
+  - Limits: `agent.max_iterations`, `memory.working_token_budget`, `memory.mempalace.search_limit`, `gateway.max_websocket_clients`, `agent.subagent_tasks.max_concurrent`, `agent.subagent_tasks.retain_limit`, `agent.local_intel.max_tokens`, `agent.local_intel.smart_routing_max_tokens`.
+- **Toast feedback** at the bottom of the dashboard reports save success (green) or failure (red) for ~5s after each edit, so the user knows the YAML was patched without leaving the TUI.
+- **Type coercion** on save: bare integers stay integers, `true`/`false` become bools, floats stay floats, anything else is a string scalar — so the resulting YAML round-trips cleanly.
+
+### Protocol additions
+
+- `KeyValue` now carries `yaml_path` / `choices` / `hint` (all optional, backwards compatible).
+- New `dashboard.edit` notification (Rust → Go) and `dashboard.edit_result` notification (Go → Rust).
+- New `DashboardOptions.EditConfig` callback (Go side); the CLI's `status` command wires it to `mergeOnboardYAML + os.WriteFile`.
+
+### Changed
+
+- Crate version bumped to `0.2.6`.
+
 ## [1.0.32] — 2026-05-29
 
 ### Fixed — TUI correctness + diagnosability pass

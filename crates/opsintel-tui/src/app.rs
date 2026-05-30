@@ -298,6 +298,15 @@ fn main_loop<B: ratatui::backend::Backend>(
                                 .send(Message::notification("view.exit", Value::Null));
                             return Ok(());
                         }
+                        DashboardOutbound::Edit { yaml_path, value } => {
+                            let _ = tx_out.send(Message::notification(
+                                "dashboard.edit",
+                                json!({
+                                    "yaml_path": yaml_path,
+                                    "value": value,
+                                }),
+                            ));
+                        }
                         DashboardOutbound::None => {}
                     },
                     View::Repos(r) => match r.handle_key(key) {
@@ -454,6 +463,17 @@ fn handle_inbound(view: &mut View, msg: Message, tx_out: &Sender<Message>) {
                 if let Some(p) = msg.params {
                     if let Ok(snap) = serde_json::from_value::<DashboardSnapshot>(p) {
                         d.apply_snapshot(snap);
+                    }
+                }
+            }
+        }
+        "dashboard.edit_result" => {
+            if let View::Dashboard(d) = view {
+                if let Some(p) = msg.params {
+                    if let Ok(res) =
+                        serde_json::from_value::<crate::protocol::DashboardEditResult>(p)
+                    {
+                        d.apply_edit_result(res);
                     }
                 }
             }

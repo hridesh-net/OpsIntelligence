@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/channels/msteams"
 	"github.com/opsintelligence/opsintelligence/internal/dirs"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -67,7 +69,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.32" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.33" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -651,14 +653,92 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				gwBind = "loopback"
 			}
 			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind, nil)
+			configPath := gf.configPath
+			if configPath == "" {
+				configPath = config.DefaultConfigPath()
+			}
 			return tuibridge.RunDashboard(cmd.Context(), tuibridge.DashboardOptions{
 				Info:         dash,
 				ContextLabel: "opsintelligence status",
 				Overlay:      false,
 				LogDir:       dash.LogsDir,
+				EditConfig:   makeDashboardConfigEditor(configPath),
 			})
 		},
 	}
+}
+
+// makeDashboardConfigEditor returns a callback that writes a single YAML
+// key/value pair to the config file by reusing the wizard's mergeOnboardYAML
+// path. The returned human message is shown as a transient toast in the TUI.
+func makeDashboardConfigEditor(configPath string) func(string, string) (string, error) {
+	return func(yamlPath, value string) (string, error) {
+		yamlPath = strings.TrimSpace(yamlPath)
+		if yamlPath == "" {
+			return "", fmt.Errorf("yaml path is empty")
+		}
+		patch, err := buildSingleKeyYAMLPatch(yamlPath, strings.TrimSpace(value))
+		if err != nil {
+			return "", err
+		}
+		merged, err := mergeOnboardYAML(configPath, patch)
+		if err != nil {
+			return "", fmt.Errorf("merge: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			return "", fmt.Errorf("mkdir: %w", err)
+		}
+		if err := os.WriteFile(configPath, merged, 0o600); err != nil {
+			return "", fmt.Errorf("write: %w", err)
+		}
+		return fmt.Sprintf("saved %s = %s — restart for the daemon to pick it up", yamlPath, value), nil
+	}
+}
+
+// buildSingleKeyYAMLPatch turns ("agent.max_iterations", "12") into:
+//
+//	agent:
+//	  max_iterations: 12
+//
+// with type coercion: bare integers stay integers, "true"/"false" become bools,
+// and floats stay floats so YAML round-trips don't quote them. Everything else
+// is emitted as a string scalar.
+func buildSingleKeyYAMLPatch(yamlPath, raw string) ([]byte, error) {
+	parts := strings.Split(yamlPath, ".")
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			return nil, fmt.Errorf("invalid yaml path: %q", yamlPath)
+		}
+	}
+	val := coerceYAMLScalar(raw)
+	// Build nested map: a.b.c = val → {a: {b: {c: val}}}
+	var node any = val
+	for i := len(parts) - 1; i >= 0; i-- {
+		node = map[string]any{parts[i]: node}
+	}
+	return yaml.Marshal(node)
+}
+
+func coerceYAMLScalar(raw string) any {
+	r := strings.TrimSpace(raw)
+	if r == "" {
+		return ""
+	}
+	switch strings.ToLower(r) {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "null", "~":
+		return nil
+	}
+	if i, err := strconv.ParseInt(r, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(r, 64); err == nil {
+		return f
+	}
+	return raw
 }
 
 func restartCmd(gf *globalFlags) *cobra.Command {
