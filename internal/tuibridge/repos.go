@@ -195,7 +195,12 @@ func (s *reposState) setSelected(idx int) {
 	if idx < 0 {
 		idx = 0
 	}
+	prev := s.selected
 	s.selected = idx
+	// Only reset the graph cursor when we actually move to a different repo.
+	if idx != prev {
+		s.selectedNodeID = ""
+	}
 	s.unlockedRefreshSelectedContent()
 }
 
@@ -223,11 +228,13 @@ func (s *reposState) refreshSelectedContent() {
 }
 
 func (s *reposState) unlockedRefreshSelectedContent() {
+	// NOTE: do NOT reset s.selectedNodeID here. This function runs on every
+	// 3s registry tick — wiping the graph cursor every refresh made the user's
+	// up/down navigation jump back to node[0] every snapshot. The cursor is
+	// reset in setSelected() when the user actually switches repos.
 	s.memory = nil
 	s.scan = nil
 	s.callGraph = nil
-	// Reset the per-repo graph cursor when the active repo changes.
-	s.selectedNodeID = ""
 	if s.selected >= len(s.entries) {
 		return
 	}

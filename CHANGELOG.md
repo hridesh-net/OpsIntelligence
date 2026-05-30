@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.41] — 2026-05-30
+
+### Fixed
+
+- **Graph tab cursor jumped back to the first node every 3 seconds.** The 3s `reloadRegistry` tick called `unlockedRefreshSelectedContent`, which unconditionally reset `selectedNodeID = ""`. That wiped the user's `↑`/`↓` graph cursor on every snapshot push so navigation was effectively unusable. The cursor reset now lives in `setSelected` and only fires when the user actually switches *repos*; navigating within the call graph of the same repo is sticky.
+
+### Changed
+
+- Crate version bumped to `0.2.14`.
+
 ## [1.0.40] — 2026-05-30
 
 ### Fixed — Repos TUI showed "No repos configured" despite registry having entries
