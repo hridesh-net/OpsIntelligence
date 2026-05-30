@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.37] — 2026-05-29
+
+### Added — Protocol diagnostics
+
+- **`OPSINTEL_TUI_DEBUG=/path/to/log`** — when set, the bridge appends one line per `dashboard.snapshot` to the given file with `info.PID`, `info.Version`, `ps.alive`, `ps.cpu` so you can verify what the daemon-side cache actually sees.
+- **`OPSINTEL_TUI_PROTO_TRACE=/path/to/log`** — when set, the bridge appends every outgoing JSON-RPC message to the file (prefixed with `→`). Useful for diffing actual wire data against what Rust deserializes.
+- Both env vars are passive: they only fire when set, so no overhead on normal runs.
+
+### Changed
+
+- Crate version bumped to `0.2.10`.
+
 ## [1.0.36] — 2026-05-29
 
 ### Added — Realtime progress streaming for out-of-process Repo Intel TUI

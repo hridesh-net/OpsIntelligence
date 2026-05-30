@@ -293,6 +293,13 @@ type snapshot struct {
 
 func (c *dashboardCache) snapshot(opts DashboardOptions) snapshot {
 	ps := fetchPS(c.info.Status.PID)
+	if path := os.Getenv("OPSINTEL_TUI_DEBUG"); path != "" {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "[dash-snap] info.PID=%d info.Version=%q ps.alive=%v ps.cpu=%s\n",
+				c.info.Status.PID, c.info.Status.Version, ps.alive, ps.cpu)
+			_ = f.Close()
+		}
+	}
 	return snapshot{
 		Status:         c.buildStatus(ps),
 		Config:         c.buildConfig(),

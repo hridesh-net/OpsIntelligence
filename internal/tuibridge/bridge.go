@@ -201,6 +201,15 @@ func (b *Bridge) writeMessage(msg Message) error {
 	if err != nil {
 		return err
 	}
+	// Optional protocol trace: when OPSINTEL_TUI_PROTO_TRACE points to a
+	// file path, append outgoing messages to it. Enable with:
+	//   OPSINTEL_TUI_PROTO_TRACE=/tmp/tui.proto opsintelligence status
+	if path := os.Getenv("OPSINTEL_TUI_PROTO_TRACE"); path != "" {
+		if f, ferr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); ferr == nil {
+			fmt.Fprintf(f, "→ %s\n", string(raw))
+			_ = f.Close()
+		}
+	}
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
 	if _, err := b.stdin.Write(append(raw, '\n')); err != nil {
