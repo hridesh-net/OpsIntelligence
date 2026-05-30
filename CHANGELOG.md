@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.35] — 2026-05-29
+
+### Fixed
+
+- **`opsintelligence tui-ping` failed in headless CI runners** (and elsewhere) because the Rust `--headless` mode read JSON from `stdin` while the Go bridge writes to fd 3 of the subprocess via `ExtraFiles`. The headless path now respects `OPSINTEL_TUI_PROTO_IN`/`OPSINTEL_TUI_PROTO_OUT` when set and falls back to stdin/stdout when not. CI smoke test passes again.
+
+### Changed
+
+- Crate version bumped to `0.2.8`.
+
 ## [1.0.34] — 2026-05-29
 
 ### Added — Repo Intelligence parity pass

@@ -34,18 +34,43 @@ fn init_logging() {
     }
 }
 
-/// Headless mode: read one JSON message from stdin, respond, exit.
+/// Headless mode: read one JSON message from the inherited protocol fd
+/// (`OPSINTEL_TUI_PROTO_IN`, set by the Go bridge) when present, falling back
+/// to plain stdin for standalone debugging. Reply on the matching out fd or
+/// stdout. This keeps `opsintelligence tui-ping` working both under the Go
+/// bridge (which uses fds 3/4 for protocol) AND in a headless GHA runner
+/// where stdin is /dev/null.
 fn run_headless() -> Result<()> {
+    use std::io::BufRead;
+    #[cfg(unix)]
+    use std::os::fd::FromRawFd;
+
+    let (in_fd, out_fd) = (
+        std::env::var("OPSINTEL_TUI_PROTO_IN").ok().and_then(|s| s.parse::<i32>().ok()),
+        std::env::var("OPSINTEL_TUI_PROTO_OUT").ok().and_then(|s| s.parse::<i32>().ok()),
+    );
+
     let mut line = String::new();
-    io::stdin()
-        .read_to_string(&mut line)
-        .context("read stdin")?;
+    #[cfg(unix)]
+    if let (Some(i), Some(_o)) = (in_fd, out_fd) {
+        // SAFETY: fds 3/4 were inherited from the Go parent.
+        let f: std::fs::File = unsafe { std::fs::File::from_raw_fd(i) };
+        let mut br = std::io::BufReader::new(f);
+        br.read_line(&mut line).context("read protocol fd")?;
+    } else {
+        io::stdin().read_to_string(&mut line).context("read stdin")?;
+    }
+    #[cfg(not(unix))]
+    {
+        io::stdin().read_to_string(&mut line).context("read stdin")?;
+    }
+    // suppress unused warning when env var path is taken
+    let _ = (in_fd, out_fd);
     // Take only the first line if multiple were sent.
     let line = line.lines().next().unwrap_or("").trim();
     if line.is_empty() {
         let reply = Message::notification("error", json!({ "message": "no input" }));
-        let mut h = io::stdout().lock();
-        writeln!(h, "{}", serde_json::to_string(&reply)?)?;
+        write_headless_reply(out_fd, &reply)?;
         return Ok(());
     }
     let msg: Message = serde_json::from_str(line).context("parse stdin message")?;
@@ -60,8 +85,24 @@ fn run_headless() -> Result<()> {
         },
         None => Message::notification("error", json!({ "message": "missing method" })),
     };
+    write_headless_reply(out_fd, &reply)
+}
+
+fn write_headless_reply(out_fd: Option<i32>, reply: &Message) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::FromRawFd;
+        if let Some(o) = out_fd {
+            // SAFETY: fd 4 is the inherited rust→go pipe write-end.
+            let mut f: std::fs::File = unsafe { std::fs::File::from_raw_fd(o) };
+            writeln!(f, "{}", serde_json::to_string(reply)?)?;
+            f.flush()?;
+            return Ok(());
+        }
+    }
+    let _ = out_fd;
     let mut h = io::stdout().lock();
-    writeln!(h, "{}", serde_json::to_string(&reply)?)?;
+    writeln!(h, "{}", serde_json::to_string(reply)?)?;
     h.flush()?;
     Ok(())
 }
