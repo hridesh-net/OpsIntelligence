@@ -6,6 +6,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.46] — 2026-05-30
+
+### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 5 — closes UI)
+
+Complete UI surface for every backend feature shipped in waves 1-4. The web dashboard now matches kanbots.dev pixel-by-pixel intent:
+
+**Card detail modal — full rewrite (~350 lines)**:
+- **Decision prompt banner** at the top of the card modal when any of its runs is awaiting an answer. Shows the question, every provided option as a button, plus a custom-answer input. Clicking ships `POST /runs/{rid}/decisions/{did}` and the agent resumes via the continuation dispatch path.
+- **Per-run events viewer**: each run row gets an "events" button that loads `GET /runs/{rid}` and renders the last 200 events (text / tool_start / tool_end / decision / error) with phase tags and a refresh control. Tool calls and decisions get distinct visual treatment.
+- **Stop-run button** inline on every running run.
+- **Dispatch panel**:
+  - Agent picker (populated from `GET /boards/{id}/agents`)
+  - Persona picker
+  - Slash command picker (`/spec`, `/review`, `/split`)
+  - Custom model override field
+- **Branch preview controls**: when a preview is running, shows status + clickable URL + stop button. When not running, shows a "dev-server cmd" input + start button.
+- **Attachments pane**: list with download links + per-row delete + file upload widget.
+- **Autopilot launch button** opens a dedicated modal (see below).
+
+**Autopilot launch modal**:
+- Tabbed UI for `feature-dev` and `qa` modes.
+- feature-dev: multi-select persona list, parallelism (1-4), max cycles, session budget cap.
+- qa: textarea for one-command-per-line check list, max fix attempts, budget cap.
+- POSTs to `/api/v1/autopilot` and reports the session id.
+
+**Autopilot sessions list modal** (board toolbar → "Autopilots"):
+- Lists every running and completed session with mode, card id, cycle count, total cost.
+- Inline stop button for running sessions.
+
+**Sentry import modal** (board toolbar → "↻ Sentry"):
+- Form for org slug, project slug, and Sentry search query. POSTs `/boards/{id}/sentry/import` and reports added/updated counts.
+
+**Board toolbar enhancements**:
+- "↻ GitHub" — triggers `POST /boards/{id}/github/sync`, reports added/updated.
+- "↻ Sentry" — opens the Sentry import modal.
+- "Autopilots" — opens the sessions list.
+- **Per-board cost summary chip**: `N cards · M running · $X.XX spent`, updates on every refresh.
+
+**Stylesheet additions** (~110 lines): modal-wide layout, decision-banner styling, run-event row styling per kind, autopilot tab UI, attachment / preview row layouts, board cost summary chip, badge for cost on the card meta line.
+
+### Parity matrix vs kanbots.dev — final
+
+| Capability | Status |
+|---|---|
+| All 19 capabilities from v1.0.45 | ✓ (backend) |
+| Decision modal (UI) | ✓ |
+| Run events stream (UI) | ✓ |
+| Autopilot launch + sessions list (UI) | ✓ |
+| Attachments upload/list/delete (UI) | ✓ |
+| Branch preview start/stop (UI) | ✓ |
+| GitHub sync button (UI) | ✓ |
+| Sentry import (UI) | ✓ |
+| Slash command picker (UI) | ✓ |
+| Agent + persona + model picker (UI) | ✓ |
+| Per-board cost summary (UI) | ✓ |
+
+Kanbots.dev parity ✓ — backend + UI complete.
+
+### Changed
+
+- Crate version bumped to `0.2.19`.
+
 ## [1.0.45] — 2026-05-30
 
 ### Added — Kanban / Agent Orchestration (kanbots.dev parity, wave 4 — closes parity)

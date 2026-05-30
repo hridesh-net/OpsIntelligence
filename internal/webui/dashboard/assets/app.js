@@ -3902,6 +3902,11 @@
           <div class="kanban-toolbar">
             <button class="ghost" id="board-back">← Back to boards</button>
             <button class="primary" id="board-new-card">+ New task</button>
+            <span class="board-cost-summary" id="board-cost-summary"></span>
+            <span style="margin-left:auto"></span>
+            <button class="ghost" id="board-sync-gh" title="Pull issues from GitHub (mode=github boards only)">↻ GitHub</button>
+            <button class="ghost" id="board-sync-sentry" title="Import Sentry issues">↻ Sentry</button>
+            <button class="ghost" id="board-autopilots" title="List running autopilot sessions">Autopilots</button>
           </div>
           <div class="kanban-board"></div>`;
         toolbar = detail.querySelector(".kanban-toolbar");
@@ -3912,7 +3917,25 @@
         document.getElementById("board-new-card").addEventListener("click", () => {
           showCreateCardModal(currentBoardId);
         });
+        document.getElementById("board-sync-gh").addEventListener("click", async () => {
+          try {
+            const res = await fetch(`${API}/boards/${currentBoardId}/github/sync`, {
+              method: "POST", credentials: "same-origin", headers: csrfHeaders(),
+            });
+            if (!res.ok) throw new Error((await res.json()).error || "sync failed");
+            const j = await res.json();
+            showToast(`GitHub sync: +${j.added} added, ${j.updated} updated`);
+            await refreshBoardView();
+          } catch (err) { showToast("GitHub sync failed: " + err.message); }
+        });
+        document.getElementById("board-sync-sentry").addEventListener("click", () => showSentryImportModal());
+        document.getElementById("board-autopilots").addEventListener("click", () => showAutopilotsListModal());
       }
+      // Per-board cost summary.
+      const totalCost = (cards || []).reduce((s, c) => s + (c.cost_usd || 0), 0);
+      const runningCount = (cards || []).filter(c => c.status === "running").length;
+      document.getElementById("board-cost-summary").textContent =
+        `${cards.length} cards · ${runningCount} running · $${totalCost.toFixed(2)} spent`;
 
       // Update columns and cards
       const existingCols = new Map();
@@ -4086,12 +4109,13 @@
       const card = data.card;
       const runs = data.runs || [];
 
-      // Fetch personas for the picker
-      let personas = [];
-      try {
-        const pData = await getJSON(`${API}/personas`);
-        personas = pData.personas || [];
-      } catch (_) {}
+      // Fetch personas, board agents, and attachments in parallel.
+      const [personas, agents, attachments, preview] = await Promise.all([
+        getJSON(`${API}/personas`).then(d => d.personas || []).catch(() => []),
+        getJSON(`${API}/boards/${currentBoardId}/agents`).then(d => d.agents || []).catch(() => []),
+        getJSON(`${API}/boards/${currentBoardId}/cards/${cardId}/attachments`).catch(() => []),
+        getJSON(`${API}/boards/${currentBoardId}/cards/${cardId}/preview`).catch(() => null),
+      ]);
 
       const modal = document.createElement("div");
       modal.className = "modal-overlay";
@@ -4099,20 +4123,69 @@
 
       let runsHtml = "";
       for (const run of runs) {
-        runsHtml += `<div class="run-row">
-          <span class="run-status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
-          <span class="run-agent">${escapeHtml(run.agent_id || "auto")}</span>
-          ${run.cost_usd ? `<span class="run-cost">$${Number(run.cost_usd).toFixed(2)}</span>` : ""}
+        const statusBadge = `<span class="run-status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>`;
+        runsHtml += `<div class="run-row" data-run-id="${escapeHtml(run.id)}">
+          ${statusBadge}
+          <span class="run-agent">${escapeHtml(run.agent_type || run.agent_id || "auto")}</span>
+          ${run.cost_usd ? `<span class="run-cost">$${Number(run.cost_usd).toFixed(4)}</span>` : ""}
+          ${run.elapsed_ms ? `<span class="run-elapsed muted">${Math.round(run.elapsed_ms/1000)}s</span>` : ""}
+          <button class="ghost xs view-run-btn" data-run-id="${escapeHtml(run.id)}">events</button>
+          ${run.status === "running" ? `<button class="danger xs stop-run-btn" data-run-id="${escapeHtml(run.id)}">stop</button>` : ""}
         </div>`;
       }
 
-      let personaOptions = `<option value="">No persona</option>`;
-      for (const p of personas) {
-        personaOptions += `<option value="${escapeHtml(p.id)}">${escapeHtml(p.icon || "")} ${escapeHtml(p.name)}</option>`;
+      const personaOptions = [`<option value="">No persona</option>`,
+        ...personas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml((p.icon || "") + " " + p.name).trim()}</option>`)].join("");
+      const agentOptions = [`<option value="">Auto (card assignee)</option>`,
+        ...agents.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name + " · " + a.agent_type)}</option>`)].join("");
+
+      const attHtml = (attachments && attachments.length > 0)
+        ? attachments.map(a => `
+          <div class="att-row" data-att-id="${escapeHtml(a.id)}">
+            <a href="${API}/attachments/${escapeHtml(a.id)}" target="_blank" class="att-name">${escapeHtml(a.filename)}</a>
+            <span class="muted">${prettyBytes(a.size_bytes)}</span>
+            <button class="ghost xs att-del" data-att-id="${escapeHtml(a.id)}">×</button>
+          </div>`).join("")
+        : `<p class="muted">No attachments.</p>`;
+
+      const previewHtml = preview && preview.status === "running"
+        ? `<div class="preview-status">
+            <span class="run-status running">running</span>
+            <a href="${escapeHtml(preview.public_url || preview.local_url)}" target="_blank">${escapeHtml(preview.public_url || preview.local_url)}</a>
+            <button class="danger xs" id="preview-stop">stop</button>
+          </div>`
+        : `<div class="preview-form">
+            <input id="preview-cmd" placeholder="dev-server cmd (e.g. npm run dev)" class="input" />
+            <button class="primary xs" id="preview-start">Start preview</button>
+          </div>`;
+
+      // Look for a pending decision on any of the card's runs.
+      let pendingDecisionRunId = null;
+      let pendingDecision = null;
+      for (const run of runs) {
+        if (run.status === "awaiting") {
+          try {
+            const rd = await getJSON(`${API}/runs/${run.id}`);
+            const pd = (rd.decisions || []).find(d => d.status === "pending");
+            if (pd) { pendingDecisionRunId = run.id; pendingDecision = pd; break; }
+          } catch (_) {}
+        }
       }
+      const decisionHtml = pendingDecision ? `
+        <div class="decision-banner">
+          <h4>⏸ Decision needed</h4>
+          <p>${escapeHtml(pendingDecision.question)}</p>
+          <div class="decision-options">
+            ${(pendingDecision.options || []).map(o =>
+              `<button class="primary xs decision-opt" data-decision="${escapeHtml(pendingDecision.id)}" data-answer="${escapeHtml(o)}">${escapeHtml(o)}</button>`
+            ).join("")}
+          </div>
+          <input id="decision-custom" placeholder="…or type a custom answer" class="input" />
+          <button class="ghost xs" id="decision-submit-custom" data-decision="${escapeHtml(pendingDecision.id)}">Send custom</button>
+        </div>` : "";
 
       modal.innerHTML = `
-        <div class="modal">
+        <div class="modal modal-wide">
           <div class="modal-header">
             <h3>#${escapeHtml(card.id.slice(0, 8))} · ${escapeHtml(card.title)}</h3>
             <button class="modal-close">&times;</button>
@@ -4122,62 +4195,440 @@
               <span class="badge">${escapeHtml((card.card_type || "feature").toUpperCase())}</span>
               <span class="badge ${card.priority || "p2"}">${escapeHtml(card.priority || "p2")}</span>
               <span class="badge">${escapeHtml(card.status || "queued")}</span>
+              ${card.cost_usd ? `<span class="badge cost">$${Number(card.cost_usd).toFixed(4)}</span>` : ""}
             </div>
             <p class="card-description">${escapeHtml(card.description || "No description.")}</p>
+            ${decisionHtml}
+
             <h4>Runs</h4>
-            <div class="runs-list" id="modal-runs-list">${runsHtml || "<p>No runs yet.</p>"}</div>
+            <div class="runs-list" id="modal-runs-list">${runsHtml || "<p class='muted'>No runs yet.</p>"}</div>
+            <div id="run-events-pane"></div>
+
+            <h4>Dispatch</h4>
             <div class="dispatch-controls">
-              <label>Persona</label>
-              <select id="dispatch-persona" class="input">${personaOptions}</select>
+              <div class="grid-2">
+                <div>
+                  <label>Agent</label>
+                  <select id="dispatch-agent" class="input">${agentOptions}</select>
+                </div>
+                <div>
+                  <label>Persona</label>
+                  <select id="dispatch-persona" class="input">${personaOptions}</select>
+                </div>
+                <div>
+                  <label>Slash command</label>
+                  <select id="dispatch-slash" class="input">
+                    <option value="">— none —</option>
+                    <option value="spec">/spec — write spec, stop before coding</option>
+                    <option value="review">/review — review existing work, no edits</option>
+                    <option value="split">/split — emit subtasks as JSON</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Model (optional)</label>
+                  <input id="dispatch-model" class="input" placeholder="e.g. claude-sonnet-4-5" />
+                </div>
+              </div>
             </div>
             <div class="modal-actions">
               <button class="primary" id="card-dispatch">Dispatch agent</button>
-              <button class="danger" id="card-delete">Delete</button>
+              <button class="ghost" id="card-autopilot">Autopilot…</button>
+              <button class="danger" id="card-delete" style="margin-left:auto">Delete card</button>
+            </div>
+
+            <h4>Branch preview</h4>
+            <div id="preview-pane">${previewHtml}</div>
+
+            <h4>Attachments</h4>
+            <div id="att-pane">${attHtml}</div>
+            <div class="att-upload">
+              <input type="file" id="att-file" class="input" />
+              <button class="primary xs" id="att-upload-btn">Upload</button>
             </div>
           </div>
         </div>`;
       document.body.appendChild(modal);
 
-      modal.querySelector(".modal-close").addEventListener("click", () => modal.remove());
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) modal.remove();
-      });
+      const cleanup = [];
+      const close = () => { modal.remove(); cleanup.forEach(fn => fn()); };
+      modal.querySelector(".modal-close").addEventListener("click", close);
+      modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
 
+      // ── decision answers (need runID + decisionID for the path)
+      modal.querySelectorAll(".decision-opt").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await answerDecision(pendingDecisionRunId, btn.dataset.decision, btn.dataset.answer, close);
+        });
+      });
+      const customSubmit = modal.querySelector("#decision-submit-custom");
+      if (customSubmit) {
+        customSubmit.addEventListener("click", async () => {
+          const ans = modal.querySelector("#decision-custom").value.trim();
+          if (!ans) return;
+          await answerDecision(pendingDecisionRunId, customSubmit.dataset.decision, ans, close);
+        });
+      }
+
+      // ── dispatch
       document.getElementById("card-dispatch").addEventListener("click", async () => {
-        const personaId = document.getElementById("dispatch-persona").value;
+        const body = {
+          persona_id: document.getElementById("dispatch-persona").value,
+          agent_id: document.getElementById("dispatch-agent").value,
+          model: document.getElementById("dispatch-model").value,
+          slash_command: document.getElementById("dispatch-slash").value,
+        };
         try {
           const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/dispatch`, {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json", ...csrfHeaders() },
-            body: JSON.stringify({ persona_id: personaId }),
+            body: JSON.stringify(body),
           });
           if (!res.ok) throw new Error((await res.json()).error || "dispatch failed");
           showToast("Agent dispatched");
-          modal.remove();
+          close();
           await refreshBoardView();
         } catch (err) {
           showToast("Dispatch failed: " + err.message);
         }
       });
 
+      // ── autopilot
+      document.getElementById("card-autopilot").addEventListener("click", () => {
+        close();
+        showAutopilotModal(cardId, personas);
+      });
+
+      // ── delete
       document.getElementById("card-delete").addEventListener("click", async () => {
         if (!confirm("Delete this card?")) return;
         try {
           const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}`, {
-            method: "DELETE",
-            credentials: "same-origin",
-            headers: csrfHeaders(),
+            method: "DELETE", credentials: "same-origin", headers: csrfHeaders(),
           });
           if (!res.ok) throw new Error("delete failed");
-          modal.remove();
+          close();
           await refreshBoardView();
         } catch (err) {
           showToast("Delete failed: " + err.message);
         }
       });
+
+      // ── stop run
+      modal.querySelectorAll(".stop-run-btn").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await fetch(`${API}/runs/${btn.dataset.runId}/stop`, {
+              method: "POST", credentials: "same-origin", headers: csrfHeaders(),
+            });
+            showToast("Run stop requested");
+          } catch (err) { showToast("Stop failed: " + err.message); }
+        });
+      });
+
+      // ── view events
+      modal.querySelectorAll(".view-run-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await renderRunEvents(btn.dataset.runId, modal.querySelector("#run-events-pane"));
+        });
+      });
+
+      // ── preview
+      const psBtn = document.getElementById("preview-start");
+      if (psBtn) {
+        psBtn.addEventListener("click", async () => {
+          const cmd = document.getElementById("preview-cmd").value.trim();
+          if (!cmd) { showToast("Preview command is required"); return; }
+          try {
+            const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/preview`, {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json", ...csrfHeaders() },
+              body: JSON.stringify({ cmd }),
+            });
+            if (!res.ok) throw new Error((await res.json()).error || "preview failed");
+            showToast("Preview starting");
+            close();
+            showCardDetailModal(cardId);
+          } catch (err) { showToast("Preview failed: " + err.message); }
+        });
+      }
+      const ppBtn = document.getElementById("preview-stop");
+      if (ppBtn) {
+        ppBtn.addEventListener("click", async () => {
+          try {
+            await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/preview`, {
+              method: "DELETE", credentials: "same-origin", headers: csrfHeaders(),
+            });
+            showToast("Preview stopped");
+            close();
+            showCardDetailModal(cardId);
+          } catch (err) { showToast("Stop preview failed: " + err.message); }
+        });
+      }
+
+      // ── attachments: upload + delete
+      document.getElementById("att-upload-btn").addEventListener("click", async () => {
+        const input = document.getElementById("att-file");
+        if (!input.files || input.files.length === 0) { showToast("Pick a file first"); return; }
+        const fd = new FormData();
+        fd.append("file", input.files[0]);
+        try {
+          const res = await fetch(`${API}/boards/${currentBoardId}/cards/${cardId}/attachments`, {
+            method: "POST", credentials: "same-origin", headers: csrfHeaders(), body: fd,
+          });
+          if (!res.ok) throw new Error("upload failed");
+          showToast("Uploaded");
+          close();
+          showCardDetailModal(cardId);
+        } catch (err) { showToast("Upload failed: " + err.message); }
+      });
+      modal.querySelectorAll(".att-del").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Delete attachment?")) return;
+          try {
+            await fetch(`${API}/attachments/${btn.dataset.attId}`, {
+              method: "DELETE", credentials: "same-origin", headers: csrfHeaders(),
+            });
+            close();
+            showCardDetailModal(cardId);
+          } catch (err) { showToast("Delete failed: " + err.message); }
+        });
+      });
     } catch (err) {
       showToast("Load card failed: " + err.message);
     }
+  }
+
+  async function answerDecision(runId, decisionId, answer, closeFn) {
+    try {
+      const res = await fetch(`${API}/runs/${runId}/decisions/${decisionId}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ answer }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "answer failed");
+      showToast("Decision sent — agent resuming");
+      if (closeFn) closeFn();
+      await refreshBoardView();
+    } catch (err) {
+      showToast("Answer failed: " + err.message);
+    }
+  }
+
+  async function renderRunEvents(runId, pane) {
+    try {
+      const data = await getJSON(`${API}/runs/${runId}`);
+      const events = data.events || [];
+      const rows = events.slice(-200).map(e => {
+        const kind = e.kind || "text";
+        const phase = e.phase ? ` <span class="muted xs">[${escapeHtml(e.phase)}]</span>` : "";
+        return `<div class="evt evt-${escapeHtml(kind)}">
+          <span class="muted xs">${escapeHtml(kind)}</span>${phase}
+          <pre>${escapeHtml(e.message || "")}</pre>
+        </div>`;
+      }).join("");
+      pane.innerHTML = `
+        <div class="run-events">
+          <div class="run-events-head">
+            <strong>Events — ${escapeHtml(runId.slice(0,8))}</strong>
+            <button class="ghost xs" id="run-events-refresh">refresh</button>
+          </div>
+          <div class="run-events-body">${rows || `<p class="muted">No events yet.</p>`}</div>
+        </div>`;
+      document.getElementById("run-events-refresh").addEventListener("click", () => renderRunEvents(runId, pane));
+    } catch (err) { pane.innerHTML = `<p class="error">Failed to load events: ${escapeHtml(err.message)}</p>`; }
+  }
+
+  function prettyBytes(n) {
+    if (!n) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+  }
+
+  // ── sentry import modal ──────────────────────────────────────────────────
+  function showSentryImportModal() {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Import Sentry issues</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">Fetches Sentry issues for the project and upserts them as cards in this board's first column.</p>
+          <label>Sentry org slug</label>
+          <input id="sentry-org" class="input" placeholder="acme-corp" />
+          <label>Sentry project slug</label>
+          <input id="sentry-project" class="input" placeholder="backend-api" />
+          <label>Query (defaults to is:unresolved)</label>
+          <input id="sentry-query" class="input" placeholder="is:unresolved level:error" />
+          <div class="modal-actions">
+            <button class="primary" id="sentry-go">Import</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelector(".modal-close").addEventListener("click", close);
+    modal.addEventListener("click", e => { if (e.target === modal) close(); });
+    document.getElementById("sentry-go").addEventListener("click", async () => {
+      const body = {
+        org: document.getElementById("sentry-org").value.trim(),
+        project: document.getElementById("sentry-project").value.trim(),
+        query: document.getElementById("sentry-query").value.trim(),
+      };
+      if (!body.org || !body.project) { showToast("org and project are required"); return; }
+      try {
+        const res = await fetch(`${API}/boards/${currentBoardId}/sentry/import`, {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "import failed");
+        const j = await res.json();
+        showToast(`Sentry: +${j.added} added, ${j.updated} updated`);
+        close();
+        await refreshBoardView();
+      } catch (err) { showToast("Sentry import failed: " + err.message); }
+    });
+  }
+
+  // ── autopilot sessions list ──────────────────────────────────────────────
+  async function showAutopilotsListModal() {
+    let sessions = [];
+    try { sessions = await getJSON(`${API}/autopilot`); } catch (_) {}
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    const rows = (sessions || []).map(s => `
+      <div class="ap-row">
+        <span class="run-status ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>
+        <span>${escapeHtml(s.mode)}</span>
+        <span class="muted">card ${escapeHtml((s.card_id || "").slice(0,8))}</span>
+        <span class="muted">cycles ${s.cycles || 0}</span>
+        <span class="muted">$${Number(s.total_cost_usd || 0).toFixed(4)}</span>
+        ${s.status === "running" ? `<button class="danger xs" data-stop="${escapeHtml(s.id)}">stop</button>` : ""}
+      </div>`).join("");
+    modal.innerHTML = `
+      <div class="modal modal-wide">
+        <div class="modal-header">
+          <h3>Autopilot sessions</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="ap-list">${rows || "<p class='muted'>No autopilot sessions.</p>"}</div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelector(".modal-close").addEventListener("click", close);
+    modal.addEventListener("click", e => { if (e.target === modal) close(); });
+    modal.querySelectorAll("[data-stop]").forEach(b => {
+      b.addEventListener("click", async () => {
+        try {
+          await fetch(`${API}/autopilot/${b.dataset.stop}/stop`, {
+            method: "POST", credentials: "same-origin", headers: csrfHeaders(),
+          });
+          showToast("Stopped");
+          close();
+          showAutopilotsListModal();
+        } catch (err) { showToast("Stop failed: " + err.message); }
+      });
+    });
+  }
+
+  // ── autopilot modal ──────────────────────────────────────────────────────
+  async function showAutopilotModal(cardId, personas) {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Autopilot</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="ap-mode-tabs">
+            <button class="ap-tab active" data-mode="feature-dev">feature-dev</button>
+            <button class="ap-tab" data-mode="qa">qa</button>
+          </div>
+
+          <div class="ap-panel" data-mode="feature-dev">
+            <label>Personas (round-robin)</label>
+            <select id="ap-personas" class="input" multiple style="height:80px">
+              ${personas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("")}
+            </select>
+            <label>Parallelism</label>
+            <input id="ap-parallelism" type="number" min="1" max="4" value="1" class="input" />
+            <label>Max cycles (0 = unbounded)</label>
+            <input id="ap-cycles" type="number" min="0" value="3" class="input" />
+            <label>Session budget (USD)</label>
+            <input id="ap-budget" type="number" step="0.01" min="0" value="5" class="input" />
+          </div>
+
+          <div class="ap-panel hidden" data-mode="qa">
+            <label>Check commands (one per line)</label>
+            <textarea id="ap-checks" class="input" rows="5" placeholder="go test ./...&#10;go vet ./...&#10;npm run lint"></textarea>
+            <label>Max fix attempts per check</label>
+            <input id="ap-fix-attempts" type="number" min="1" value="3" class="input" />
+            <label>Session budget (USD)</label>
+            <input id="ap-qa-budget" type="number" step="0.01" min="0" value="5" class="input" />
+          </div>
+
+          <div class="modal-actions">
+            <button class="primary" id="ap-start">Start autopilot</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelector(".modal-close").addEventListener("click", close);
+    modal.addEventListener("click", e => { if (e.target === modal) close(); });
+
+    let currentMode = "feature-dev";
+    modal.querySelectorAll(".ap-tab").forEach(t => {
+      t.addEventListener("click", () => {
+        modal.querySelectorAll(".ap-tab").forEach(x => x.classList.toggle("active", x === t));
+        currentMode = t.dataset.mode;
+        modal.querySelectorAll(".ap-panel").forEach(p => p.classList.toggle("hidden", p.dataset.mode !== currentMode));
+      });
+    });
+
+    document.getElementById("ap-start").addEventListener("click", async () => {
+      let body;
+      if (currentMode === "feature-dev") {
+        const personaIds = Array.from(document.getElementById("ap-personas").selectedOptions).map(o => o.value);
+        body = {
+          card_id: cardId, mode: "feature-dev",
+          persona_ids: personaIds,
+          parallelism: parseInt(document.getElementById("ap-parallelism").value || "1", 10),
+          max_cycles: parseInt(document.getElementById("ap-cycles").value || "0", 10),
+          budget_usd: parseFloat(document.getElementById("ap-budget").value || "0"),
+        };
+      } else {
+        const lines = document.getElementById("ap-checks").value.split("\n").map(s => s.trim()).filter(Boolean);
+        body = {
+          card_id: cardId, mode: "qa",
+          checks: lines.map((cmd, i) => ({ name: "check-" + (i+1), cmd })),
+          max_fix_attempts: parseInt(document.getElementById("ap-fix-attempts").value || "3", 10),
+          budget_usd: parseFloat(document.getElementById("ap-qa-budget").value || "0"),
+        };
+      }
+      try {
+        const res = await fetch(`${API}/autopilot`, {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || "start failed");
+        showToast("Autopilot started");
+        close();
+        await refreshBoardView();
+      } catch (err) { showToast("Autopilot failed: " + err.message); }
+    });
   }
 })();
