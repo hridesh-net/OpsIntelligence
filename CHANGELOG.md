@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.32] — 2026-05-29
+
+### Fixed — TUI correctness + diagnosability pass
+
+- **Stale terminal content bled through every TUI screen**. `outer_block` and `panel_block` only painted their borders, not their interiors — so anything previously on the alt-screen (install-script stdout, prior commands, the OpsIntelligence startup banner) showed through any cell the body content didn't overwrite. Both helpers now fill with `theme::BACKGROUND` before drawing the border, so the screen is opaque end-to-end. Affects Dashboard, Repos, Doctor, Monitor, REPL, and Wizard views.
+- **`opsintelligence status` showed blank `version` / `skills` and `0%` CPU / `0.0 MB` RAM when the daemon was stopped**. The renderer continued to emit the static rows even when `alive=false`, which made the screen look broken. The Status tab now prints an explicit "Daemon is not running. Start it with: `opsintelligence start`" hint above the empty rows when the orchestrator is down.
+- **TUIs exited with a bare `error: EOF` when the user pressed `q`**. The clean Rust EOF on graceful shutdown was being treated as a failure. Added `Bridge.CloseErr()` that returns `nil` on `io.EOF` and the real error otherwise; all six view runners (dashboard, doctor, monitor, repl, repos, wizard) now use it.
+
+### Added — TUI diagnosability
+
+- **Rust panic hook**: any panic in the TUI renderer now tears the alt-screen down *before* the default panic handler runs, so the panic message reaches the user's real terminal instead of vanishing with the alt-screen. A breadcrumb is also written to `$OPSINTEL_TUI_LOG_DIR/opsintel-tui-panic.log`.
+- **Hint on `enable_raw_mode` failure** (the cryptic "Device not configured (os error 6)") — the wrapper now prints a one-line explanation that stdin must be a TTY.
+- **Protocol parse-error breadcrumbs** on both sides: previously, `serde_json::from_str` / `json.Unmarshal` failures were silently dropped, leaving the user with a blank Empty view. Both sides now surface the offending line.
+- **Go bridge stderr breadcrumbs** when `cmd.Start` fails (spawn) or when the Rust subprocess exits with a non-zero code (read loop). Replaces what used to be silent return-to-shell.
+
+### Changed
+
+- Crate version bumped to `0.2.5`.
+
 ## [1.0.29] — 2026-05-28
 
 ### Added — Proper "Setup complete" page

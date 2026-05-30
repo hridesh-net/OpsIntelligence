@@ -51,6 +51,13 @@ enum View {
 }
 
 pub fn run() -> Result<()> {
+    // Install a panic hook that tears down the terminal cleanly before printing
+    // the panic, so the message survives instead of being eaten by the
+    // alt-screen leave. Without this, any panic in the render path (a JSON
+    // decode error in handle_inbound, an out-of-bounds slice, …) looks like a
+    // silent exit because the user only sees their shell prompt return.
+    install_panic_hook();
+
     let (tx_in, rx_in) = mpsc::channel::<Message>();
     let (tx_out, rx_out) = mpsc::channel::<Message>();
 
@@ -63,7 +70,17 @@ pub fn run() -> Result<()> {
     spawn_protocol_writer(proto_out, rx_out);
 
     // Now crossterm can safely take over the inherited stdin/stdout TTY.
-    enable_raw_mode().context("enable raw mode")?;
+    enable_raw_mode().map_err(|e| {
+        // Emit a hint to stderr so this isn't just a cryptic "Device not
+        // configured (os error 6)" — that error means "the inherited stdin
+        // isn't a TTY", which is almost always a bridge wiring issue.
+        eprintln!(
+            "opsintel-tui: enable_raw_mode failed: {e}\n  \
+             stdin must be a TTY. If you launched via the Go bridge, ensure \
+             bridge.go inherits the parent's controlling terminal (cmd.Stdin = os.Stdin)."
+        );
+        e
+    }).context("enable raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
@@ -80,6 +97,49 @@ pub fn run() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).ok();
     terminal.show_cursor().ok();
     result
+}
+
+/// Tear down the terminal before the default panic handler runs so the panic
+/// message reaches the user's actual screen (not the soon-to-be-destroyed
+/// alt-screen).
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
+        // Best-effort breadcrumb to the bridge log dir as well.
+        if let Ok(dir) = std::env::var("OPSINTEL_TUI_LOG_DIR") {
+            let path = std::path::Path::new(&dir).join("opsintel-tui-panic.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write as _;
+                let _ = writeln!(
+                    f,
+                    "{} panic: {}",
+                    chrono_like_timestamp(),
+                    info
+                );
+            }
+        }
+        original(info);
+    }));
+}
+
+fn chrono_like_timestamp() -> String {
+    // Avoid pulling in `chrono` just for this; std::time + a hand-written
+    // format is enough for a panic breadcrumb.
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("ts={}.{:03}", dur.as_secs(), dur.subsec_millis())
 }
 
 #[cfg(unix)]
@@ -461,13 +521,37 @@ fn spawn_protocol_reader(reader: Box<dyn Read + Send>, tx: Sender<Message>) {
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(msg) = serde_json::from_str::<Message>(&line) {
-                if tx.send(msg).is_err() {
-                    return;
+            match serde_json::from_str::<Message>(&line) {
+                Ok(msg) => {
+                    if tx.send(msg).is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    // Previously dropped silently — make malformed messages
+                    // visible so we can debug protocol mismatches.
+                    log_breadcrumb(&format!(
+                        "protocol parse error: {} (line: {:.200})",
+                        e, line
+                    ));
                 }
             }
         }
     });
+}
+
+fn log_breadcrumb(msg: &str) {
+    if let Ok(dir) = std::env::var("OPSINTEL_TUI_LOG_DIR") {
+        let path = std::path::Path::new(&dir).join("opsintel-tui-panic.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            use std::io::Write as _;
+            let _ = writeln!(f, "{} {}", chrono_like_timestamp(), msg);
+        }
+    }
 }
 
 fn spawn_protocol_writer(mut writer: Box<dyn Write + Send>, rx: Receiver<Message>) {

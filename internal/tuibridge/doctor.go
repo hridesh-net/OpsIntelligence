@@ -66,7 +66,7 @@ func RunDoctor(ctx context.Context, opts DoctorOptions) error {
 		case <-quit:
 			return nil
 		case <-b.Done():
-			return b.Err()
+			return b.CloseErr()
 		case <-ctx.Done():
 			return ctx.Err()
 		case checks := <-resultsCh:

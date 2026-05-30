@@ -20,6 +20,16 @@ pub fn outer_block(
     section: &str,
     progress_pct: Option<f32>,
 ) -> Rect {
+    // Paint the entire frame area with the theme background first. Without
+    // this, anything that was on the terminal before the TUI entered the
+    // alt-screen bleeds through any region the outer block doesn't draw
+    // pixels in (corners, gaps, transparent cells), which is why the Done
+    // screen — and other views — looked like garbled half-renders.
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme::BACKGROUND)),
+        area,
+    );
+
     let mut title_spans: Vec<Span<'static>> = vec![
         Span::raw("─ "),
         Span::styled(
@@ -47,6 +57,7 @@ pub fn outer_block(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme::PRIMARY))
+        .style(Style::default().bg(theme::BACKGROUND))
         .title(Line::from(title_spans))
         .title_alignment(Alignment::Left);
     let inner = block.inner(area);
@@ -95,6 +106,9 @@ pub fn panel_block(name: &str, accent: ratatui::style::Color, primary_border: bo
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(if primary_border { accent } else { theme::OUTLINE_VARIANT }))
+        // Fill the panel interior with the theme background so prior alt-screen
+        // contents can't show through gaps in the body content.
+        .style(Style::default().bg(theme::BACKGROUND))
         .title(title)
 }
 

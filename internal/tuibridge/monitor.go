@@ -60,7 +60,7 @@ func RunMonitor(ctx context.Context, opts MonitorOptions) error {
 		case <-quit:
 			return nil
 		case <-b.Done():
-			return b.Err()
+			return b.CloseErr()
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tk.C:

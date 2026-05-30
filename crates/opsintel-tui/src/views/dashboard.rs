@@ -259,6 +259,24 @@ fn render_status(st: &DashboardStatus, query: &str) -> Vec<Line<'static>> {
     lines.push(status_line);
     lines.push(Line::raw(""));
 
+    // When the daemon isn't running we have no live metrics, so spell that
+    // out instead of showing blank version/skills/CPU/RAM which historically
+    // looked like a TUI bug rather than "daemon is off."
+    if !st.alive {
+        lines.push(Line::from(Span::styled(
+            "  Daemon is not running. Start it with:",
+            theme::muted(),
+        )));
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                "opsintelligence start",
+                Style::default().fg(theme::PRIMARY).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::raw(""));
+    }
+
     push_kv(&mut lines, "version", &st.version);
     push_kv(&mut lines, "skills", &st.skill_summary);
     lines.push(Line::raw(""));

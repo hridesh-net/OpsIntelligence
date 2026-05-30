@@ -271,7 +271,7 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-b.Done():
-				return b.Err()
+				return b.CloseErr()
 			case res := <-ch:
 				if res.cancelled {
 					requestQuit()
@@ -362,7 +362,7 @@ func RunWizard(ctx context.Context, opts WizardOptions) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-b.Done():
-		return b.Err()
+		return b.CloseErr()
 	}
 }
 

@@ -128,7 +128,7 @@ func RunReposTUI(ctx context.Context, opts ReposOptions) error {
 		case <-quit:
 			return nil
 		case <-b.Done():
-			return b.Err()
+			return b.CloseErr()
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-refreshReq:

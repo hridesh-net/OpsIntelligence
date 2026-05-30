@@ -141,7 +141,7 @@ func RunREPL(ctx context.Context, opts ReplOptions) error {
 	case <-quit:
 		return nil
 	case <-b.Done():
-		return b.Err()
+		return b.CloseErr()
 	case <-ctx.Done():
 		return ctx.Err()
 	}

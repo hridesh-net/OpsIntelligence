@@ -126,6 +126,10 @@ func Spawn(ctx context.Context, opts Options) (*Bridge, error) {
 		goToRustW.Close()
 		rustToGoR.Close()
 		rustToGoW.Close()
+		// Print a recognizable breadcrumb to stderr so silent spawn failures
+		// (e.g. cached binary missing, exec format mismatch, permission denied)
+		// can be diagnosed without rerunning the command under strace.
+		fmt.Fprintf(os.Stderr, "tuibridge: spawn %s failed: %v\n", binPath, err)
 		return nil, fmt.Errorf("start opsintel-tui (%s): %w", binPath, err)
 	}
 	// The child now owns the read-end of go→rust and the write-end of rust→go.
@@ -213,10 +217,23 @@ func (b *Bridge) readLoop() {
 			var msg Message
 			if jerr := json.Unmarshal(line, &msg); jerr == nil {
 				b.dispatch(msg)
+			} else {
+				// Surface protocol corruption instead of silently dropping —
+				// matches the new Rust-side behaviour for the same error.
+				fmt.Fprintf(os.Stderr, "tuibridge: rust→go parse error: %v (line: %.200s)\n", jerr, string(line))
 			}
 		}
 		if err != nil {
 			b.doneErr = err
+			// If the subprocess died with a non-zero exit, the user almost
+			// never sees the alt-screen panic message because crossterm tore
+			// it down. Print an exit-code breadcrumb to stderr so the failure
+			// is at least attributable.
+			if b.cmd != nil && b.cmd.ProcessState != nil {
+				if ec := b.cmd.ProcessState.ExitCode(); ec != 0 {
+					fmt.Fprintf(os.Stderr, "tuibridge: opsintel-tui exited with code %d (read err: %v)\n", ec, err)
+				}
+			}
 			return
 		}
 	}
@@ -280,3 +297,17 @@ func (b *Bridge) Done() <-chan struct{} { return b.doneCh }
 
 // Err returns any error encountered by the read loop (after Done is closed).
 func (b *Bridge) Err() error { return b.doneErr }
+
+// CloseErr returns the read-loop error, except that a clean Rust EOF is
+// reported as nil. Use this in view-runner loops so the CLI doesn't print
+// "Error: EOF" when the user simply pressed `q` to close a TUI.
+func (b *Bridge) CloseErr() error {
+	err := b.doneErr
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
