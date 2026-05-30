@@ -338,7 +338,7 @@ pub struct ReposState {
 /// Full snapshot of the Repo Intelligence dashboard. Sent as `repos.snapshot`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReposSnapshot {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub entries: Vec<RepoEntry>,
     #[serde(default)]
     pub selected: usize,
@@ -346,7 +346,7 @@ pub struct ReposSnapshot {
     pub memory: Option<RepoMemoryView>,
     #[serde(default)]
     pub scan: Option<ScanResultView>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub users: Vec<RepoUserView>,
     #[serde(default)]
     pub graph: Option<CallGraphView>,
@@ -530,20 +530,36 @@ pub struct DashboardState {
 pub struct DashboardSnapshot {
     #[serde(default)]
     pub status: DashboardStatus,
-    #[serde(default)]
+    // `default, deserialize_with = "null_as_empty_vec"` accepts both a missing
+    // field AND a JSON `null`. Plain `#[serde(default)]` only handles the
+    // missing case; Go marshals `nil` slices as `null`, which would reject
+    // the whole snapshot and silently fall back to the all-empty default
+    // (the symptom we hit in v1.0.36).
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub config: Vec<KeyValue>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub limits: Vec<KeyValue>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub usage: Vec<KeyValue>,
     #[serde(default)]
     pub usage_empty_hint: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub agents: Vec<AgentInfo>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub logs: Vec<LogEntry>,
     #[serde(default)]
     pub log_source_path: String,
+}
+
+/// Accept either a JSON array OR `null` (Go's encoding of a nil slice) and
+/// produce an empty `Vec<T>` in the second case. Used for snapshot fields
+/// that Go may emit as `null` when the underlying value is a nil slice.
+fn null_as_empty_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -562,7 +578,7 @@ pub struct DashboardStatus {
     pub version: String,
     #[serde(default)]
     pub skill_summary: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub channels: Vec<String>,
     #[serde(default)]
     pub plano: ToggleInfo,

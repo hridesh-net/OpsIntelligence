@@ -315,6 +315,16 @@ func (c *dashboardCache) snapshot(opts DashboardOptions) snapshot {
 func (c *dashboardCache) buildStatus(ps psResult) snapStatus {
 	cpu := 0.0
 	fmt.Sscanf(ps.cpu, "%f", &cpu)
+	// Go marshals a nil []string as JSON null; Rust's Vec<String> with
+	// #[serde(default)] rejects null (default only fires for MISSING fields).
+	// That rejection cascades and the whole DashboardSnapshot fails to
+	// deserialize on the Rust side, falling back to a default snapshot —
+	// which is exactly the all-empty screen the user reported. Always emit
+	// an empty slice instead of nil so the JSON is `[]` not `null`.
+	channels := c.info.Status.Channels
+	if channels == nil {
+		channels = []string{}
+	}
 	return snapStatus{
 		Alive:         ps.alive,
 		PID:           c.info.Status.PID,
@@ -323,7 +333,7 @@ func (c *dashboardCache) buildStatus(ps psResult) snapStatus {
 		RSSMB:         float64(ps.rssKB) / 1024.0,
 		Version:       c.info.Status.Version,
 		SkillSummary:  c.info.Status.SkillSummary,
-		Channels:      c.info.Status.Channels,
+		Channels:      channels,
 		Plano:         toggle{Enabled: c.info.Status.PlanoEnabled, Detail: c.info.Status.PlanoEndpoint},
 		MCP:           toggle{Enabled: c.info.Status.MCPEnabled, Detail: c.info.Status.MCPTransport},
 		GatewayBase:   c.info.Status.GatewayBase,
@@ -412,7 +422,10 @@ func (c *dashboardCache) buildUsage(s *SessionUsage, ps psResult) []kvPair {
 
 func (c *dashboardCache) buildAgents() []agentInfo {
 	if c.info.Tasks == nil {
-		return nil
+		// Same nil-vs-empty issue as Channels: returning nil makes Go emit
+		// `"agents":null` which Rust's Vec<AgentInfo> rejects, cascading to a
+		// failed snapshot deserialization. Always return an empty slice.
+		return []agentInfo{}
 	}
 	tasks := c.info.Tasks.List()
 	out := make([]agentInfo, 0, len(tasks))

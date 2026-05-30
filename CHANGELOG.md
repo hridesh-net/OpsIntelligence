@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.38] — 2026-05-29
+
+### Fixed — the big "Status TUI shows STOPPED + empty Config/Limits/Usage" bug
+
+Confirmed via the `OPSINTEL_TUI_PROTO_TRACE` capture: Go was sending JSON like `"channels":null` and `"agents":null` (the default `encoding/json` rendering of a nil slice). Rust's `Vec<T>` with `#[serde(default)]` rejects `null` — default only kicks in when the field is **missing**, not when it's present-but-null. That rejection cascaded through the whole `DashboardSnapshot` deserialization, the snapshot was silently dropped, and the TUI fell back to its all-default state: pill blank, `STOPPED` body, empty version/skills/CPU/RAM, **and** empty Config/Limits/Usage tabs.
+
+Fixed on both sides so neither bites again:
+
+- **Go (`internal/tuibridge/dashboard.go`)** — `buildStatus` now always emits an empty `[]string{}` for `channels` when the input is nil; `buildAgents` returns an empty `[]agentInfo{}` instead of nil when there are no tasks.
+- **Rust (`crates/opsintel-tui/src/protocol.rs`)** — every `Vec<T>` snapshot field uses a new `null_as_empty_vec` deserializer that accepts both arrays and `null`, returning an empty Vec on null. Applied to `DashboardSnapshot.{config,limits,usage,agents,logs}`, `DashboardStatus.channels`, `ReposSnapshot.{entries,users}`.
+
+### Changed
+
+- Crate version bumped to `0.2.11`.
+
 ## [1.0.37] — 2026-05-29
 
 ### Added — Protocol diagnostics
