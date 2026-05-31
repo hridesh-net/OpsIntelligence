@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.48] — 2026-05-30
+
+### Fixed — Scrun shell layout polish
+
+Follow-up to v1.0.47 closing the visible UX gaps in the embedded Scrun board:
+
+- **Dashboard sidebar hidden on /boards.** Two nav rails side-by-side (dashboard's + Scrun's) was confusing. `body.scrun-active` now collapses the dashboard sidebar and re-grids `<body class="app-page">` to a single column, giving Scrun full bleed across the viewport.
+- **Header padding removed.** Dashboard's `<main class="content">` keeps a top header + side padding by default; `body.scrun-active` zeroes both so Scrun's topbar lands flush against the viewport edge.
+- **Flash-of-unstyled eliminated.** Scrun stylesheets fetch + parse asynchronously on first /boards visit. The mount + class flip now `await`s `ensureScrunStyles()` before showing the shell, and `#appRoot` stays `visibility: hidden` until `body.scrun-ready` is set.
+- **Clean teardown.** Navigating away from /boards drops both `scrun-active` and `scrun-ready` so the dashboard returns to its normal sidebar + header layout.
+
+### Still missing vs target (next wave)
+
+- Live API adapter wiring scrun/data.js to `/api/v1/boards/{id}` (Demo mode still the only source of truth).
+- `/api/v1/boards/{id}/analytics` aggregation endpoint.
+- SSE `/api/v1/runs/{rid}/stream`.
+- Removal of legacy `renderBoardsView` / card-detail modal code from `assets/app.js`.
+
 ## [1.0.47] — 2026-05-30
 
 ### Added — Scrun board UI mounted at `#/boards`

@@ -300,9 +300,12 @@
     clearOverviewPoll();
     clearBoardsPoll();
     const { view, sub } = parseHash();
-    // Leaving the Scrun shell? Drop the body class so the dashboard's
-    // header padding comes back.
-    if (view !== "boards") document.body.classList.remove("scrun-active");
+    // Leaving the Scrun shell? Drop the body classes so the dashboard's
+    // sidebar / header / padding come back.
+    if (view !== "boards") {
+      document.body.classList.remove("scrun-active");
+      document.body.classList.remove("scrun-ready");
+    }
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
     if (target) {
@@ -329,16 +332,17 @@
         overviewPollId = setInterval(refreshOverviewStatus, 10000);
         break;
       case "boards":
-        // Scrun shell takes over the section; the dashboard header
-        // (title/sub/actions) is hidden by scrun-bridge.css when
-        // body.scrun-active is set. CSS is injected on first mount
-        // because Scrun's :root tokens would otherwise leak into the
-        // rest of the dashboard.
+        // Scrun shell takes over the section. CSS is injected on first
+        // mount because Scrun's :root tokens would otherwise leak into
+        // the rest of the dashboard. We await styles before flipping
+        // .scrun-ready so the first paint isn't an FOUC frame.
         document.body.classList.add("scrun-active");
-        ensureScrunStyles();
-        if (typeof window.scrunMount === "function") {
-          try { window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
-        }
+        ensureScrunStyles().then(() => {
+          if (typeof window.scrunMount === "function") {
+            try { window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
+          }
+          document.body.classList.add("scrun-ready");
+        });
         break;
       case "tasks":
         titleEl.textContent = "Tasks";

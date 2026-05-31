@@ -1,36 +1,37 @@
 /* scrun-bridge.css — make the embedded Scrun shell co-exist with the
    OpsIntelligence dashboard.
 
-   The Scrun mockup expects to own <body>. Mounted inside #view-boards
-   we let it own that section: full-bleed, its own scroll context, no
-   inherited padding from the dashboard <main> layout. The dashboard
-   sidebar stays put on the left; Scrun's nav rail is its own thing
-   inside the section. */
+   When body.scrun-active is set we:
+     - hide the dashboard sidebar (Scrun has its own nav rail)
+     - drop the <main> padding + header so the Scrun shell is full-bleed
+     - re-grid <body> so <main> spans edge-to-edge
+   When the user navigates away from /boards the class is removed and
+   the dashboard returns to its normal layout. */
 
+body.scrun-active .sidebar { display: none !important; }
+body.app-page.scrun-active { grid-template-columns: 1fr !important; }
+body.scrun-active .content { grid-column: 1 / -1 !important; padding: 0 !important; }
+body.scrun-active .content-header { display: none !important; }
+body.scrun-active main.content > #toast { z-index: 10000; }
+
+/* Section becomes its own viewport. */
 #view-boards.scrun-mount {
   padding: 0;
   margin: 0;
   display: block;
   position: relative;
-  height: calc(100vh - 0px);
+  height: 100vh;
+  width: 100%;
   overflow: hidden;
 }
-
-/* The dashboard's <main class="content"> adds its own header + side
-   padding. When the Boards section is the active view, collapse the
-   header so Scrun's topbar isn't pushed off-screen. */
-body.scrun-active .content-header { display: none; }
-body.scrun-active .content { padding: 0; }
-body.scrun-active main.content > #toast { z-index: 10000; }
-
-/* The Scrun shell already targets html/body for its design tokens.
-   When embedded we re-root those tokens onto #view-boards so the
-   dashboard's other views keep their own palette. */
-#view-boards .app { height: 100%; min-height: 0; }
+#view-boards .app {
+  height: 100%;
+  min-height: 0;
+}
 
 /* Setup wizard is server-side already; never show it embedded. */
 #view-boards #setup { display: none !important; }
 
-/* The Scrun shell uses position:fixed for its overlay modals so they
-   render relative to the viewport, which is exactly what we want even
-   when embedded. No change needed. */
+/* Hide Scrun while CSS / JS are still loading to avoid the
+   flash-of-unstyled-content on first /boards visit. */
+body:not(.scrun-ready) #view-boards #appRoot { visibility: hidden; }
