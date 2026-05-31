@@ -423,12 +423,31 @@ setup_node() {
       ok "Node.js $node_ver found"
       if ! command -v pnpm >/dev/null 2>&1; then
         log "Installing pnpm..."
-        npm install -g pnpm@10
+        # Node 22 ships corepack — preferred, no sudo, no /usr/local writes.
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable pnpm 2>/dev/null && corepack prepare pnpm@10 --activate 2>/dev/null \
+            && ok "pnpm enabled via corepack" \
+            || warn "corepack failed; pnpm not installed (set up manually: 'corepack enable pnpm')"
+        else
+          # Fallback: user-scoped install so we never touch /usr/local.
+          local npm_prefix="$HOME/.local"
+          mkdir -p "$npm_prefix/lib" "$npm_prefix/bin"
+          if npm install -g --prefix="$npm_prefix" pnpm@10 >/dev/null 2>&1; then
+            export PATH="$npm_prefix/bin:$PATH"
+            ok "pnpm installed to $npm_prefix/bin (add to PATH)"
+          else
+            warn "Could not install pnpm without sudo; skipping TS layer (install manually: 'corepack enable pnpm' or 'brew install pnpm')"
+          fi
+        fi
       fi
-      log "Installing Node dependencies..."
-      (cd "$REPO_ROOT" && pnpm install --frozen-lockfile 2>/dev/null || pnpm install)
-      log "Building TypeScript layer..."
-      (cd "$REPO_ROOT" && pnpm build) && ok "TypeScript layer built"
+      if command -v pnpm >/dev/null 2>&1; then
+        log "Installing Node dependencies..."
+        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile 2>/dev/null || pnpm install)
+        log "Building TypeScript layer..."
+        (cd "$REPO_ROOT" && pnpm build) && ok "TypeScript layer built"
+      else
+        warn "pnpm unavailable; TypeScript layer will not be built (Go binary is fully functional)"
+      fi
     else
       warn "Node.js $node_ver < 22; TypeScript layer will not be built"
     fi

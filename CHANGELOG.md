@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.49] — 2026-05-31
+
+### Fixed — install.sh pnpm step no longer needs sudo
+
+The pnpm install step was running `npm install -g pnpm@10`, which on macOS targets `/usr/local/lib/node_modules` — a root-owned path on default Node installs. The install aborted with `EACCES: permission denied`.
+
+- Prefer `corepack enable pnpm && corepack prepare pnpm@10 --activate` when corepack is present (default on Node 22). No sudo, no `/usr/local` writes.
+- Fall back to `npm install -g --prefix=$HOME/.local pnpm@10` so the install stays user-scoped if corepack isn't available.
+- If both fail, warn instead of aborting and skip the TypeScript layer build (the Go binary works on its own). User is told to `corepack enable pnpm` or `brew install pnpm` manually.
+
 ## [1.0.48] — 2026-05-30
 
 ### Fixed — Scrun shell layout polish
