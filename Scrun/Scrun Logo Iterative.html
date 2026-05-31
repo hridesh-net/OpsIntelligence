@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scrun — Iterative + Incremental mark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e171e; --panel:#101922; --card:#141e29; --border:rgba(255,255,255,.08);
+  --text:#e7edf5; --dim:#8a97aa; --faint:#586675; --accent:#2898da; --accent2:#4db0ef;
+  --font:"Hanken Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",monospace;
+}
+[data-theme="light"]{--bg:#f6f7fb; --panel:#ffffff; --card:#ffffff; --border:rgba(15,24,40,.10);
+  --text:#0f1822; --dim:#5b6776; --faint:#94a0b1;}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;padding:46px 40px 80px;transition:background .2s}
+.head{max-width:1080px;margin:0 auto 34px;display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap}
+.head h1{font-size:25px;font-weight:800;letter-spacing:-.025em;margin:0}
+.head p{color:var(--dim);font-size:14px;margin:6px 0 0;max-width:660px;line-height:1.5}
+.head .sp{margin-left:auto;display:flex;gap:9px}
+.tbtn{font-family:var(--font);font-size:13px;font-weight:600;color:var(--dim);background:var(--card);border:1px solid var(--border);border-radius:9px;padding:9px 14px;cursor:pointer}
+.tbtn.on{color:var(--accent2);border-color:var(--accent);background:rgba(40,152,218,.12)}
+[data-theme="light"] .tbtn.on{color:var(--accent)}
+.grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.opt{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:26px;display:flex;gap:24px;align-items:center}
+.opt .left{flex:none}
+.opt .right{flex:1;min-width:0}
+.opt .num{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--faint);text-transform:uppercase;margin-bottom:5px}
+.opt .nm{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.opt .nm small{display:block;font-weight:500;font-size:12px;color:var(--dim);margin-top:4px;letter-spacing:0;line-height:1.45}
+.lockup{display:flex;align-items:center;gap:13px;margin:16px 0}
+.lockup .wm{font-size:26px;font-weight:800;letter-spacing:-.03em}
+.sizes{display:flex;align-items:center;gap:15px;border-top:1px solid var(--border);padding-top:15px}
+.sizes .s{display:flex;flex-direction:column;align-items:center;gap:6px}
+.sizes .s span{font-family:var(--mono);font-size:9px;color:var(--faint)}
+.tile{border-radius:22%;background:linear-gradient(140deg,var(--accent),var(--accent2));position:relative;display:grid;place-items:center;box-shadow:0 8px 24px rgba(40,152,218,.30);color:#fff}
+.mono-ink{color:var(--accent)}
+svg{display:block}
+.recommend{outline:2px solid var(--accent);outline-offset:-2px}
+.rbadge{display:inline-block;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.08em;color:#fff;background:var(--accent);border-radius:5px;padding:2px 7px;margin-left:8px;vertical-align:2px}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>Scrun — iterative &amp; incremental</h1>
+      <p>The orbit becomes the story: agents loop through cycles (iterative) while the work grows step by step (incremental). Four marks on that idea — pick one and I'll wire it into the app.</p>
+    </div>
+    <div class="sp">
+      <button class="tbtn on" id="tDark">Dark</button>
+      <button class="tbtn" id="tLight">Light</button>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+
+<script>
+const C=50;
+function polar(r,deg){const a=deg*Math.PI/180;return [ (C+r*Math.cos(a)).toFixed(2), (C+r*Math.sin(a)).toFixed(2) ];}
+function arc(r,a0,a1,sweep){const[p0x,p0y]=polar(r,a0);const[p1x,p1y]=polar(r,a1);
+  const large=Math.abs(a1-a0)>180?1:0;return `M${p0x} ${p0y} A${r} ${r} 0 ${large} ${sweep==null?1:sweep} ${p1x} ${p1y}`;}
+
+/* 1 — SPIRAL: agent winds outward through iterations, radius grows each turn (increment) */
+function spiral(){
+  const pts=[]; const turns=1.35, steps=54, rMax=26, rMin=3;
+  for(let i=0;i<=steps;i++){const t=i/steps; const r=rMin+t*(rMax-rMin); const deg=-90+t*360*turns; const[x,y]=polar(r,deg); pts.push(`${x} ${y}`);}
+  const[hx,hy]=polar(rMax,-90+360*turns);
+  return `<polyline points="${pts.join(" ")}" fill="none" stroke="currentColor" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${hx}" cy="${hy}" r="8" fill="currentColor"/>`;
+}
+/* 2 — INCREMENTAL ORBIT: three growing arc segments complete one loop, agent at the head */
+function segments(){
+  return `${arc(24,138,176)}`.replace('M',`<path stroke-width="3.4" opacity=".4" stroke-linecap="round" fill="none" stroke="currentColor" d="`)+`"/>`
+   + `<path d="${arc(24,188,250)}" fill="none" stroke="currentColor" stroke-width="5.2" opacity=".68" stroke-linecap="round"/>`
+   + `<path d="${arc(24,262,322)}" fill="none" stroke="currentColor" stroke-width="7.2" stroke-linecap="round"/>`
+   + (()=>{const[x,y]=polar(24,322);return `<circle cx="${x}" cy="${y}" r="8" fill="currentColor"/>`;})()
+   + `<circle cx="50" cy="50" r="5.2" fill="currentColor" opacity=".55"/>`;
+}
+/* 3 — CYCLE + STEPS: a circular-arrow loop (iterate) around growing bars (increment) */
+function cycle(){
+  const a0=-58, a1=200; const[ex,ey]=polar(26,a0);
+  // arrowhead at start of loop (a0)
+  const tip=polar(26,a0); const back=polar(26,a0+14); const out=polar(33,a0+4); const inn=polar(19,a0+4);
+  return `<path d="${arc(26,a0+16,a1,0)}" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity=".45"/>`
+   + `<polygon points="${tip[0]},${tip[1]} ${out[0]},${out[1]} ${inn[0]},${inn[1]}" fill="currentColor" opacity=".45"/>`
+   + `<rect x="34" y="50" width="8.5" height="16" rx="3" fill="currentColor"/>`
+   + `<rect x="45.8" y="42" width="8.5" height="24" rx="3" fill="currentColor"/>`
+   + `<rect x="57.6" y="34" width="8.5" height="32" rx="3" fill="currentColor"/>`;
+}
+/* 4 — PROGRESS ORBIT: faint full track + bright incremental fill, agent at leading edge */
+function progress(){
+  const head=222; const[hx,hy]=polar(24,head);
+  return `<circle cx="50" cy="50" r="24" fill="none" stroke="currentColor" stroke-width="6.6" opacity=".24"/>`
+   + `<path d="${arc(24,-90,head,1)}" fill="none" stroke="currentColor" stroke-width="6.6" stroke-linecap="round"/>`
+   + `<circle cx="${hx}" cy="${hy}" r="8.4" fill="currentColor"/>`
+   + `<circle cx="50" cy="50" r="5" fill="currentColor" opacity=".5"/>`;
+}
+
+const MARKS={spiral:spiral(),segments:segments(),cycle:cycle(),progress:progress()};
+const META={
+  spiral:["Spiral","Agents wind outward through iterations — radius grows each turn. The classic iterative-incremental symbol.",true],
+  segments:["Built loop","Three growing arc segments complete one cycle, agent at the head. Increment building toward a finished iteration.",false],
+  cycle:["Cycle &amp; steps","A repeat-loop arrow around bars that step up. Literal: iterate around, grow each pass.",false],
+  progress:["Sprint ring","A loop filling incrementally with the agent on the leading edge — an iteration in progress.",false],
+};
+function tile(k,px){const r=Math.round(px*0.22);
+  return `<div class="tile" style="width:${px}px;height:${px}px;border-radius:${r}px">
+    <svg width="${Math.round(px*0.8)}" height="${Math.round(px*0.8)}" viewBox="0 0 100 100">${MARKS[k]}</svg></div>`;}
+function mono(k,px){return `<span class="mono-ink"><svg width="${px}" height="${px}" viewBox="0 0 100 100">${MARKS[k]}</svg></span>`;}
+const grid=document.getElementById("grid"); let n=1;
+for(const k of Object.keys(MARKS)){
+  const [name,desc,rec]=META[k];
+  const el=document.createElement("div"); el.className="opt"+(rec?" recommend":"");
+  el.innerHTML=`
+    <div class="left">${tile(k,104)}</div>
+    <div class="right">
+      <div class="num">Variant ${String.fromCharCode(64+n)}</div>
+      <div class="nm">${name}${rec?'<span class="rbadge">PICK</span>':''}<small>${desc}</small></div>
+      <div class="lockup">${tile(k,34)}<span class="wm">Scrun</span></div>
+      <div class="sizes">
+        <div class="s">${tile(k,28)}<span>28px</span></div>
+        <div class="s">${tile(k,20)}<span>20px</span></div>
+        <div class="s">${mono(k,28)}<span>mono</span></div>
+      </div>
+    </div>`;
+  grid.appendChild(el); n++;
+}
+tDark.onclick=()=>{document.documentElement.dataset.theme="dark";tDark.classList.add("on");tLight.classList.remove("on");};
+tLight.onclick=()=>{document.documentElement.dataset.theme="light";tLight.classList.add("on");tDark.classList.remove("on");};
+</script>
+</body>
+</html>

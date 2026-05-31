@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scrun — Logo exploration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e171e; --panel:#101922; --card:#141e29; --border:rgba(255,255,255,.08);
+  --text:#e7edf5; --dim:#8a97aa; --faint:#586675; --accent:#2898da; --accent2:#4db0ef;
+  --font:"Hanken Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",monospace;
+}
+[data-theme="light"]{
+  --bg:#f6f7fb; --panel:#ffffff; --card:#ffffff; --border:rgba(15,24,40,.10);
+  --text:#0f1822; --dim:#5b6776; --faint:#94a0b1;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
+  padding:46px 40px 80px;transition:background .2s}
+.head{max-width:1180px;margin:0 auto 34px;display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap}
+.head h1{font-size:25px;font-weight:800;letter-spacing:-.025em;margin:0}
+.head p{color:var(--dim);font-size:14px;margin:6px 0 0;max-width:640px;line-height:1.5}
+.head .sp{margin-left:auto;display:flex;gap:9px}
+.tbtn{font-family:var(--font);font-size:13px;font-weight:600;color:var(--dim);background:var(--card);
+  border:1px solid var(--border);border-radius:9px;padding:9px 14px;cursor:pointer}
+.tbtn.on{color:var(--accent2);border-color:var(--accent);background:rgba(40,152,218,.12)}
+[data-theme="light"] .tbtn.on{color:var(--accent)}
+
+.grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.opt{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:24px;display:flex;flex-direction:column;gap:18px}
+.opt .num{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+.opt .nm{font-size:15px;font-weight:700;letter-spacing:-.01em;margin-top:-12px}
+.opt .nm small{display:block;font-weight:500;font-size:11.5px;color:var(--dim);margin-top:3px;letter-spacing:0}
+.hero{display:flex;align-items:center;justify-content:center;height:150px;border-radius:14px;
+  background:radial-gradient(120% 120% at 50% 0%,rgba(40,152,218,.10),transparent 70%),var(--card);border:1px solid var(--border)}
+.lockup{display:flex;align-items:center;gap:13px;padding-top:2px}
+.lockup .wm{font-size:26px;font-weight:800;letter-spacing:-.03em}
+.sizes{display:flex;align-items:center;gap:16px;border-top:1px solid var(--border);padding-top:16px}
+.sizes .s{display:flex;flex-direction:column;align-items:center;gap:7px}
+.sizes .s span{font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+.tile{border-radius:22%;background:linear-gradient(140deg,var(--accent),var(--accent2));position:relative;
+  display:grid;place-items:center;box-shadow:0 6px 20px rgba(40,152,218,.28)}
+svg{display:block}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>Scrun — logo marks</h1>
+      <p>Six directions for the Scrun mark, built on the OpsIntelAI blue. Each shown as an app tile, a wordmark lockup, and at the 28px / 20px sizes the app actually uses. Toggle the background to check both themes.</p>
+    </div>
+    <div class="sp">
+      <button class="tbtn on" id="tDark">Dark</button>
+      <button class="tbtn" id="tLight">Light</button>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+/* Each mark is an SVG inner-content function taking a px size; drawn on a gradient tile (white ink)
+   plus a standalone variant for the lockup. We render white-on-gradient tiles. */
+
+// ---- mark definitions: return inner SVG (viewBox 0 0 100 100), white ink ----
+const MARKS = {
+  // 1 — Orbit: autonomous agent circling the core (refined original)
+  orbit: `
+    <circle cx="50" cy="50" r="22" fill="none" stroke="#fff" stroke-width="8.5" stroke-linecap="round" stroke-dasharray="98 40" transform="rotate(-50 50 50)"/>
+    <circle cx="50" cy="50" r="7.5" fill="#fff"/>
+    <circle cx="72" cy="33" r="8.5" fill="#fff"/>`,
+  // 2 — Flow S: two kanban cards flowing into an S / run motion
+  flow: `
+    <rect x="22" y="26" width="40" height="15" rx="7.5" fill="#fff"/>
+    <rect x="38" y="42.5" width="24" height="15" rx="7.5" fill="#fff" opacity=".7"/>
+    <rect x="38" y="59" width="40" height="15" rx="7.5" fill="#fff"/>`,
+  // 3 — Run graph: three agent nodes forming a play / forward arrow
+  run: `
+    <path d="M34 30 L70 50 L34 70" fill="none" stroke="#fff" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" opacity=".32"/>
+    <circle cx="34" cy="30" r="8.5" fill="#fff"/>
+    <circle cx="70" cy="50" r="8.5" fill="#fff"/>
+    <circle cx="34" cy="70" r="8.5" fill="#fff"/>`,
+  // 4 — Columns + pulse: kanban columns with a live heartbeat
+  pulse: `
+    <rect x="24" y="44" width="13" height="32" rx="5" fill="#fff" opacity=".55"/>
+    <rect x="43.5" y="34" width="13" height="42" rx="5" fill="#fff" opacity=".8"/>
+    <rect x="63" y="24" width="13" height="52" rx="5" fill="#fff"/>
+    <path d="M18 40 H30 L34 30 L40 50 L45 40 H82" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // 5 — Orchestrator: central hub routing to agents
+  hub: `
+    <line x1="50" y1="50" x2="28" y2="30" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".4"/>
+    <line x1="50" y1="50" x2="74" y2="32" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".4"/>
+    <line x1="50" y1="50" x2="50" y2="76" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".4"/>
+    <circle cx="50" cy="50" r="11" fill="#fff"/>
+    <circle cx="28" cy="30" r="7.5" fill="#fff"/>
+    <circle cx="74" cy="32" r="7.5" fill="#fff"/>
+    <circle cx="50" cy="76" r="7.5" fill="#fff"/>`,
+  // 6 — S monogram: bold rounded S as a single flowing stroke
+  mono: `
+    <path d="M68 36 a16 16 0 0 0 -16 -10 h-2 a13 13 0 0 0 0 26 h0 a13 13 0 0 1 0 26 h-2 a16 16 0 0 1 -16 -10"
+      fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round"/>`,
+};
+const META = {
+  orbit:["Orbit","Autonomous agent circling the core"],
+  flow:["Flow","Cards flowing through stages"],
+  run:["Run","Agent nodes as a forward arrow"],
+  pulse:["Pulse","Live kanban columns + heartbeat"],
+  hub:["Orchestrator","Hub routing work to agents"],
+  mono:["Monogram","Bold flowing S"],
+};
+
+function tile(markKey, px){
+  const r = Math.round(px*0.22);
+  return `<div class="tile" style="width:${px}px;height:${px}px;border-radius:${r}px">
+    <svg width="${Math.round(px*0.78)}" height="${Math.round(px*0.78)}" viewBox="0 0 100 100">${MARKS[markKey]}</svg></div>`;
+}
+function standalone(markKey, px){
+  // mark in accent color (no tile) for lockup
+  const inner = MARKS[markKey].replace(/#fff/g, "var(--accent)").replace(/opacity="\.\d+"/g, m=>m);
+  return `<svg width="${px}" height="${px}" viewBox="0 0 100 100">${inner}</svg>`;
+}
+
+const grid = document.getElementById("grid");
+let n=1;
+for(const key of Object.keys(MARKS)){
+  const [name,desc]=META[key];
+  const el=document.createElement("div"); el.className="opt";
+  el.innerHTML=`
+    <div class="num">Mark ${String(n).padStart(2,"0")}</div>
+    <div class="nm">${name}<small>${desc}</small></div>
+    <div class="hero">${tile(key,96)}</div>
+    <div class="lockup">${tile(key,38)}<span class="wm">Scrun</span></div>
+    <div class="sizes">
+      <div class="s">${tile(key,28)}<span>28px rail</span></div>
+      <div class="s">${tile(key,20)}<span>20px</span></div>
+      <div class="s">${standalone(key,30)}<span>mono</span></div>
+    </div>`;
+  grid.appendChild(el); n++;
+}
+
+document.getElementById("tDark").onclick=()=>{document.documentElement.dataset.theme="dark";tDark.classList.add("on");tLight.classList.remove("on");};
+document.getElementById("tLight").onclick=()=>{document.documentElement.dataset.theme="light";tLight.classList.add("on");tDark.classList.remove("on");};
+</script>
+</body>
+</html>
