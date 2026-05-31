@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.50] — 2026-05-31
+
+### Changed — install.sh prefers gzipped release asset (~70% smaller downloads)
+
+The raw `opsintelligence-darwin-arm64` release asset weighs ~66 MB. On slow / flaky links curl was timing out at ~25% and burning the retry budget. v1.0.50 makes the release flow ship a `.gz` next to each raw binary and teaches `install.sh` to prefer it.
+
+- **release.yml**: after each `go build`, a new step runs `gzip -9 -k -f` against every binary in `dist/`. Both the raw binary and the `.gz` are uploaded so older install scripts keep working.
+- **install.sh**: tries `opsintelligence-<platform>.gz` first, decompresses, then chmod+install. Falls back to the raw binary transparently when the `.gz` isn't published (older tags). Reuses the existing curl retry / resume logic so partial `.gz` downloads still resume.
+- Expected wire size: ~22 MB instead of ~66 MB for the macOS arm64 binary.
+
 ## [1.0.49] — 2026-05-31
 
 ### Fixed — install.sh pnpm step no longer needs sudo

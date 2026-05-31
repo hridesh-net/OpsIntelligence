@@ -135,6 +135,14 @@ jobs:
           mkdir -p dist
           go build -mod=vendor -tags fts5 -ldflags "-X main.version=${{ github.ref_name }} -s -w" -o dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }} ./cmd/opsintelligence
 
+      - name: Compress binary (gzip) for smaller downloads
+        shell: bash
+        run: |
+          # install.sh prefers the .gz asset (60-70% smaller); the raw
+          # binary is kept so older install scripts keep working.
+          gzip -9 -k -f dist/opsintelligence-${{ matrix.target }}${{ matrix.ext }}
+          ls -lh dist/
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

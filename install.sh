@@ -269,17 +269,39 @@ install_binary() {
     release_path="latest/download"
   fi
   local download_url="https://github.com/${REPO_OWNER_REPO}/releases/${release_path}/${artifact}"
+  local download_url_gz="${download_url}.gz"
   local tmp_bin
   tmp_bin="$(mktemp "${TMPDIR:-/tmp}/opsintelligence.XXXXXX")"
 
   log "Downloading pre-built binary for ${PLATFORM}..."
-  log "Source: $download_url"
   log "Timeouts: connect 30s, total ${OPSINTELLIGENCE_CURL_MAX_TIME:-900}s per transfer attempt; partial downloads resume (set OPSINTELLIGENCE_CURL_MAX_TIME to override)."
   if [[ "${OPSINTELLIGENCE_CURL_RETRIES:-3}" != "0" ]]; then
     log "Network note: curl may retry transient errors (set OPSINTELLIGENCE_CURL_RETRIES=0 to try once only)."
   fi
   mkdir -p "$INSTALL_DIR"
 
+  # Prefer the gzipped asset (~70% smaller, ~22MB vs ~66MB).
+  # Older releases only ship the raw binary, so fall back transparently.
+  if command -v gzip >/dev/null 2>&1; then
+    local tmp_gz="${tmp_bin}.gz"
+    log "Source: $download_url_gz (gzipped, ~22MB)"
+    if curl_get "$tmp_gz" "$download_url_gz"; then
+      if gzip -d -f "$tmp_gz" 2>/dev/null; then
+        chmod +x "$tmp_bin"
+        mv -f "$tmp_bin" "$INSTALL_DIR/opsintelligence"
+        ok "Binary installed: $INSTALL_DIR/opsintelligence"
+        copy_skills_dir
+        return
+      fi
+      warn "Downloaded .gz but failed to decompress; falling back to raw binary."
+      rm -f "$tmp_gz" "$tmp_bin"
+    else
+      rm -f "$tmp_gz"
+      log "Gzipped asset unavailable; falling back to raw binary."
+    fi
+  fi
+
+  log "Source: $download_url"
   if curl_get "$tmp_bin" "$download_url"; then
     chmod +x "$tmp_bin"
     mv -f "$tmp_bin" "$INSTALL_DIR/opsintelligence"
