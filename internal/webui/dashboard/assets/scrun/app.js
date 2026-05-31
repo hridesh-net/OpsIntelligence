@@ -175,16 +175,45 @@ function bootApp(){
   if(STATE.simRunning) startSim();
 }
 
-function init(){
+async function init(){
   loadState();
   syncThemeIco();
-  // Embedded inside the OpsIntelligence dashboard the setup wizard is
-  // never the right landing — the board exists on the server already.
-  // Boot straight into the shell. Demo mode uses seed CARDS from
-  // data.js; v1.0.48 will swap data.js for an API adapter.
   const setupEl=document.getElementById("setup");
   if(setupEl) setupEl.classList.remove("on");
   const root=document.getElementById("appRoot"); if(root) root.style.display="";
+
+  // v1.0.51 live mode: pull the first board from /api/v1/boards and
+  // overwrite DB in place. If no boards exist or the API errors out we
+  // silently fall back to the bundled Demo fixtures so the shell still
+  // renders something. Skip the API call when the user explicitly
+  // toggled Demo mode (localStorage.scrunDemoMode === "1").
+  const demoMode = localStorage.getItem("scrunDemoMode") === "1";
+  if (!demoMode && window.ScrunAPI) {
+    try {
+      const res = await window.ScrunAPI.loadFirstBoard();
+      if (res && res.ok) {
+        // Wipe demo-seeded contents and replace with API data, keeping
+        // helper functions on DB so the rest of Scrun stays happy.
+        Object.keys(DB.AGENTS).forEach(k => delete DB.AGENTS[k]);
+        Object.assign(DB.AGENTS, res.agents);
+        DB.WORKFLOW.length = 0;
+        res.workflow.forEach(s => DB.WORKFLOW.push(s));
+        DB.CARDS.length = 0;
+        res.cards.forEach(c => DB.CARDS.push(c));
+        if (DB.AGENT_STATS) {
+          Object.keys(DB.AGENT_STATS).forEach(k => delete DB.AGENT_STATS[k]);
+          Object.assign(DB.AGENT_STATS, res.stats || {});
+        }
+        if (res.boardName) {
+          document.querySelectorAll("[data-boardname]").forEach(el => {
+            el.textContent = res.boardName;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[scrun] live load threw; demo fixtures retained:", e);
+    }
+  }
   bootApp();
 }
-window.scrunMount=function scrunMount(){ init(); };
+window.scrunMount=function scrunMount(){ return init(); };

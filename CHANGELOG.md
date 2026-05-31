@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.51] — 2026-05-31
+
+### Added — Scrun reads real boards/cards from `/api/v1` (read-only live mode)
+
+The Scrun shell mounted in v1.0.47 was rendering bundled fixtures. v1.0.51 swaps that for a live API adapter so the board now reflects real backend state.
+
+- **`scrun/api.js`** — thin client over `/api/v1/boards`, `/boards/{id}`, `/boards/{id}/agents`. Maps backend shapes (`BoardCard`, `BoardColumn`, `BoardAgent`) onto the structure the rest of the Scrun shell expects (`DB.CARDS`, `DB.WORKFLOW`, `DB.AGENTS`).
+  - `card_type: feature|bug|infrastructure|security` → Scrun chips `feat|fix|infra|sec`
+  - `priority: p0|p1|p2|p3` → Scrun chips `H|M|L`
+  - `status: completed` → Scrun `done`
+  - Per-column `gate` / `automation` lifted from `board.config.column_overrides`
+  - Card metadata (`acceptance_criteria`, `labels`, `confidence`, `eta`, `hitl`, `branch`, `progress`, etc.) read from `BoardCard.metadata`
+  - Agent colour/initials auto-derived when not present in `BoardAgent.config`
+- **Board selection** — `loadFirstBoard()` lists boards, picks the last one the user opened (remembered via `localStorage.scrun.lastBoard`), or the first board if there's no remembered pick. The board name is mirrored into every `[data-boardname]` slot in the topbar / strip.
+- **Mount flow** — `scrun/app.js`'s `init()` is now async; the API load happens before `bootApp()` so the first paint shows real data. The dashboard router `await`s `scrunMount()` before flipping `body.scrun-ready` so there's still no FOUC.
+- **Graceful fallback** — if no boards exist, the API errors out, or the user toggled Demo mode (`localStorage.scrunDemoMode === "1"`), the shell keeps the bundled fixtures so it still renders something.
+
+### Still missing vs target (next wave, v1.0.52)
+
+- Write-back: drag / create / edit / dispatch still mutate `DB` in place; they don't hit `POST /cards/{id}/move`, `POST /cards`, `PUT /cards/{id}`, or `POST /cards/{id}/dispatch` yet.
+- Run-event stream (SSE) for the Conversation tab.
+- Analytics aggregation endpoint for the Analytics tab.
+- Deletion of the legacy `renderBoardsView` / card-detail modal functions from `assets/app.js`.
+
 ## [1.0.50] — 2026-05-31
 
 ### Changed — install.sh prefers gzipped release asset (~70% smaller downloads)

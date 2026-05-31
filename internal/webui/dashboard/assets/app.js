@@ -337,9 +337,9 @@
         // the rest of the dashboard. We await styles before flipping
         // .scrun-ready so the first paint isn't an FOUC frame.
         document.body.classList.add("scrun-active");
-        ensureScrunStyles().then(() => {
+        ensureScrunStyles().then(async () => {
           if (typeof window.scrunMount === "function") {
-            try { window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
+            try { await window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
           }
           document.body.classList.add("scrun-ready");
         });
