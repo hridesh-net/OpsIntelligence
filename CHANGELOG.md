@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.52] — 2026-05-31
+
+### Fixed — Rust TUI builds with zero warnings
+
+`crates/opsintel-tui/src/views/repos.rs::ReposView::state` was written in `new()` but never read, tripping the default `dead_code` lint during release builds. Marked it `#[allow(dead_code)]` to match the existing pattern on the sibling `last_error` field — the field is reserved for an upcoming state-driven refresh path, so removing it would just churn the struct.
+
 ## [1.0.51] — 2026-05-31
 
 ### Added — Scrun reads real boards/cards from `/api/v1` (read-only live mode)

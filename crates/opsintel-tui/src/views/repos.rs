@@ -44,6 +44,7 @@ enum Mode {
 }
 
 pub struct ReposView {
+    #[allow(dead_code)]
     pub state: ReposState,
     pub snap: ReposSnapshot,
     active_tab: usize,
