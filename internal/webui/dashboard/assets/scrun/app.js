@@ -11,7 +11,7 @@ const STATE={
   panelTab:"details",
   simRunning:true,
   dragging:false,
-  showRail:true,
+  showRail:false,
   tickN:0,
 };
 window.STATE=STATE;

@@ -9,10 +9,24 @@
    the dashboard returns to its normal layout. */
 
 body.scrun-active .sidebar { display: none !important; }
-body.app-page.scrun-active { grid-template-columns: 1fr !important; }
+/* Collapse the dashboard's 256px sidebar grid track so the board fills
+   the viewport edge-to-edge. Without this the board area is offset by
+   256px of dead space even though .sidebar is display:none. */
+body.app-page.scrun-active,
+body.scrun-active.app-page { grid-template-columns: 1fr !important; }
 body.scrun-active .content { grid-column: 1 / -1 !important; padding: 0 !important; }
 body.scrun-active .content-header { display: none !important; }
 body.scrun-active main.content > #toast { z-index: 10000; }
+
+/* On narrower viewports the default 306px column would force a scroll
+   that hides the rightmost columns. Shrink columns gracefully so all
+   6 fit on a typical 14"+ display, then re-allow scroll on small ones. */
+@media (max-width: 1600px) {
+  body.scrun-active .col { width: 248px; }
+}
+@media (max-width: 1280px) {
+  body.scrun-active .col { width: 220px; }
+}
 
 /* Section becomes its own viewport. */
 #view-boards.scrun-mount {

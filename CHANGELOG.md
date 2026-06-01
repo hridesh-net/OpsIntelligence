@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.55] — 2026-06-01
+
+### Fixed — Scrun board fits the viewport; activity rail collapsed by default
+
+User report on /boards: the leftmost column was clipped behind the rail and the rightmost column (DONE) was cut off the right edge, with a strip of dead space beyond it. Three causes, three fixes (all in `internal/webui/dashboard/assets/scrun/`):
+
+- `app.js::STATE.showRail` flipped from `true` to `false`. The Agent Activity rail at 286px was open on first visit, leaving only ~1500px for six 306px columns — guaranteed to scroll-clip on a typical 14"–16" display. Default is now collapsed; the existing toggle (the activity icon in the topbar) opens it on demand and the choice persists in localStorage as before.
+- `scrun-bridge.css` collapses the dashboard's `256px 1fr` grid track via both `body.app-page.scrun-active` and `body.scrun-active.app-page` (selector order doesn't matter) and adds two responsive column-width tiers — 248px under 1600px viewport and 220px under 1280px — so six columns actually fit at the widths users have, rather than spilling beyond the right edge.
+
+The horizontal-scroll behavior on the board is unchanged; this just makes the default layout fit before users have to scroll.
+
 ## [1.0.54] — 2026-06-01
 
 ### Fixed — Scrun board opens in a new tab, defaults to light, theme toggle works
