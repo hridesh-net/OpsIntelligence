@@ -228,7 +228,12 @@
         let css = await res.text();
         // Scope :root token blocks so dashboard's own tokens win when
         // the user navigates away from /boards.
-        css = css.replace(/:root\s*\{/g, "body.scrun-active {");
+        // Rewrite ":root { ... }" → "body.scrun-active { ... }" so Scrun
+        // tokens don't leak into the rest of the dashboard. Also rewrite
+        // ":root[data-theme="light"] { ... }" → "body.scrun-active[data-theme="light"] { ... }"
+        // so the theme override actually wins the cascade (otherwise body's
+        // tokens beat :root's by being closer in the inheritance chain).
+        css = css.replace(/:root(\[[^\]]+\])?\s*\{/g, (_m, attr) => `body.scrun-active${attr || ""} {`);
         const style = document.createElement("style");
         style.dataset.scrun = href;
         style.textContent = css;

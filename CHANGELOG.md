@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.54] — 2026-06-01
+
+### Fixed — Scrun board opens in a new tab, defaults to light, theme toggle works
+
+Three Scrun integration bugs from the v1.0.47 port:
+
+- **Boards link replaced the dashboard chrome.** The sidebar "Boards" anchor (`assets/app.html`) now carries `target="_blank" rel="noopener"`, so opening a board pops a fresh tab and the dashboard nav stays intact in the original window.
+- **Theme defaulted to dark and the switch was a no-op.** `assets/scrun/app.js::loadState` now defaults to `"light"` when nothing is in localStorage, and mirrors `data-theme` onto `document.body` (Scrun previously only set it on `<html>`). The CSS-scope rewrite in `assets/app.js::ensureScrunStyles` was upgraded from `:root\s*\{` to `:root(\[[^\]]+\])?\s*\{`, so the `:root[data-theme="light"]` override is rewritten to `body.scrun-active[data-theme="light"]`. Without those two changes the light tokens lived on `<html>` while the dark tokens lived on `<body>` and body always won the cascade — explaining why the toggle did nothing visible.
+- **applyTheme keeps both attributes in sync** so clicking the sun/moon icon swaps both `<html>` and `<body>` `data-theme` in lock-step.
+
+Column horizontal-scroll behavior is unchanged in code, but now reads correctly because the board no longer has to share viewport real estate with the original dashboard sidebar (boards open in their own tab).
+
 ## [1.0.53] — 2026-06-01
 
 ### Fixed — Installer no longer spams 404 retries when gzipped asset is missing

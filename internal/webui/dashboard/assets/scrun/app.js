@@ -24,7 +24,10 @@ function loadState(){ try{ const s=JSON.parse(localStorage.getItem("scrun")||"{}
   if(s.layout)STATE.layout=s.layout; if(s.density)STATE.density=s.density;
   if(s.simRunning!=null)STATE.simRunning=s.simRunning;
   if(s.showRail!=null)STATE.showRail=s.showRail;
-  if(s.theme)document.documentElement.dataset.theme=s.theme; }catch(e){} }
+  const theme = s.theme || "light"; // default light on first load
+  document.documentElement.dataset.theme = theme;
+  document.body.dataset.theme = theme;
+  }catch(e){} }
 
 /* ---------- navigation ---------- */
 const SCREEN_TITLES={board:"AI Workforce Board",workflows:"Workflow Builder",agents:"Agent Manager",activity:"Agent Activity",analytics:"Analytics"};
@@ -47,7 +50,7 @@ function go(screen){
 const _sunIco=`<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/>`;
 const _moonIco=`<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>`;
 function syncThemeIco(){const i=document.getElementById("themeIco"); if(i)i.innerHTML=document.documentElement.dataset.theme==="dark"?_sunIco:_moonIco;}
-function applyTheme(v){ document.documentElement.dataset.theme=v; syncThemeIco(); document.dispatchEvent(new CustomEvent("scrun-theme")); saveState(); }
+function applyTheme(v){ document.documentElement.dataset.theme=v; document.body.dataset.theme=v; syncThemeIco(); document.dispatchEvent(new CustomEvent("scrun-theme")); saveState(); }
 
 /* ---------- toast ---------- */
 let toastTimer=null;
