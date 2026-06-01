@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/opsintel-tui"]
 
 [workspace.package]
-version = "0.2.28"
+version = "0.2.29"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"

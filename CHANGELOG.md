@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.56] — 2026-06-01
+
+### Fixed — Scrun board fills full viewport width
+
+`internal/webui/dashboard/assets/style.css` caps `.content` at `max-width: 1160px` for normal dashboard pages, which is the right call there but left a ~460px blank strip on the right side of the Scrun board on wide displays — the user reported this as a "side blank cutout shrinking the UI." The v1.0.55 bridge CSS already reset padding and the grid track but did not touch max-width.
+
+`scrun-bridge.css` now also forces `max-width: none` and `width: 100%` on `body.scrun-active .content`, so the board occupies the full remaining viewport. All six columns now fit (or scroll gracefully) without any dead space on the right.
+
 ## [1.0.55] — 2026-06-01
 
 ### Fixed — Scrun board fits the viewport; activity rail collapsed by default
