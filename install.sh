@@ -281,23 +281,31 @@ install_binary() {
   mkdir -p "$INSTALL_DIR"
 
   # Prefer the gzipped asset (~70% smaller, ~22MB vs ~66MB).
-  # Older releases only ship the raw binary, so fall back transparently.
+  # Older releases only ship the raw binary, so probe with HEAD first
+  # (no retries) to avoid a noisy retry-all-errors loop on a 404.
   if command -v gzip >/dev/null 2>&1; then
     local tmp_gz="${tmp_bin}.gz"
-    log "Source: $download_url_gz (gzipped, ~22MB)"
-    if curl_get "$tmp_gz" "$download_url_gz"; then
-      if gzip -d -f "$tmp_gz" 2>/dev/null; then
-        chmod +x "$tmp_bin"
-        mv -f "$tmp_bin" "$INSTALL_DIR/opsintelligence"
-        ok "Binary installed: $INSTALL_DIR/opsintelligence"
-        copy_skills_dir
-        return
+    local gz_status
+    gz_status=$(curl -fsS -L -o /dev/null -I -w '%{http_code}' \
+      --connect-timeout 15 --max-time 30 "$download_url_gz" 2>/dev/null || echo "000")
+    if [[ "$gz_status" == "200" ]]; then
+      log "Source: $download_url_gz (gzipped, ~22MB)"
+      if curl_get "$tmp_gz" "$download_url_gz"; then
+        if gzip -d -f "$tmp_gz" 2>/dev/null; then
+          chmod +x "$tmp_bin"
+          mv -f "$tmp_bin" "$INSTALL_DIR/opsintelligence"
+          ok "Binary installed: $INSTALL_DIR/opsintelligence"
+          copy_skills_dir
+          return
+        fi
+        warn "Downloaded .gz but failed to decompress; falling back to raw binary."
+        rm -f "$tmp_gz" "$tmp_bin"
+      else
+        rm -f "$tmp_gz"
+        log "Gzipped asset download failed; falling back to raw binary."
       fi
-      warn "Downloaded .gz but failed to decompress; falling back to raw binary."
-      rm -f "$tmp_gz" "$tmp_bin"
     else
-      rm -f "$tmp_gz"
-      log "Gzipped asset unavailable; falling back to raw binary."
+      log "Gzipped asset unavailable (HTTP $gz_status); using raw binary."
     fi
   fi
 

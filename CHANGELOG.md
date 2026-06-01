@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.53] — 2026-06-01
+
+### Fixed — Installer no longer spams 404 retries when gzipped asset is missing
+
+`install.sh` previously hit the `.gz` URL through `curl_get`, which has `--retry-all-errors --retry 3 --retry-delay 2`. On older releases (or any release predating the gzip workflow step), the asset 404s — and the retry loop turned a known-missing file into ~8 seconds of red `Warning: Problem (retrying all errors)` output before falling back to the raw binary. Now the installer probes the `.gz` URL with a single `curl -I` HEAD (no retries, 30s cap); only on HTTP 200 does it attempt the full download, otherwise it logs one line (`Gzipped asset unavailable (HTTP 404); using raw binary.`) and proceeds straight to the raw asset.
+
 ## [1.0.52] — 2026-05-31
 
 ### Fixed — Rust TUI builds with zero warnings
