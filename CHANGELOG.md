@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.57] — 2026-06-01
+
+### Fixed — Scrun topbar wraps cleanly, board scroll is reachable
+
+User report: "I'm not able to scroll sideways or up/down to the tickets and top navbar components are congested." Both symptoms shared a root cause — the topbar's `.topbar { display: flex; gap: 14px }` had no `flex-wrap`, so at typical viewport widths the eight controls (board picker, search, three filter buttons, layout switcher, activity-rail toggle, theme switch, +New Task) overflowed horizontally. The overflow pushed `.main` wider than the viewport, which (a) made the topbar look cramped and (b) hijacked the page's horizontal scroll axis so the board's own `.board { overflow-x: auto }` could not be reached.
+
+`internal/webui/dashboard/assets/scrun/scrun-bridge.css` now:
+
+- Allows the topbar to wrap (`flex-wrap: wrap`, `height: auto`, `row-gap: 8px`) and lets every child shrink (`flex-shrink: 1; min-width: 0`).
+- Pins the search input to `flex: 1 1 220px; min-width: 180px` so it stays usable but yields width to the filter buttons when there isn't enough room.
+- Collapses the empty `#screenTitleWrap` on the board screen so it doesn't reserve dead width.
+- Adds a visible 10px horizontal scrollbar styling on `.board` so the side-scroll affordance is obvious.
+- Reinforces `min-height: 0` on `.col` and `.col-body` so vertical column scroll triggers reliably when cards overflow (some browsers stop propagating flex height through nested `flex: 1` containers without the explicit `min-height: 0`).
+
+Net effect: the topbar reflows to two lines on narrow displays instead of crowding into one; the board horizontal scrollbar is reachable; each column's card list scrolls vertically when it has more cards than fit.
+
 ## [1.0.56] — 2026-06-01
 
 ### Fixed — Scrun board fills full viewport width

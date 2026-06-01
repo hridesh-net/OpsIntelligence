@@ -35,6 +35,52 @@ body.scrun-active main.content > #toast { z-index: 10000; }
   body.scrun-active .col { width: 220px; }
 }
 
+/* TOPBAR — let it wrap on narrow screens instead of overflowing
+   horizontally, which would push the board's scroll axis out of
+   reach. Also tighten gaps so 8+ controls fit at typical widths. */
+body.scrun-active .topbar {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 56px;
+  padding: 8px 16px;
+  row-gap: 8px;
+}
+body.scrun-active .topbar > * { flex-shrink: 1; min-width: 0; }
+body.scrun-active .topbar .search { flex: 1 1 220px; min-width: 180px; }
+body.scrun-active .topbar #boardToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+body.scrun-active .topbar .top-actions { flex-shrink: 0; }
+/* Empty screenTitleWrap on the board screen still takes layout space;
+   collapse it when empty to free up topbar width. */
+body.scrun-active .topbar #screenTitleWrap:empty,
+body.scrun-active .topbar #screenTitleWrap[style*="display: none"] { display: none !important; }
+
+/* SCROLLBARS — make the horizontal scroller visible so users know
+   they can swipe/scroll to reach off-screen columns. */
+body.scrun-active .board {
+  scrollbar-color: var(--border-strong, #cbd5e1) transparent;
+  scroll-padding-inline: 16px;
+}
+body.scrun-active .board::-webkit-scrollbar { height: 10px; width: 10px; }
+body.scrun-active .board::-webkit-scrollbar-thumb {
+  background: var(--border-strong, #cbd5e1);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+body.scrun-active .board::-webkit-scrollbar-thumb:hover { background: var(--text-faint, #94a3b8); background-clip: padding-box; border: 2px solid transparent; }
+
+/* Keep column scroll containers honest — without an explicit height
+   the flex column on some browsers stops propagating, and col-body
+   ends up with no scroll even when cards overflow. */
+body.scrun-active .col { max-height: 100%; min-height: 0; }
+body.scrun-active .col-body { min-height: 0; }
+
 /* Section becomes its own viewport. */
 #view-boards.scrun-mount {
   padding: 0;
