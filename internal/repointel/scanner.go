@@ -70,8 +70,11 @@ func (s *Scanner) scanWithLLM(
 	prompt := buildScanPrompt(entry, mem)
 
 	req := &provider.CompletionRequest{
-		Model:        route.Model,
-		MaxTokens:    2048,
+		Model: route.Model,
+		// 2048 was too tight: scan responses include CVEs + bottlenecks +
+		// suggestions, and a real repo regularly blows past it. Gemini
+		// stops mid-JSON, producing "unexpected end of JSON input".
+		MaxTokens:    8192,
 		SystemPrompt: scanSystemPrompt,
 		Messages: []provider.Message{
 			{
@@ -86,6 +89,14 @@ func (s *Scanner) scanWithLLM(
 	resp, err := route.Provider.Complete(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+
+	// If the provider tells us the response was cut off at the token
+	// limit, return a clear error instead of a generic JSON parse fail
+	// — that way the TUI surfaces "raise MaxTokens" rather than a
+	// confusing "raw: { risk_…" trail-off.
+	if resp.FinishReason == provider.FinishReasonLength {
+		return nil, fmt.Errorf("scanner: LLM response truncated at token limit (model=%s, finish_reason=length); raise MaxTokens or shrink prompt", route.Model)
 	}
 
 	return parseScanJSON(resp.Text())

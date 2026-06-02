@@ -477,8 +477,11 @@ func (idx *Indexer) analyseWithLLM(
 	prompt := buildIndexPrompt(entry, content)
 
 	req := &provider.CompletionRequest{
-		Model:        route.Model,
-		MaxTokens:    2048,
+		Model: route.Model,
+		// Bumped from 2048 — index responses span architecture,
+		// dependencies, and known issue patterns; Gemini was
+		// truncating mid-JSON on large repos.
+		MaxTokens:    8192,
 		SystemPrompt: indexSystemPrompt,
 		Messages: []provider.Message{
 			{

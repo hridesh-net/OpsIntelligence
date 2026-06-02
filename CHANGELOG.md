@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.58] — 2026-06-01
+
+### Fixed — Repo scan no longer fails with "unexpected end of JSON input" on Gemini
+
+User report from the TUI Repos view: two repos showed `scan error: scanner: LLM call: parseScanJSON: unexpected end of JSON input (raw: { "risk_…`. Root cause: `internal/repointel/scanner.go` and `internal/repointel/indexer.go` both set `MaxTokens: 2048`, but the scan schema covers `risk_level + summary + cves[] + bottlenecks[] + suggestions[]`. On a real repo with several CVEs and bottlenecks Gemini hits 2048 tokens mid-output, the JSON ends partway through a string, and `json.Unmarshal` rightly refuses to parse it.
+
+Two fixes in this release:
+
+- Both scan and index requests bumped to `MaxTokens: 8192`. That's still well under any model's context window and covers real-world JSON payloads with margin to spare.
+- `scanWithLLM` now checks `resp.FinishReason == provider.FinishReasonLength` before parsing and returns a clear error (`LLM response truncated at token limit (finish_reason=length); raise MaxTokens or shrink prompt`) instead of a confusing JSON-parse trail-off. So if a future schema grows past 8192 too, the operator sees a self-explanatory message instead of having to grep `parseScanJSON`.
+
 ## [1.0.57] — 2026-06-01
 
 ### Fixed — Scrun topbar wraps cleanly, board scroll is reachable
