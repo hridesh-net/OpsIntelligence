@@ -75,11 +75,25 @@ body.scrun-active .board::-webkit-scrollbar-thumb {
 }
 body.scrun-active .board::-webkit-scrollbar-thumb:hover { background: var(--text-faint, #94a3b8); background-clip: padding-box; border: 2px solid transparent; }
 
-/* Keep column scroll containers honest — without an explicit height
-   the flex column on some browsers stops propagating, and col-body
-   ends up with no scroll even when cards overflow. */
-body.scrun-active .col { max-height: 100%; min-height: 0; }
+/* SCROLL CHAIN — without min-height: 0 every column-flex link below
+   propagates its intrinsic content height upward (flex items default
+   to min-height: auto), blowing past .app's 100vh ceiling and silently
+   disabling every inner scroll container. Lock the body to 100vh and
+   reset min-height on every link. */
+body.scrun-active,
+body.scrun-active.app-page {
+  overflow: hidden !important;
+  height: 100vh !important;
+}
+body.scrun-active .app,
+body.scrun-active .main,
+body.scrun-active .screen-wrap,
+body.scrun-active .screen,
+body.scrun-active .board-host,
+body.scrun-active .board,
+body.scrun-active .col,
 body.scrun-active .col-body { min-height: 0; }
+body.scrun-active .col { max-height: 100%; }
 
 /* Section becomes its own viewport. */
 #view-boards.scrun-mount {

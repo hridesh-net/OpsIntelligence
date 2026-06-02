@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.59] — 2026-06-01
+
+### Fixed — Scrun board scrolls again (vertical column scroll + horizontal board scroll)
+
+User report on /boards: "I'm not able to scroll any of the page on any of the tab, neither the workflows nor the kanban board." Root cause was subtle flex-layout: every CSS Flexbox item defaults to `min-height: auto` (intrinsic content height). The Scrun shell stacks seven nested `flex: 1` containers — `.app → .main → .screen-wrap → .screen → .board-host → .board → .col` — and the column-flex links among them were free to expand to fit the tallest card pile, blowing past `.app { height: 100vh }`. Once `.app` grew taller than the viewport, `.col-body`'s `overflow-y: auto` no longer had a definite parent height and stopped scrolling; the body became scrollable instead but had no actual children below the fold, so wheel events went nowhere visible.
+
+`internal/webui/dashboard/assets/scrun/scrun-bridge.css` now:
+
+- Pins `body.scrun-active` to `overflow: hidden; height: 100vh` (with `!important` to defeat dashboard's `min-height: 100vh` on `.app-page`).
+- Resets `min-height: 0` on every flex link from `.app` down to `.col-body`, so the column-flex chain stays inside its 100vh ceiling instead of stretching to fit content.
+
+After this, the column card lists scroll vertically when content overflows and the board scrolls horizontally to reveal the off-screen DONE column.
+
 ## [1.0.58] — 2026-06-01
 
 ### Fixed — Repo scan no longer fails with "unexpected end of JSON input" on Gemini
