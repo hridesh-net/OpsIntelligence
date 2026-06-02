@@ -34,6 +34,10 @@ body.scrun-active .content {
 }
 body.scrun-active .content-header { display: none !important; }
 body.scrun-active main.content > #toast { z-index: 10000; }
+/* Belt-and-braces: hide every dashboard sibling view so a routing miss
+   can't leak a light-bg card or panel into the Scrun mount. */
+body.scrun-active main.content > .view:not(#view-boards) { display: none !important; }
+body.scrun-active main.content > .cmd-palette-backdrop.hidden { display: none !important; }
 
 /* On narrower viewports the default 306px column would force a scroll
    that hides the rightmost columns. Shrink columns gracefully so all
@@ -45,35 +49,49 @@ body.scrun-active main.content > #toast { z-index: 10000; }
   body.scrun-active .col { width: 220px; }
 }
 
-/* TOPBAR — let it wrap on narrow screens instead of overflowing
-   horizontally, which would push the board's scroll axis out of
-   reach. Also tighten gaps so 8+ controls fit at typical widths. */
+/* TOPBAR — fixed 56px height, NEVER wrap. Wrapping (the prior fix)
+   inflated topbar to 3 rows × ~56px and pushed .top-actions onto a
+   row that sat below the viewport, also blowing .app past 100vh and
+   breaking the inner scroll chain. Pin to one row, let #boardToolbar
+   overflow-x within itself when controls exceed available width, and
+   keep .top-actions glued to the right edge with margin-left: auto. */
 body.scrun-active .topbar {
-  flex-wrap: wrap;
-  height: auto;
-  min-height: 56px;
-  padding: 8px 16px;
-  row-gap: 8px;
+  flex-wrap: nowrap !important;
+  height: 56px !important;
+  min-height: 56px !important;
+  max-height: 56px !important;
+  padding: 8px 16px !important;
+  align-items: center;
+  overflow: hidden;
+  gap: 10px;
 }
 body.scrun-active .topbar > * { flex-shrink: 1; min-width: 0; }
-body.scrun-active .topbar .search { flex: 1 1 220px; min-width: 180px; }
+body.scrun-active .topbar .search { flex: 1 1 220px; min-width: 160px; }
 body.scrun-active .topbar #boardToolbar {
-  display: flex;
+  display: flex !important;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  row-gap: 8px;
+  flex-wrap: nowrap !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
+body.scrun-active .topbar #boardToolbar::-webkit-scrollbar { height: 4px; }
+body.scrun-active .topbar #boardToolbar::-webkit-scrollbar-thumb { background: var(--border-strong, #cbd5e1); border-radius: 2px; }
+body.scrun-active .topbar #boardToolbar > * { flex: 0 0 auto; }
 /* .top-actions holds the theme switch + "+ New Task" — must never be
    shrunk or hidden when the rest of the topbar gets cramped. Force
    visibility and natural width; its children (theme-sw, button) keep
    their native sizing because they have `flex: none`. */
 body.scrun-active .topbar .top-actions {
   display: flex !important;
-  flex: 0 0 auto;
+  flex: 0 0 auto !important;
   visibility: visible !important;
   margin-left: auto;
   gap: 10px;
+  align-items: center;
 }
 body.scrun-active .topbar .top-actions > * { flex: none; }
 /* Empty screenTitleWrap on the board screen still takes layout space;

@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.65] — 2026-06-02
+
+### Fixed — Scrun topbar finally stays one row; theme + New Task always visible
+
+Diagnosed in a live browser session (not by guessing at source files): with `flex-wrap: wrap` on `.topbar`, controls overflow into 3 rows × ~56px = 182px tall. That inflated `.app` to 994px in an 841px viewport, pushing `.top-actions` (theme switch + "+ New Task") onto a row that lived below the visible area, and breaking the inner scroll chain because the column-flex couldn't satisfy a definite 100vh ceiling.
+
+- `assets/scrun/scrun-bridge.css` pins `.topbar` to exactly 56px (`height/min-height/max-height` + `flex-wrap: nowrap !important`). When `#boardToolbar` (search + filter buttons + view-mode segment) outgrows available width it now scrolls horizontally within itself instead of wrapping, so `.top-actions` stays anchored to the right edge via `margin-left: auto`.
+- Belt-and-braces: `main.content > .view:not(#view-boards)` is forced `display: none` so any routing miss can't leak a dashboard card/panel (the white rectangle in earlier screenshots) into the Scrun mount.
+
 ## [1.0.64] — 2026-06-02
 
 ### Fixed — Scrun stylesheet hygiene + reinforced scroll/layout rules
