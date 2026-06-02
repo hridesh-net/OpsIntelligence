@@ -8,6 +8,13 @@
    When the user navigates away from /boards the class is removed and
    the dashboard returns to its normal layout. */
 
+/* Safety net: if any injected Scrun stylesheet leaked a bare body rule,
+   reset it so the rest of the dashboard remains scrollable. */
+body:not(.scrun-active) {
+  overflow: visible;
+  height: auto;
+}
+
 body.scrun-active .sidebar { display: none !important; }
 /* Collapse the dashboard's 256px sidebar grid track so the board fills
    the viewport edge-to-edge. Without this the board area is offset by
@@ -100,6 +107,10 @@ body.scrun-active .app,
 body.scrun-active .main,
 body.scrun-active .screen-wrap,
 body.scrun-active .screen,
+body.scrun-active .sbody,
+body.scrun-active .activity-host,
+body.scrun-active .feed-main,
+body.scrun-active .feed-side,
 body.scrun-active .board-host,
 body.scrun-active #boardHost,
 body.scrun-active .board,

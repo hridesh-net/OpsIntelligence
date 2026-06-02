@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.63] — 2026-06-02
+
+### Fixed — Scrun scroll chain extended to non-board screens; dashboard stays scrollable elsewhere
+
+Two reinforcements on top of v1.0.62:
+
+- `assets/scrun/scrun-bridge.css` adds a `body:not(.scrun-active) { overflow: visible; height: auto }` safety net. If any injected Scrun stylesheet leaks a bare `body { overflow: hidden }` rule (which the regex-rewrite to `body.scrun-active` should prevent, but defense in depth), the rest of the dashboard still scrolls normally on /overview, /tasks, etc.
+- The `min-height: 0` chain now also covers `.sbody`, `.activity-host`, `.feed-main`, and `.feed-side` so the Workflows, Agents, and Activity screens inherit the same definite-height invariant as the Board, and their internal scroll regions work consistently.
+
 ## [1.0.62] — 2026-06-02
 
 ### Fixed — Scrun board scroll works for real this time

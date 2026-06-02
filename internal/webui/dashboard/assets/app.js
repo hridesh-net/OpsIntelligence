@@ -234,6 +234,13 @@
         // so the theme override actually wins the cascade (otherwise body's
         // tokens beat :root's by being closer in the inheritance chain).
         css = css.replace(/:root(\[[^\]]+\])?\s*\{/g, (_m, attr) => `body.scrun-active${attr || ""} {`);
+        // Scrun's base sheet (scrun.css) sets bare html/body rules
+        // (height:100%, overflow:hidden) that would lock scrolling on the
+        // entire dashboard once injected. Scope them to scrun-active.
+        if (href.includes("scrun.css")) {
+          css = css.replace(/html,body\s*\{[^}]*\}/, "body.scrun-active, body.scrun-active.app-page { height: 100vh; margin: 0; }");
+          css = css.replace(/body\s*\{/, "body.scrun-active {");
+        }
         const style = document.createElement("style");
         style.dataset.scrun = href;
         style.textContent = css;
