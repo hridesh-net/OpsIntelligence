@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.62] — 2026-06-02
+
+### Fixed — Scrun board scroll works for real this time
+
+User report: "still not able to scroll on that board page, feels it is stuck." v1.0.59's fix added `min-height: 0` to the visible flex links but missed the inline `<div id="boardHost" style="flex:1;display:flex;overflow:hidden">` that sits *between* `.board-host` and `.board` in `assets/app.html` line 194. That one missing link kept defaulting to `min-height: auto`, propagating intrinsic content height upward, and breaking the definite-height chain that `.col-body { overflow-y: auto }` depends on.
+
+Two changes in `scrun-bridge.css`:
+
+- `#boardHost` is now in the min-height: 0 + min-width: 0 chain alongside `.board-host` / `.board` / `.col` / `.col-body`, so the chain is finally complete from `.app` down to `.col-body`.
+- `.board` gets `overflow-y: auto` and `.col-body` gets `max-height: calc(100vh - 200px)`. A single column rarely exceeds 100vh on wide displays, so per-column scroll never fires and the page felt "stuck" — making the whole board scrollable as a fallback fixes that, while the column's own scroll still kicks in when one column has far more cards than its siblings.
+
 ## [1.0.61] — 2026-06-02
 
 ### Fixed — Scrun theme switch + "New Task" button could disappear from the topbar

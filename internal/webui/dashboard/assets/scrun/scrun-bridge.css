@@ -101,10 +101,22 @@ body.scrun-active .main,
 body.scrun-active .screen-wrap,
 body.scrun-active .screen,
 body.scrun-active .board-host,
+body.scrun-active #boardHost,
 body.scrun-active .board,
 body.scrun-active .col,
-body.scrun-active .col-body { min-height: 0; }
+body.scrun-active .col-body { min-height: 0; min-width: 0; }
 body.scrun-active .col { max-height: 100%; }
+
+/* The col-body's wheel scroll only triggers when content > col-body
+   height. On wide displays a single column rarely exceeds 100vh, so
+   per-column scroll never fires and users perceive the board as
+   "stuck". Make the entire board area scroll vertically as a fallback
+   when content overflows, so a wheel anywhere on the board works. */
+body.scrun-active .board { overflow-y: auto; }
+/* Keep the col-body's own scroll intact when it does overflow — the
+   nested scroll is still useful when one column has many more cards
+   than its siblings. */
+body.scrun-active .col-body { max-height: calc(100vh - 200px); }
 
 /* Section becomes its own viewport. */
 #view-boards.scrun-mount {
