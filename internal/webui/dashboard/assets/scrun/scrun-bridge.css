@@ -54,7 +54,18 @@ body.scrun-active .topbar #boardToolbar {
   flex-wrap: wrap;
   row-gap: 8px;
 }
-body.scrun-active .topbar .top-actions { flex-shrink: 0; }
+/* .top-actions holds the theme switch + "+ New Task" — must never be
+   shrunk or hidden when the rest of the topbar gets cramped. Force
+   visibility and natural width; its children (theme-sw, button) keep
+   their native sizing because they have `flex: none`. */
+body.scrun-active .topbar .top-actions {
+  display: flex !important;
+  flex: 0 0 auto;
+  visibility: visible !important;
+  margin-left: auto;
+  gap: 10px;
+}
+body.scrun-active .topbar .top-actions > * { flex: none; }
 /* Empty screenTitleWrap on the board screen still takes layout space;
    collapse it when empty to free up topbar width. */
 body.scrun-active .topbar #screenTitleWrap:empty,

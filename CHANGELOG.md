@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.61] — 2026-06-02
+
+### Fixed — Scrun theme switch + "New Task" button could disappear from the topbar
+
+User report: "the theme change button [is] removed from UI kanban board." I had not removed it — `.theme-sw` and `#newTaskBtn` still live in `assets/app.html` line 157–158 — but the v1.0.57 topbar wrap rules (`body.scrun-active .topbar > * { flex-shrink: 1; min-width: 0 }`) let the `.top-actions` container collapse to zero width at certain viewport sizes, taking both controls with it.
+
+`assets/scrun/scrun-bridge.css` now pins `.top-actions` to its natural width with `display: flex !important; flex: 0 0 auto; visibility: visible !important`, restores its `margin-left: auto` so it parks against the right edge, and resets `flex: none` on its children so the theme switch keeps its 58px and the "+ New Task" button keeps its native size. The rest of the topbar still wraps gracefully when narrow.
+
 ## [1.0.60] — 2026-06-02
 
 ### Added — Repo Intelligence Wave 1: live CVE feed (OSV.dev) + filterable findings endpoint
