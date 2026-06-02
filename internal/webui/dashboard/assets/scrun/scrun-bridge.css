@@ -1,69 +1,79 @@
 /* scrun-bridge.css — make the embedded Scrun shell co-exist with the
    OpsIntelligence dashboard.
 
-   When body.scrun-active is set we:
-     - hide the dashboard sidebar (Scrun has its own nav rail)
-     - drop the <main> padding + header so the Scrun shell is full-bleed
-     - re-grid <body> so <main> spans edge-to-edge
-   When the user navigates away from /boards the class is removed and
-   the dashboard returns to its normal layout. */
+   Design principle (matches /Scrun/scrun.css verbatim):
+     - body { overflow: hidden; height: 100% }   → page never scrolls
+     - .app { height: 100vh; display: flex }     → row: rail | main
+     - .main { flex: 1; display: flex; column }  → topbar / strip / screen-wrap
+     - .screen-wrap { flex: 1; overflow: hidden }
+     - .board { overflow-x: auto; overflow-y: hidden }
+     - .col-body { overflow-y: auto }            → only inner scrolls
 
-/* Safety net: if any injected Scrun stylesheet leaked a bare body rule,
-   reset it so the rest of the dashboard remains scrollable. */
-html {
-  height: auto !important;
-}
+   We only override what's needed to embed Scrun inside the dashboard's
+   <main class="content"> grid cell, plus a topbar layout fix because
+   the dashboard's topbar holds extra buttons that the original Scrun
+   didn't (.top-actions with theme + New Task).
+
+   When the user leaves /boards the .scrun-active class is removed and
+   the dashboard returns to its normal scrolling layout. */
+
+/* ─── Non-Scrun pages: never let our overrides leak ─── */
 body:not(.scrun-active) {
   overflow: visible;
   height: auto;
 }
 
+/* ─── Dashboard chrome hide ─── */
 body.scrun-active .sidebar { display: none !important; }
-/* Collapse the dashboard's 256px sidebar grid track so the board fills
-   the viewport edge-to-edge. Without this the board area is offset by
-   256px of dead space even though .sidebar is display:none. */
 body.app-page.scrun-active,
 body.scrun-active.app-page { grid-template-columns: 1fr !important; }
 body.scrun-active .content {
   grid-column: 1 / -1 !important;
   padding: 0 !important;
-  /* Dashboard's .content caps at max-width: 1160px which leaves a blank
-     strip on wide displays; Scrun needs full viewport width. */
   max-width: none !important;
   width: 100% !important;
 }
 body.scrun-active .content-header { display: none !important; }
 body.scrun-active main.content > #toast { z-index: 10000; }
-/* Belt-and-braces: hide every dashboard sibling view so a routing miss
-   can't leak a light-bg card or panel into the Scrun mount. */
+/* Hide every dashboard sibling view so a routing miss can't leak a
+   light-bg card or panel into the Scrun mount. */
 body.scrun-active main.content > .view:not(#view-boards) { display: none !important; }
 body.scrun-active main.content > .cmd-palette-backdrop.hidden { display: none !important; }
 
-/* On narrower viewports the default 306px column would force a scroll
-   that hides the rightmost columns. Shrink columns gracefully so all
-   6 fit on a typical 14"+ display, then re-allow scroll on small ones. */
-@media (max-width: 1600px) {
-  body.scrun-active .col { width: 248px; }
-}
-@media (max-width: 1280px) {
-  body.scrun-active .col { width: 220px; }
+/* ─── Body locked to viewport (matches original Scrun) ─── */
+body.scrun-active,
+body.scrun-active.app-page {
+  overflow: hidden !important;
+  height: 100vh !important;
+  margin: 0 !important;
 }
 
-/* TOPBAR — fixed 56px height, NEVER wrap. Wrapping (the prior fix)
-   inflated topbar to 3 rows × ~56px and pushed .top-actions onto a
-   row that sat below the viewport, also blowing .app past 100vh and
-   breaking the inner scroll chain. Pin to one row, let #boardToolbar
-   overflow-x within itself when controls exceed available width, and
-   keep .top-actions glued to the right edge with margin-left: auto. */
+/* ─── Scrun mount becomes its own viewport ─── */
+#view-boards.scrun-mount {
+  padding: 0;
+  margin: 0;
+  display: block;
+  position: relative;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+#view-boards .app { height: 100%; }
+
+/* ─── TOPBAR — pin to 56px single row.
+   The dashboard's Scrun mount has more controls than the original Scrun
+   (.top-actions adds theme switch + "+ New Task"). Without nowrap the
+   topbar wraps to 3 rows × 56px and pushes those buttons offscreen,
+   also blowing .app past 100vh and breaking the inner scroll chain. */
 body.scrun-active .topbar {
   flex-wrap: nowrap !important;
   height: 56px !important;
   min-height: 56px !important;
   max-height: 56px !important;
-  padding: 8px 16px !important;
+  padding: 0 18px !important;
   align-items: center;
   overflow: hidden;
-  gap: 10px;
+  gap: 14px;
 }
 body.scrun-active .topbar > * { flex-shrink: 1; min-width: 0; }
 body.scrun-active .topbar .search { flex: 1 1 220px; min-width: 160px; }
@@ -81,10 +91,7 @@ body.scrun-active .topbar #boardToolbar {
 body.scrun-active .topbar #boardToolbar::-webkit-scrollbar { height: 4px; }
 body.scrun-active .topbar #boardToolbar::-webkit-scrollbar-thumb { background: var(--border-strong, #cbd5e1); border-radius: 2px; }
 body.scrun-active .topbar #boardToolbar > * { flex: 0 0 auto; }
-/* .top-actions holds the theme switch + "+ New Task" — must never be
-   shrunk or hidden when the rest of the topbar gets cramped. Force
-   visibility and natural width; its children (theme-sw, button) keep
-   their native sizing because they have `flex: none`. */
+/* .top-actions holds the theme switch + "+ New Task" — pinned right. */
 body.scrun-active .topbar .top-actions {
   display: flex !important;
   flex: 0 0 auto !important;
@@ -94,104 +101,25 @@ body.scrun-active .topbar .top-actions {
   align-items: center;
 }
 body.scrun-active .topbar .top-actions > * { flex: none; }
-/* Empty screenTitleWrap on the board screen still takes layout space;
-   collapse it when empty to free up topbar width. */
 body.scrun-active .topbar #screenTitleWrap:empty,
 body.scrun-active .topbar #screenTitleWrap[style*="display: none"] { display: none !important; }
 
-/* SCROLLBARS — make the horizontal scroller visible so users know
-   they can swipe/scroll to reach off-screen columns. */
-body.scrun-active .board {
-  scrollbar-color: var(--border-strong, #cbd5e1) transparent;
-  scroll-padding-inline: 16px;
-}
-body.scrun-active .board::-webkit-scrollbar { height: 10px; width: 10px; }
-body.scrun-active .board::-webkit-scrollbar-thumb {
-  background: var(--border-strong, #cbd5e1);
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-body.scrun-active .board::-webkit-scrollbar-thumb:hover { background: var(--text-faint, #94a3b8); background-clip: padding-box; border: 2px solid transparent; }
-
-/* SCROLL CHAIN — without min-height: 0 every column-flex link below
-   propagates its intrinsic content height upward (flex items default
-   to min-height: auto), blowing past .app's 100vh ceiling and silently
-   disabling every inner scroll container. Lock the body to 100vh and
-   reset min-height on every link. */
-body.scrun-active,
-body.scrun-active.app-page {
-  /* Use overflow:auto instead of hidden so nested scroll containers
-     (board, workflow builder, agent grid) still receive wheel/trackpad
-     events on macOS. overscroll-behavior:none prevents scroll-chaining
-     to the body when a nested container hits its limit. */
-  overflow: auto;
-  overscroll-behavior: none;
-  height: 100vh !important;
-}
-/* Hide the body scrollbar so the shell still feels locked; the nested
-   scroll containers (.board, .sbody, etc.) keep their own scrollbars. */
-body.scrun-active::-webkit-scrollbar {
-  width: 0px;
-  height: 0px;
-  background: transparent;
-}
-body.scrun-active {
-  scrollbar-width: none;
-}
+/* ─── Min-height: 0 on column-flex chain.
+   Flex items default to min-height: auto (their intrinsic content
+   height), which propagates upward and silently disables overflow:auto
+   on the inner col-body. Reset on the chain from .app down. */
 body.scrun-active .app,
 body.scrun-active .main,
 body.scrun-active .screen-wrap,
 body.scrun-active .screen,
-body.scrun-active .sbody,
-body.scrun-active .activity-host,
-body.scrun-active .feed-main,
-body.scrun-active .feed-side,
 body.scrun-active .board-host,
 body.scrun-active #boardHost,
 body.scrun-active .board,
 body.scrun-active .col,
 body.scrun-active .col-body { min-height: 0; min-width: 0; }
-body.scrun-active .col { max-height: 100%; }
 
-/* The col-body's wheel scroll only triggers when content > col-body
-   height. On wide displays a single column rarely exceeds 100vh, so
-   per-column scroll never fires and users perceive the board as
-   "stuck". Make the entire board area scroll vertically as a fallback
-   when content overflows, so a wheel anywhere on the board works. */
-body.scrun-active .board {
-  overflow-x: auto !important;
-  overflow-y: auto !important;
-}
-/* Keep the col-body's own scroll intact when it does overflow — the
-   nested scroll is still useful when one column has many more cards
-   than its siblings. */
-body.scrun-active .col-body { max-height: calc(100vh - 200px); }
-
-/* Force scroll contexts on every Scrun screen body so parent
-   overflow:hidden chains never silently disable them. */
-body.scrun-active .sbody { overflow-y: auto !important; }
-body.scrun-active .feed-main { overflow-y: auto !important; }
-body.scrun-active .feed-side { overflow-y: auto !important; }
-
-/* Section becomes its own viewport. */
-#view-boards.scrun-mount {
-  padding: 0;
-  margin: 0;
-  display: block;
-  position: relative;
-  height: 100vh;
-  width: 100%;
-  overflow: hidden;
-}
-#view-boards .app {
-  height: 100%;
-  min-height: 0;
-}
-
-/* Setup wizard is server-side already; never show it embedded. */
+/* ─── Setup wizard is server-side already; never show it embedded. */
 #view-boards #setup { display: none !important; }
 
-/* Hide Scrun while CSS / JS are still loading to avoid the
-   flash-of-unstyled-content on first /boards visit. */
+/* ─── Hide Scrun while CSS / JS are still loading (no FOUC). */
 body:not(.scrun-ready) #view-boards #appRoot { visibility: hidden; }

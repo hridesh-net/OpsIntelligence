@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.66] — 2026-06-02
+
+### Fixed — Scrun bridge rewritten to match original /Scrun layout
+
+The bridge had accumulated 8+ rounds of overflow/min-height/max-height patches across v1.0.59–v1.0.65, several of which fought each other. v1.0.64 in particular flipped body to `overflow: auto`, which made the whole dashboard page scroll instead of locking the viewport — exactly what the user reported ("entire page scrolls while only the components should").
+
+Rewrote `assets/scrun/scrun-bridge.css` from scratch against the canonical `/Scrun/scrun.css` reference:
+
+- `body.scrun-active { overflow: hidden !important; height: 100vh !important }` (matches `/Scrun` `body { overflow: hidden; height: 100% }`) — page never scrolls.
+- Removed the experimental `.board { overflow-y: auto }`, `.col-body { max-height: calc(100vh - 200px) }`, `.sbody/.feed-main/.feed-side { overflow-y: auto !important }` overrides. Original Scrun's own `.board { overflow-x: auto; overflow-y: hidden }` and `.col-body { flex: 1; overflow-y: auto }` are correct — let them work unmodified.
+- Kept the genuinely necessary fixes: dashboard sidebar hidden, content grid full-width, non-Scrun views hidden (white-rectangle leak fix), topbar pinned to one 56px row with `#boardToolbar` internal x-scroll, `min-height: 0` on the column-flex chain.
+- Removed `html { height: auto !important }` from v1.0.64 — original Scrun uses `html { height: 100% }` and overriding it broke the chain.
+
 ## [1.0.65] — 2026-06-02
 
 ### Fixed — Scrun topbar finally stays one row; theme + New Task always visible
