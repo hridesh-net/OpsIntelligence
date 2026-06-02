@@ -14,6 +14,8 @@ package gateway
 //   GET  /api/v1/repos/{id}/symbols   Return persisted symbol index (from graph).
 //   POST /api/v1/repos/{id}/search    Hybrid search scoped to this repo (full index + memory chunks).
 //   GET  /api/v1/repos/{id}/scan     Return the latest scan result.
+//   GET  /api/v1/repos/{id}/findings Flat, filterable list of security findings
+//                                    (?severity=, ?source=, ?type=).
 //   GET  /api/v1/repos/{id}/users    List users for a repo.
 //   POST /api/v1/repos/{id}/users    Add a user to a repo.
 //   DELETE /api/v1/repos/{id}/users/{handle}  Remove a user.
@@ -130,6 +132,12 @@ func (a *RepoIntelAdapter) HandleRepos(w http.ResponseWriter, r *http.Request) {
 	case "scan":
 		if r.Method == http.MethodGet {
 			a.handleScan(w, r, repoID)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "findings":
+		if r.Method == http.MethodGet {
+			a.handleFindings(w, r, repoID)
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -298,6 +306,94 @@ func (a *RepoIntelAdapter) handleScan(w http.ResponseWriter, _ *http.Request, id
 		return
 	}
 	repoWriteJSON(w, http.StatusOK, scan)
+}
+
+// ── /api/v1/repos/{id}/findings ──────────────────────────────────────────────
+//
+// Returns the security findings from the latest scan as a flat, filterable
+// list. Supports query params:
+//
+//	?severity=critical|high|medium|low (repeatable; any-match)
+//	?source=osv|llm                    (repeatable; any-match)
+//	?type=cve                          (reserved for future SAST findings)
+//
+// Findings come from the merged OSV pre-pass + LLM scan. OSV-sourced records
+// carry references, fixed_versions, and ecosystem; LLM-sourced records carry
+// only what the model emitted.
+
+func (a *RepoIntelAdapter) handleFindings(w http.ResponseWriter, r *http.Request, id string) {
+	scan, err := a.mgr.LoadScan(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if scan == nil {
+		http.Error(w, "repo not yet scanned", http.StatusNotFound)
+		return
+	}
+
+	q := r.URL.Query()
+	wantSev := stringSet(q["severity"])
+	wantSrc := stringSet(q["source"])
+	wantType := stringSet(q["type"])
+
+	type finding struct {
+		Type          string   `json:"type"` // "cve"
+		Severity      string   `json:"severity"`
+		Package       string   `json:"package"`
+		Version       string   `json:"version,omitempty"`
+		Description   string   `json:"description"`
+		Fix           string   `json:"fix,omitempty"`
+		CVEIDs        []string `json:"cve_ids,omitempty"`
+		Source        string   `json:"source,omitempty"`
+		References    []string `json:"references,omitempty"`
+		FixedVersions []string `json:"fixed_versions,omitempty"`
+		Ecosystem     string   `json:"ecosystem,omitempty"`
+	}
+
+	out := make([]finding, 0, len(scan.CVEs))
+	for _, c := range scan.CVEs {
+		if len(wantSev) > 0 && !wantSev[strings.ToLower(c.Severity)] {
+			continue
+		}
+		if len(wantSrc) > 0 && !wantSrc[strings.ToLower(c.Source)] {
+			continue
+		}
+		if len(wantType) > 0 && !wantType["cve"] {
+			continue
+		}
+		out = append(out, finding{
+			Type:          "cve",
+			Severity:      c.Severity,
+			Package:       c.Package,
+			Version:       c.Version,
+			Description:   c.Description,
+			Fix:           c.Fix,
+			CVEIDs:        c.CVEIDs,
+			Source:        c.Source,
+			References:    c.References,
+			FixedVersions: c.FixedVersions,
+			Ecosystem:     c.Ecosystem,
+		})
+	}
+
+	repoWriteJSON(w, http.StatusOK, map[string]any{
+		"repo_id":    id,
+		"scanned_at": scan.ScannedAt,
+		"findings":   out,
+		"total":      len(out),
+	})
+}
+
+func stringSet(vs []string) map[string]bool {
+	if len(vs) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(vs))
+	for _, v := range vs {
+		m[strings.ToLower(v)] = true
+	}
+	return m
 }
 
 // ── /api/v1/repos/{id}/callgraph ─────────────────────────────────────────────

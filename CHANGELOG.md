@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.60] — 2026-06-02
+
+### Added — Repo Intelligence Wave 1: live CVE feed (OSV.dev) + filterable findings endpoint
+
+First wave of the Repo Intel deep-scan enhancement. The scanner used to ask the LLM to recall CVEs from training data, which is unreliable and stale. Now it pre-queries the [OSV.dev](https://osv.dev) public vulnerability feed for every parsed dependency before going to the LLM. The LLM gets the real hits as ground truth and is asked to *explain* and *augment* them rather than rediscover them.
+
+**New package** — `internal/repointel/cveclient/`
+- `osv.go` — minimal client for the OSV `POST /v1/query` endpoint. No API key required. Maps `RepoMemory.PrimaryLang` to OSV ecosystem (Go, PyPI, npm, crates.io, RubyGems, Maven, NuGet, Packagist, Hex, Hackage, Pub). Normalises OSV's heterogenous severity (CVSS-v3 scores + GHSA `database_specific.severity` strings + free-text) into our four-tier `critical|high|medium|low` scale.
+
+**Scanner integration** — `internal/repointel/scanner.go`
+- `Scanner.preScanOSV` runs before the LLM call; failures are logged and swallowed so an OSV outage never blocks a scan (LLM-only path stays usable).
+- LLM prompt now includes a `### Known vulnerabilities from OSV.dev (ground truth — already detected)` block listing every OSV hit, with explicit instructions to not duplicate them.
+- `mergeCVEFindings` deduplicates: when the LLM rediscovers an OSV record we keep the OSV version since it carries verified metadata (references, fixed versions, CVE alias chain).
+
+**Model changes** — `internal/repointel/model.go`
+- `CVEFinding` gained `Source` (`osv`|`llm`), `References` (advisory URLs), `FixedVersions` (versions containing the patch), and `Ecosystem` fields. All optional; old persisted scans still load.
+
+**New API** — `internal/gateway/repos_api.go`
+- `GET /api/v1/repos/{id}/findings?severity=high&source=osv&type=cve` — flat, filterable view of the merged finding list (each query param is repeatable, any-match). Returns `{repo_id, scanned_at, findings[], total}`.
+
+### Tradeoff notes
+- OSV adds one HTTPS round-trip per dependency (12s timeout, 10 deps ≈ <2s typical). On flaky networks the scan degrades gracefully to LLM-only; you'll see `osv_cves=0` in the scan-complete log line.
+- The next wave (v1.0.61) will add the LLM-harness call graph + transitive dependency tree.
+
 ## [1.0.59] — 2026-06-01
 
 ### Fixed — Scrun board scrolls again (vertical column scroll + horizontal board scroll)

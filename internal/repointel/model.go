@@ -194,12 +194,16 @@ func (m *RepoMemory) ReviewContext() string {
 
 // CVEFinding is a known or suspected CVE in a dependency.
 type CVEFinding struct {
-	Severity    string   `json:"severity"` // critical|high|medium|low
-	Package     string   `json:"package"`
-	Version     string   `json:"version,omitempty"`
-	Description string   `json:"description"`
-	Fix         string   `json:"fix,omitempty"`     // recommended action
-	CVEIDs      []string `json:"cve_ids,omitempty"` // e.g. ["CVE-2024-1234"]
+	Severity      string   `json:"severity"` // critical|high|medium|low
+	Package       string   `json:"package"`
+	Version       string   `json:"version,omitempty"`
+	Description   string   `json:"description"`
+	Fix           string   `json:"fix,omitempty"`     // recommended action
+	CVEIDs        []string `json:"cve_ids,omitempty"` // e.g. ["CVE-2024-1234"]
+	Source        string   `json:"source,omitempty"`         // "osv" | "ghsa" | "llm"
+	References    []string `json:"references,omitempty"`     // advisory URLs
+	FixedVersions []string `json:"fixed_versions,omitempty"` // versions containing the patch
+	Ecosystem     string   `json:"ecosystem,omitempty"`      // OSV ecosystem (Go, PyPI, npm, ...)
 }
 
 // BottleneckFinding is a performance or reliability risk in the codebase.

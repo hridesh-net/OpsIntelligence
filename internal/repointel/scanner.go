@@ -9,6 +9,7 @@ import (
 
 	"github.com/opsintelligence/opsintelligence/internal/devops/pipeline"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
+	"github.com/opsintelligence/opsintelligence/internal/repointel/cveclient"
 	"go.uber.org/zap"
 )
 
@@ -19,12 +20,19 @@ import (
 type Scanner struct {
 	router *pipeline.LLMRouter
 	log    *zap.Logger
+	osv    *cveclient.Client // nil-safe; LLM-only path used when nil
 }
 
-// NewScanner constructs a Scanner.
+// NewScanner constructs a Scanner. An OSV client is created by default so
+// dependencies are checked against the live advisory feed; tests can replace
+// it via SetOSVClient.
 func NewScanner(router *pipeline.LLMRouter, log *zap.Logger) *Scanner {
-	return &Scanner{router: router, log: log}
+	return &Scanner{router: router, log: log, osv: cveclient.NewClient()}
 }
+
+// SetOSVClient overrides the OSV client (nil disables the OSV pre-pass).
+// Intended for tests; production callers can leave the default.
+func (s *Scanner) SetOSVClient(c *cveclient.Client) { s.osv = c }
 
 // Scan analyses the RepoMemory and returns a ScanResult.
 // The caller is responsible for persisting the result.
@@ -33,12 +41,19 @@ func (s *Scanner) Scan(ctx context.Context, entry RepoEntry, mem *RepoMemory) (*
 		s.log.Info("scanning repo", zap.String("repo", entry.ID))
 	}
 
+	// Ground-truth pass: query OSV.dev for every parsed dependency before
+	// going to the LLM. The LLM gets the real hits as context, so its job
+	// shrinks from "recall CVEs from training data" to "explain and rank
+	// what's actually known to affect this version." Anything OSV finds
+	// gets Source: "osv"; anything new the LLM proposes gets Source: "llm".
+	osvFindings := s.preScanOSV(ctx, mem)
+
 	route, err := s.router.Route(ctx, 999, []string{"go.mod", "Dockerfile"})
 	if err != nil {
 		return nil, fmt.Errorf("scanner: route LLM: %w", err)
 	}
 
-	result, err := s.scanWithLLM(ctx, route, entry, mem)
+	result, err := s.scanWithLLM(ctx, route, entry, mem, osvFindings)
 	if err != nil {
 		s.router.RecordFailure(route.ProviderID)
 		return nil, fmt.Errorf("scanner: LLM call: %w", err)
@@ -47,16 +62,118 @@ func (s *Scanner) Scan(ctx context.Context, entry RepoEntry, mem *RepoMemory) (*
 
 	result.RepoID = entry.ID
 	result.ScannedAt = time.Now()
+	result.CVEs = mergeCVEFindings(osvFindings, result.CVEs)
 
 	if s.log != nil {
 		s.log.Info("scan complete",
 			zap.String("repo", entry.ID),
 			zap.String("risk", result.RiskLevel),
 			zap.Int("cves", len(result.CVEs)),
+			zap.Int("osv_cves", len(osvFindings)),
 			zap.Int("bottlenecks", len(result.Bottlenecks)),
 		)
 	}
 	return result, nil
+}
+
+// preScanOSV walks the dependency list and queries the OSV ecosystem feed.
+// Network errors are logged and swallowed — we never let an OSV outage stop
+// a scan; the LLM-only path still produces a usable result.
+func (s *Scanner) preScanOSV(ctx context.Context, mem *RepoMemory) []CVEFinding {
+	if s.osv == nil || mem == nil || len(mem.Dependencies) == 0 {
+		return nil
+	}
+	eco := cveclient.EcosystemFor(mem.PrimaryLang)
+	if eco == "" {
+		return nil
+	}
+	var out []CVEFinding
+	for _, dep := range mem.Dependencies {
+		if dep.Name == "" {
+			continue
+		}
+		vulns, err := s.osv.QueryPackage(ctx, eco, dep.Name, dep.Version)
+		if err != nil {
+			if s.log != nil {
+				s.log.Debug("osv query failed",
+					zap.String("pkg", dep.Name), zap.String("ver", dep.Version),
+					zap.Error(err))
+			}
+			continue
+		}
+		for _, v := range vulns {
+			out = append(out, CVEFinding{
+				Severity:      v.Severity,
+				Package:       v.Package,
+				Version:       v.Affected,
+				Description:   firstNonEmpty(v.Summary, v.Details),
+				Fix:           recommendedFix(v),
+				CVEIDs:        cveIDs(v),
+				Source:        "osv",
+				References:    v.References,
+				FixedVersions: v.FixedVersions,
+				Ecosystem:     v.Ecosystem,
+			})
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// cveIDs collects CVE-prefixed aliases plus the primary ID when it itself is
+// a CVE. GHSA aliases get filtered out so the surfaced list stays portable.
+func cveIDs(v cveclient.Vulnerability) []string {
+	var out []string
+	if strings.HasPrefix(v.ID, "CVE-") {
+		out = append(out, v.ID)
+	}
+	for _, a := range v.Aliases {
+		if strings.HasPrefix(a, "CVE-") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func recommendedFix(v cveclient.Vulnerability) string {
+	if len(v.FixedVersions) == 0 {
+		return ""
+	}
+	return "upgrade to " + strings.Join(v.FixedVersions, " / ")
+}
+
+// mergeCVEFindings combines OSV hits with LLM-proposed CVEs. When the LLM
+// rediscovers an OSV record (same package + same CVE alias) we keep the OSV
+// version since it carries verified metadata.
+func mergeCVEFindings(osv, llm []CVEFinding) []CVEFinding {
+	seen := map[string]struct{}{}
+	keyFor := func(f CVEFinding) string {
+		if len(f.CVEIDs) > 0 {
+			return strings.ToLower(f.Package) + "|" + strings.ToLower(f.CVEIDs[0])
+		}
+		return strings.ToLower(f.Package) + "|" + strings.ToLower(f.Description)
+	}
+	out := make([]CVEFinding, 0, len(osv)+len(llm))
+	for _, f := range osv {
+		out = append(out, f)
+		seen[keyFor(f)] = struct{}{}
+	}
+	for _, f := range llm {
+		if _, dup := seen[keyFor(f)]; dup {
+			continue
+		}
+		if f.Source == "" {
+			f.Source = "llm"
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ── LLM scan ─────────────────────────────────────────────────────────────────
@@ -66,8 +183,9 @@ func (s *Scanner) scanWithLLM(
 	route pipeline.RouteResult,
 	entry RepoEntry,
 	mem *RepoMemory,
+	osvHits []CVEFinding,
 ) (*ScanResult, error) {
-	prompt := buildScanPrompt(entry, mem)
+	prompt := buildScanPrompt(entry, mem, osvHits)
 
 	req := &provider.CompletionRequest{
 		Model: route.Model,
@@ -143,7 +261,7 @@ Return ONLY a JSON object matching this schema exactly:
 
 Return ONLY the JSON. No markdown fences. No explanation.`
 
-func buildScanPrompt(entry RepoEntry, mem *RepoMemory) string {
+func buildScanPrompt(entry RepoEntry, mem *RepoMemory, osvHits []CVEFinding) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Repo: %s/%s\n", entry.Owner, entry.Name))
 	if entry.Description != "" {
@@ -172,7 +290,28 @@ func buildScanPrompt(entry RepoEntry, mem *RepoMemory) string {
 			sb.WriteString("\nCI/CD: " + mem.CISummary + "\n")
 		}
 	}
-	sb.WriteString("\nIdentify CVEs, bottlenecks, and architecture suggestions as described. Return JSON.")
+	if len(osvHits) > 0 {
+		// Anchor the model with the live OSV feed so it doesn't fabricate
+		// CVEs from training data and so it explains real ones in context.
+		sb.WriteString("\n### Known vulnerabilities from OSV.dev (ground truth — already detected)\n")
+		for _, hit := range osvHits {
+			ids := strings.Join(hit.CVEIDs, ", ")
+			if ids == "" {
+				ids = "(no CVE alias)"
+			}
+			fix := hit.Fix
+			if fix == "" && len(hit.FixedVersions) > 0 {
+				fix = "upgrade to " + strings.Join(hit.FixedVersions, " / ")
+			}
+			sb.WriteString(fmt.Sprintf("- %s@%s [%s] %s — %s. Fix: %s\n",
+				hit.Package, hit.Version, hit.Severity, ids, hit.Description, fix))
+		}
+		sb.WriteString("\nThese are confirmed; you do not need to rediscover them. ")
+		sb.WriteString("Focus the `cves` field on additional risks you can infer (e.g. vulnerable transitive deps, misconfigurations, or CVEs in libraries that OSV missed). ")
+		sb.WriteString("Do not duplicate OSV entries.\n")
+	}
+
+	sb.WriteString("\nIdentify additional CVEs (beyond the OSV list above), bottlenecks, and architecture suggestions as described. Return JSON.")
 	return sb.String()
 }
 
