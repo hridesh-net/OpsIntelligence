@@ -10,6 +10,9 @@
 
 /* Safety net: if any injected Scrun stylesheet leaked a bare body rule,
    reset it so the rest of the dashboard remains scrollable. */
+html {
+  height: auto !important;
+}
 body:not(.scrun-active) {
   overflow: visible;
   height: auto;
@@ -100,8 +103,23 @@ body.scrun-active .board::-webkit-scrollbar-thumb:hover { background: var(--text
    reset min-height on every link. */
 body.scrun-active,
 body.scrun-active.app-page {
-  overflow: hidden !important;
+  /* Use overflow:auto instead of hidden so nested scroll containers
+     (board, workflow builder, agent grid) still receive wheel/trackpad
+     events on macOS. overscroll-behavior:none prevents scroll-chaining
+     to the body when a nested container hits its limit. */
+  overflow: auto;
+  overscroll-behavior: none;
   height: 100vh !important;
+}
+/* Hide the body scrollbar so the shell still feels locked; the nested
+   scroll containers (.board, .sbody, etc.) keep their own scrollbars. */
+body.scrun-active::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+  background: transparent;
+}
+body.scrun-active {
+  scrollbar-width: none;
 }
 body.scrun-active .app,
 body.scrun-active .main,
@@ -123,11 +141,20 @@ body.scrun-active .col { max-height: 100%; }
    per-column scroll never fires and users perceive the board as
    "stuck". Make the entire board area scroll vertically as a fallback
    when content overflows, so a wheel anywhere on the board works. */
-body.scrun-active .board { overflow-y: auto; }
+body.scrun-active .board {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
 /* Keep the col-body's own scroll intact when it does overflow — the
    nested scroll is still useful when one column has many more cards
    than its siblings. */
 body.scrun-active .col-body { max-height: calc(100vh - 200px); }
+
+/* Force scroll contexts on every Scrun screen body so parent
+   overflow:hidden chains never silently disable them. */
+body.scrun-active .sbody { overflow-y: auto !important; }
+body.scrun-active .feed-main { overflow-y: auto !important; }
+body.scrun-active .feed-side { overflow-y: auto !important; }
 
 /* Section becomes its own viewport. */
 #view-boards.scrun-mount {

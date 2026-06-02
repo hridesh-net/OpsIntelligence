@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.64] — 2026-06-02
+
+### Fixed — Scrun stylesheet hygiene + reinforced scroll/layout rules
+
+- `assets/app.js` strips any prior `<style data-scrun>` blocks before re-injecting on remount, so repeated hash navigations to `#/boards` never accumulate duplicated or stale rules (which previously could shadow the bridge rewrites).
+- `assets/scrun/scrun-bridge.css` adds an `html { height: auto !important }` reset so a leaked `html { height: 100% }` from Scrun's own sheets can't lock the dashboard viewport, plus explicit `overflow-y: auto !important` on `.sbody`, `.feed-main`, `.feed-side` so the Workflows / Agents / Activity screens always present a working scroll context regardless of parent overflow chains.
+
 ## [1.0.63] — 2026-06-02
 
 ### Fixed — Scrun scroll chain extended to non-board screens; dashboard stays scrollable elsewhere

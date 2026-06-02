@@ -215,6 +215,9 @@
   async function ensureScrunStyles() {
     if (scrunStylesLoaded) return;
     scrunStylesLoaded = true;
+    // Strip any stale injected scrun styles from a previous load so
+    // we never accumulate duplicated or unscoped rules.
+    document.querySelectorAll("style[data-scrun]").forEach((el) => el.remove());
     const sheets = [
       "scrun/scrun.css",
       "scrun/scrun-board.css",
