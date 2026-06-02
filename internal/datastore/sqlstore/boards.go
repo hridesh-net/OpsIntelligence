@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"time"
@@ -96,10 +97,17 @@ func (r *boardRepo) List(ctx context.Context, f datastore.BoardFilter) ([]datast
 func scanBoard(scan func(...any) error, scanErr func(error) error) (*datastore.Board, error) {
 	var b datastore.Board
 	var cfgJSON []byte
-	err := scan(&b.ID, &b.Name, &b.TeamID, &b.RepoURL, &b.RepoPath, &b.Mode, &cfgJSON, &b.CreatedAt, &b.UpdatedAt)
+	// team_id / repo_url / repo_path are stored as NULL when unset (see
+	// nullable() on the write side). Scanning a NULL into a plain `string`
+	// errors out, so funnel them through sql.NullString.
+	var teamID, repoURL, repoPath sql.NullString
+	err := scan(&b.ID, &b.Name, &teamID, &repoURL, &repoPath, &b.Mode, &cfgJSON, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, scanErr(err)
 	}
+	b.TeamID = teamID.String
+	b.RepoURL = repoURL.String
+	b.RepoPath = repoPath.String
 	if len(cfgJSON) > 0 {
 		_ = json.Unmarshal(cfgJSON, &b.Config)
 	}

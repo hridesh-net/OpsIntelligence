@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.70] — 2026-06-02
+
+### Fixed — Boards 500 when any board has NULL team_id / repo_url / repo_path
+
+`internal/datastore/sqlstore/boards.go` wrote `nullable(b.TeamID)` → NULL but read it back into a plain `string`, so `GET /api/v1/boards` blew up with `sql: Scan error on column index 2, name "team_id": converting NULL to string is unsupported` as soon as any team-less board existed (which includes everything created via the CLI without `--team`). Scanner now funnels `team_id`, `repo_url`, and `repo_path` through `sql.NullString` like the rest of the kanban tables already do.
+
+### Added — Overview KPIs wired to real data
+
+`/overview` now drives off `listBoards` + `listRepos` + `listAgentTasks`:
+
+- Active runs (count of `running` / `awaiting` tasks)
+- Boards count (with the gateway's error surfaced inline if `/api/v1/boards` fails)
+- Repos indexed (`ready` / `indexed` index_status)
+- Repos with risk (medium / high / critical)
+- Section: up to 8 boards linked to `#/boards`
+- Section: up to 6 recent agent tasks with status pills
+
 ## [1.0.69] — 2026-06-02
 
 ### Fixed — CSRF token wired in React client (Create Board returns 403)
