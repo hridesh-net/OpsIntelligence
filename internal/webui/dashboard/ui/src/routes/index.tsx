@@ -3,6 +3,7 @@ import { AppShell } from "@/chrome/AppShell";
 import { Overview } from "./Overview";
 import { Board } from "@/kanban/Board";
 import { Chat } from "./Chat";
+import { Repos } from "./Repos";
 import { Stub } from "./Stub";
 
 export function AppRoutes() {
@@ -14,7 +15,7 @@ export function AppRoutes() {
         <Route path="/boards" element={<Board />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/tasks" element={<Stub title="Tasks" sub="Async task manager" />} />
-        <Route path="/repos" element={<Stub title="Repos" sub="Indexed repositories" />} />
+        <Route path="/repos" element={<Repos />} />
         <Route path="/runtrace" element={<Stub title="Run Trace" sub="Live run telemetry" />} />
         <Route path="/analytics" element={<Stub title="Analytics" sub="Throughput, cost, quality" />} />
         <Route path="/users" element={<Stub title="Users" sub="Members & roles" />} />

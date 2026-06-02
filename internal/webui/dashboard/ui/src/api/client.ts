@@ -13,10 +13,15 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
   ifMatch?: string;
 }
 
-let csrfToken: string | null = null;
+// CSRF: gateway uses double-submit cookie pattern. On login the server sets
+// a non-HttpOnly `opi_csrf` cookie; mutating requests must echo its value in
+// the X-CSRF-Token header. We re-read on every call so login/refresh always
+// pick up the latest token without needing an explicit setter.
+const CSRF_COOKIE = "opi_csrf";
 
-export function setCsrfToken(token: string | null) {
-  csrfToken = token;
+function readCsrfFromCookie(): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -24,7 +29,10 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
   const h = new Headers(headers);
   if (body !== undefined && !h.has("Content-Type")) h.set("Content-Type", "application/json");
   if (ifMatch) h.set("If-Match", ifMatch);
-  if (csrfToken && method !== "GET" && method !== "HEAD") h.set("X-CSRF-Token", csrfToken);
+  if (method !== "GET" && method !== "HEAD") {
+    const csrf = readCsrfFromCookie();
+    if (csrf) h.set("X-CSRF-Token", csrf);
+  }
 
   const res = await fetch(path, {
     ...rest,
@@ -51,9 +59,12 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
 
 // Streaming helper for SSE-style NDJSON responses (chat).
 export async function* stream(path: string, body: unknown, signal?: AbortSignal): AsyncGenerator<unknown> {
+  const csrf = readCsrfFromCookie();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (csrf) headers["X-CSRF-Token"] = csrf;
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     credentials: "same-origin",
     body: JSON.stringify(body),
     signal,

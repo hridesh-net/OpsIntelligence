@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.69] — 2026-06-02
+
+### Fixed — CSRF token wired in React client (Create Board returns 403)
+
+The v1.0.68 client never sent the `X-CSRF-Token` header, so every mutating call (including `POST /api/v1/boards`) was rejected by the gateway's double-submit CSRF middleware. Client now reads the non-HttpOnly `opi_csrf` cookie on each mutating call and echoes it as the header — matches the contract in `internal/auth/sessions.go`.
+
+### Added — Repos screen ported to React
+
+`/repos` route now lists indexed repositories with index / scan / risk pills and a per-row Sync action (`POST /api/v1/repos/{id}/sync`). Replaces the v1.0.68 "Coming up" stub. Auto-refreshes every 3s.
+
+### Added — Scrun-style 4-step board wizard
+
+`+ New board` is now a multi-step wizard (Identify → Workflow → Agents → Review):
+
+- **Workflow** step exposes the column list: rename, add/remove, set WIP limits, set gate (`human` / `auto-validate`) per column.
+- **Agents** step optionally registers a default agent (`agent_type` picker over the 11 CLI drivers the gateway already wires).
+- **Review** step shows a flattened summary before the single `POST /api/v1/boards` call with `columns` + `agents` populated atomically.
+
+This restores the configuration depth of the legacy Scrun setup wizard inside the unified React shell.
+
 ## [1.0.68] — 2026-06-02
 
 ### Changed — Dashboard rewritten in React (Vite + TypeScript)
