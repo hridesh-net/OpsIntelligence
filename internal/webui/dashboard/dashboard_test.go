@@ -2,96 +2,60 @@ package dashboard
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// TestHandler_ServesAppShell asserts /dashboard/app returns the
-// post-login frame with the phase-3c settings sub-nav wired up. If
-// this fails the SPA bundle was not embedded (typical break: a new
-// asset was added but not committed under assets/).
+// TestHandler_ServesAppShell asserts /dashboard/app returns the React
+// SPA shell (Vite-emitted app.html) — the post-login frame mounts at
+// #root and loads its hashed bundle from /dashboard/assets/.
 func TestHandler_ServesAppShell(t *testing.T) {
 	body := getDashboard(t, "/app")
-	wantSubstrings := []string{
-		`id="settings-nav"`,
-		`data-section="gateway"`,
-		`data-section="providers"`,
-		`data-section="mcp"`,
-		`data-section="webhooks"`,
-		`id="settings-body"`,
-		// phase 3d: users + apikeys bodies + modal scaffolding
-		`id="users-body"`,
-		`id="apikeys-body"`,
-		`id="modal-backdrop"`,
-	}
-	for _, s := range wantSubstrings {
-		if !strings.Contains(body, s) {
-			t.Fatalf("dashboard app.html missing %q", s)
+	for _, want := range []string{
+		`id="root"`,
+		`/dashboard/assets/app-`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard app.html missing %q", want)
 		}
 	}
 }
 
-// TestHandler_ServesLogin keeps phase-2c login surface working.
+// TestHandler_ServesLogin keeps the login surface working — the React
+// login bundle is loaded and mounts at #root.
 func TestHandler_ServesLogin(t *testing.T) {
 	body := getDashboard(t, "/login")
-	if !strings.Contains(body, `id="login-form"`) {
-		t.Fatal("dashboard login.html missing login form")
-	}
-}
-
-// TestHandler_ServesSPABundle checks the JS bundle is present and
-// contains the schema-driven settings renderer the new UI relies on.
-func TestHandler_ServesSPABundle(t *testing.T) {
-	body := getDashboard(t, "/app.js")
-	wantSubstrings := []string{
-		"CONFIG_SCHEMA",
-		"loadSettingsSection",
-		"saveSettingsForm",
-		"If-Match",
-		"renderProvidersSection",
-		"renderMCPSection",
-		// phase 3d: users + apikeys + modal helpers
-		"renderUsersView",
-		"renderAPIKeysView",
-		"openMintKeyModal",
-		"showMintedKey",
-		"openManageRolesModal",
-		"appendRunTraceComponentHints",
-	}
-	for _, s := range wantSubstrings {
-		if !strings.Contains(body, s) {
-			t.Fatalf("dashboard app.js missing %q", s)
+	for _, want := range []string{
+		`id="root"`,
+		`/dashboard/assets/login-`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard login.html missing %q", want)
 		}
 	}
 }
 
-// TestHandler_ServesStyles makes sure new selectors used by the
-// settings UI shipped with the bundle.
-func TestHandler_ServesStyles(t *testing.T) {
-	body := getDashboard(t, "/style.css")
-	wantSubstrings := []string{
-		".settings-shell",
-		".settings-nav-item",
-		".section-form",
-		".toast",
-		// phase 3d: admin tables + modal + chips
-		".admin-table",
-		".modal-backdrop",
-		".pill-active",
-		".chip-role",
+// TestHandler_ServesBundle checks that the hashed JS bundle referenced
+// by app.html is actually embedded and served.
+func TestHandler_ServesBundle(t *testing.T) {
+	shell := getDashboard(t, "/app")
+	re := regexp.MustCompile(`/dashboard/assets/(app-[A-Za-z0-9_-]+\.js)`)
+	m := re.FindStringSubmatch(shell)
+	if m == nil {
+		t.Fatal("app.html does not reference a hashed app-*.js bundle")
 	}
-	for _, s := range wantSubstrings {
-		if !strings.Contains(body, s) {
-			t.Fatalf("dashboard style.css missing %q", s)
-		}
+	body := getDashboard(t, "/assets/"+m[1])
+	if len(body) == 0 {
+		t.Fatal("bundle response is empty")
 	}
 }
 
 // TestHandler_RootRedirects keeps the /dashboard/ landing redirect
-// behaviour stable (regression test for phase 2c bug where the
-// redirect leaked the upstream Host).
+// stable.
 func TestHandler_RootRedirects(t *testing.T) {
 	srv := httptest.NewServer(http.StripPrefix("/dashboard", Handler()))
 	defer srv.Close()
@@ -110,6 +74,26 @@ func TestHandler_RootRedirects(t *testing.T) {
 	}
 	if loc := resp.Header.Get("Location"); loc != "/dashboard/app" {
 		t.Fatalf("location: got %q, want /dashboard/app", loc)
+	}
+}
+
+// TestAssets_EmbedsHashedBundle asserts that the Vite-emitted hashed
+// assets directory is present in the embedded FS — guards against a
+// future change to //go:embed that drops the nested directory.
+func TestAssets_EmbedsHashedBundle(t *testing.T) {
+	root := Assets()
+	entries, err := fs.ReadDir(root, "assets")
+	if err != nil {
+		t.Fatalf("read embedded assets/: %v", err)
+	}
+	var sawAppJS bool
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "app-") && strings.HasSuffix(e.Name(), ".js") {
+			sawAppJS = true
+		}
+	}
+	if !sawAppJS {
+		t.Fatal("embedded assets/ missing hashed app-*.js bundle")
 	}
 }
 

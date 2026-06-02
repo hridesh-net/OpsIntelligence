@@ -2,7 +2,7 @@
 # Industry-standard build targets for the polyglot project.
 
 .DEFAULT_GOAL := build
-.PHONY: all build build-go build-ts build-sensing build-tui build-tui-host clean test load-test lint vet fmt install uninstall help tui-ping tui
+.PHONY: all build build-go build-ts build-sensing build-tui build-tui-host build-ui clean test load-test lint vet fmt install uninstall help tui-ping tui
 
 # ─────────────────────────────────────────────
 # Variables
@@ -50,11 +50,21 @@ build: build-go
 ## build-go: Build the Go orchestrator binary. Depends on build-tui-host so the
 ##           embedded Rust TUI binary for the current platform is staged before
 ##           `go build` runs `//go:embed` against internal/tuibridge/assets/.
-build-go: build-tui-host
+build-go: build-tui-host build-ui
 	@echo "$(BLUE)Building Go binary...$(NC)"
 	@mkdir -p $(BIN_DIR)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) ./cmd/opsintelligence
 	@echo "$(GREEN)✓ Binary: $(BIN_DIR)/$(BINARY)$(NC)"
+
+## build-ui: Build the React dashboard UI (Vite). Emits hashed bundles into
+##           internal/webui/dashboard/assets/ so `go:embed` picks them up.
+build-ui:
+	@echo "$(BLUE)Building dashboard UI...$(NC)"
+	@command -v npm >/dev/null 2>&1 || { echo "$(RED)npm not found — install Node.js$(NC)"; exit 1; }
+	@cd internal/webui/dashboard/ui && \
+		([ -d node_modules ] || npm install --no-audit --no-fund --loglevel=error) && \
+		npm run build
+	@echo "$(GREEN)✓ Dashboard UI built$(NC)"
 
 ## build-ts: Build the TypeScript agent layer
 build-ts:

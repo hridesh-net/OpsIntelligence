@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.68] — 2026-06-02
+
+### Changed — Dashboard rewritten in React (Vite + TypeScript)
+
+The vanilla `dashboard/assets/app.js` (4.7k LOC) + `style.css` (2.4k) + Scrun bundle (~3k) have been replaced with a Vite + React + TypeScript app under `internal/webui/dashboard/ui/`. The hashed bundle is emitted into `dashboard/assets/` and continues to ship via `//go:embed` — no runtime change, single binary.
+
+- **OpsIntelligence chrome preserved** (warm cream + burnt-orange tokens from the v1.0.67 redesign). The Scrun visual identity is dropped; functionality moves into the unified shell.
+- **Kanban rebuilt on @dnd-kit** with a `DndContext` per board: React owns the listener lifecycle, killing the four documented event-listener leaks in `board.js` (column drop, card drag, settings cog, compact-layout row click). Card moves now go through React Query with optimistic update + rollback — failed `/move` calls no longer leave ghost cards.
+- **Create Board UI** added: modal with workflow-preset picker (default / dev / research / support / ops) wired to `POST /api/v1/boards`. Empty-state CTA on the Boards screen surfaces it for first-run users.
+- **Drift fixes between UI and gateway**:
+  - Move endpoint is `POST /api/v1/boards/{id}/cards/{cid}/move` body `{column_id}` — the legacy bundle used PUT with an `order` field that the server ignored.
+  - Card priority maps `p0..p3` ↔ `H/M/L` (legacy bundle treated raw `p0` strings as `M`).
+  - Card status normalises `completed|failed|stopped` into UI buckets so the pill styling is correct.
+- **Typed API client** with CSRF + If-Match header plumbing and an NDJSON/SSE stream helper. The dashboard `/chat` route now aborts in-flight `/api/rag-chat` reads on navigation (audit hotspot #15).
+- **Login screen** rebuilt; bootstrap-or-sign-in detection routes off `/api/v1/auth/status`.
+- **Stub routes** for Overview, Tasks, Repos, Run Trace, Analytics, Users, API Keys, Settings — each owns its sidebar entry and topbar but defers content to a follow-up port. Settings forms (~4k LOC in the legacy bundle) are the biggest remaining slice.
+
+### Added — Release / CI pipeline picks up the UI build
+
+- New `make build-ui` target installs npm deps on demand and runs `vite build` into `internal/webui/dashboard/assets/`. `make build-go` depends on it.
+- `.github/workflows/release.yml` and `ci.yml` gain a Node 20 + `npm ci` + `npm run build` step ahead of every `go build`, so released binaries never embed stale dashboard assets.
+
+### Removed
+
+- `internal/webui/dashboard/assets/app.js`, `style.css`, `d3.min.js`, and the entire `scrun/` subdir (replaced by the hashed Vite bundle).
+
 ## [1.0.67] — 2026-06-02
 
 ### Changed — Dashboard chrome redesign (phase 1: foundations)

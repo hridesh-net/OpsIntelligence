@@ -58,6 +58,24 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Setup Node.js (for dashboard UI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: internal/webui/dashboard/ui/package-lock.json
+
+      - name: Build dashboard UI (Vite → //go:embed assets)
+        shell: bash
+        run: |
+          cd internal/webui/dashboard/ui
+          npm ci --no-audit --no-fund
+          npm run build
+          # Sanity check: the hashed bundle must be present before `go build`
+          # runs //go:embed, otherwise the binary ships a stale dashboard.
+          ls -la ../assets/
+          ls -la ../assets/assets/
+
       - name: Setup Rust (with target)
         uses: dtolnay/rust-toolchain@stable
         with:
