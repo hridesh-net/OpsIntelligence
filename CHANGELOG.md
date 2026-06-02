@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.67] — 2026-06-02
+
+### Changed — Dashboard chrome redesign (phase 1: foundations)
+
+Applied the redesign skill's high-priority items to the dashboard chrome (sidebar + login). Scrun board intentionally untouched in this release to protect the v1.0.66 layout fix.
+
+- **Font swap**: Inter → Geist. Inter is the canonical AI-default font; Geist has more character and tighter optical balance. JetBrains Mono retained for code.
+- **Brand mark**: replaced the generic ◆ Unicode diamond with a custom inline-SVG hexagon-with-center-dot. Used in sidebar, login, and favicon (which previously had a blue placeholder).
+- **Login page**:
+  - **Fixed dual-form bug**: `.auth-form { display: flex }` silently overrode HTML's `[hidden]` attribute, so both the login and bootstrap forms rendered at first paint before JS picked one. Added `.auth-form[hidden] { display: none !important }`.
+  - Bigger heading (30→34px) with tighter tracking, polished input focus ring (3px → 4px with richer alpha), restyled hint as a left-bordered callout, divided footer with hover transitions, noise overlay for surface texture.
+- **Buttons**: added active-press feedback (`scale(0.985)` + `translateY(0)`), GPU-accelerated transitions on transform/box-shadow only, primary CTA gains a tinted orange shadow on hover.
+- **Sidebar nav**: dropped the all-caps 12px uppercase labels in favour of 13px sentence case (per redesign skill: "All-caps subheaders everywhere → try sentence case"). Active route now indicated by a 3px left accent bar instead of accent border + bold + bg layered together. Sticky positioning so the nav doesn't scroll out on tall pages.
+- **Global**: tabular-nums on data-bearing elements (badges, counts, status values), `text-wrap: balance` on headings, global `:focus-visible` ring, `prefers-reduced-motion` honoured, richer radial-gradient page background with a noise overlay on the auth page.
+
 ## [1.0.66] — 2026-06-02
 
 ### Fixed — Scrun bridge rewritten to match original /Scrun layout
