@@ -100,6 +100,7 @@ func (s *Store) Personas() datastore.PersonaRepo                    { return &pe
 func (s *Store) CardAttachments() datastore.CardAttachmentRepo      { return &cardAttachmentRepo{s: s} }
 func (s *Store) KanbanWebhooks() datastore.KanbanWebhookRepo        { return &kanbanWebhookRepo{s: s} }
 func (s *Store) CardComments() datastore.CardCommentRepo            { return &cardCommentRepo{s: s} }
+func (s *Store) CardRelationships() datastore.CardRelationshipRepo  { return &cardRelationshipRepo{s: s} }
 
 // ─── shared helpers ─────────────────────────────────────────────────
 

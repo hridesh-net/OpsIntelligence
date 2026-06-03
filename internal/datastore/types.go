@@ -352,6 +352,18 @@ type KanbanWebhook struct {
 	LastDelivery  *time.Time `json:"last_delivery,omitempty"`
 }
 
+// CardRelationship is a directed edge between two cards on the same
+// board. Kind ∈ {parent, blocks, duplicates, related}.
+type CardRelationship struct {
+	ID        string    `json:"id"`
+	BoardID   string    `json:"board_id"`
+	SrcCardID string    `json:"src_card_id"`
+	DstCardID string    `json:"dst_card_id"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by,omitempty"`
+}
+
 // CardComment is one entry in a card's thread. author_kind discriminates
 // between human ("user") and agent ("agent") authors so the UI can pick
 // the right avatar source. Mentions is a CSV of resolved IDs (agent or

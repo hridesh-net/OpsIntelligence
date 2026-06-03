@@ -761,6 +761,11 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 		s.handleCardComments(w, r, boardID, cardID, strings.TrimPrefix(sub, "comments"))
 		return
 	}
+	// Relationships sub-tree gets a dedicated handler.
+	if sub == "relationships" || sub == "relationships/" || strings.HasPrefix(sub, "relationships/") {
+		s.handleCardRelationships(w, r, boardID, cardID, strings.TrimPrefix(sub, "relationships"))
+		return
+	}
 
 	p := auth.PrincipalFrom(r.Context())
 	switch r.Method {
@@ -892,6 +897,46 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 				if err == nil && len(cardsInCol) >= *col.WIPLimit {
 					writeJSONError(w, http.StatusConflict, fmt.Sprintf("WIP limit (%d) reached for column %q", *col.WIPLimit, col.Name))
 					return
+				}
+			}
+			// Block-edge enforcement: refuse the move when the
+			// destination column reads as "done" and the source card
+			// has an outgoing `blocks` edge to a non-done card. The
+			// check is opt-out via board.config.relationship_rules.
+			// enforce_blocks == false; default is on.
+			if strings.EqualFold(col.Name, "done") || strings.EqualFold(col.Name, "closed") {
+				enforce := true
+				if board, _ := s.Store.Boards().Get(r.Context(), boardID); board != nil && board.Config != nil {
+					if rules, _ := board.Config["relationship_rules"].(map[string]any); rules != nil {
+						if v, ok := rules["enforce_blocks"].(bool); ok && !v {
+							enforce = false
+						}
+					}
+				}
+				if enforce {
+					rels, err := s.Store.CardRelationships().ListForCard(r.Context(), cardID)
+					if err == nil {
+						blocking := []string{}
+						for _, rel := range rels {
+							if rel.Kind != "blocks" || rel.SrcCardID != cardID {
+								continue
+							}
+							dst, err := s.Store.BoardCards().Get(r.Context(), rel.DstCardID)
+							if err != nil || dst == nil {
+								continue
+							}
+							if dst.Status != "completed" && dst.Status != "done" {
+								blocking = append(blocking, rel.DstCardID)
+							}
+						}
+						if len(blocking) > 0 {
+							writeJSON(w, http.StatusConflict, map[string]any{
+								"error":           "card has unresolved blocking dependencies; close them first",
+								"blocking_cards":  blocking,
+							})
+							return
+						}
+					}
 				}
 			}
 			if err := s.Store.BoardCards().Move(r.Context(), cardID, req.ColumnID); err != nil {
@@ -1779,6 +1824,131 @@ func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
+}
+
+// ── Card relationships ────────────────────────────────────────────────
+
+type createRelationshipRequest struct {
+	DstCardID string `json:"dst_card_id"`
+	Kind      string `json:"kind"`
+}
+
+// validRelationshipKinds is the closed set of edge kinds the API
+// accepts. Anything else returns 400.
+var validRelationshipKinds = map[string]struct{}{
+	"parent":     {},
+	"blocks":     {},
+	"duplicates": {},
+	"related":    {},
+}
+
+func (s *AuthService) handleCardRelationships(w http.ResponseWriter, r *http.Request, boardID, cardID, sub string) {
+	sub = strings.TrimPrefix(sub, "/")
+	p := auth.PrincipalFrom(r.Context())
+
+	// Collection: GET list / POST create.
+	if sub == "" {
+		switch r.Method {
+		case http.MethodGet:
+			if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+				writeJSONError(w, http.StatusForbidden, "permission denied")
+				return
+			}
+			rels, err := s.Store.CardRelationships().ListForCard(r.Context(), cardID)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"relationships": rels})
+			return
+		case http.MethodPost:
+			if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+				writeJSONError(w, http.StatusForbidden, "permission denied")
+				return
+			}
+			var req createRelationshipRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+				return
+			}
+			if req.DstCardID == "" || req.Kind == "" {
+				writeJSONError(w, http.StatusBadRequest, "dst_card_id and kind required")
+				return
+			}
+			if _, ok := validRelationshipKinds[req.Kind]; !ok {
+				writeJSONError(w, http.StatusBadRequest, "kind must be one of parent / blocks / duplicates / related")
+				return
+			}
+			if req.DstCardID == cardID {
+				writeJSONError(w, http.StatusBadRequest, "cannot relate a card to itself")
+				return
+			}
+			// Cycle check for parent edges: refuse if cardID is already
+			// in dst's ancestor chain.
+			if req.Kind == "parent" {
+				ancestors, err := s.Store.CardRelationships().ListAncestors(r.Context(), req.DstCardID)
+				if err != nil {
+					writeJSONError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				if req.DstCardID == cardID {
+					writeJSONError(w, http.StatusConflict, "parent edge would create a cycle")
+					return
+				}
+				for _, anc := range ancestors {
+					if anc == cardID {
+						writeJSONError(w, http.StatusConflict, "parent edge would create a cycle")
+						return
+					}
+				}
+			}
+			rel := &datastore.CardRelationship{
+				BoardID:   boardID,
+				SrcCardID: cardID,
+				DstCardID: req.DstCardID,
+				Kind:      req.Kind,
+				CreatedBy: principalAuthorID(p),
+			}
+			if err := s.Store.CardRelationships().Create(r.Context(), rel); err != nil {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, rel)
+			return
+		default:
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+	}
+
+	// Single: /{rid} → DELETE only.
+	relID := strings.TrimSuffix(sub, "/")
+	if r.Method != http.MethodDelete {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+	rel, err := s.Store.CardRelationships().Get(r.Context(), relID)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "relationship not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rel.BoardID != boardID || (rel.SrcCardID != cardID && rel.DstCardID != cardID) {
+		writeJSONError(w, http.StatusNotFound, "relationship not found")
+		return
+	}
+	if err := s.Store.CardRelationships().Delete(r.Context(), relID); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Card comments ─────────────────────────────────────────────────────

@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.80] — 2026-06-03
+
+### Added — Card relationships (Release G of the kanbots-parity wave)
+
+New `card_relationships` table (migration 0007, sqlite + postgres)
+stores directed edges between cards on the same board. `kind` is one
+of `parent` / `blocks` / `duplicates` / `related`; the (src, dst, kind)
+unique constraint keeps repeat POSTs idempotent.
+
+Endpoints under `/api/v1/boards/{id}/cards/{cid}/relationships`:
+
+- `GET` — list every edge where the card is either source or
+  destination (caller splits incoming vs outgoing in-process).
+- `POST` — add an edge (CSRF). `parent` cycles are rejected with `409`
+  via `CardRelationshipRepo.ListAncestors` BFS up the parent chain.
+- `DELETE /{rid}` — remove an edge (CSRF, `boards.manage`).
+
+`POST /api/v1/boards/{id}/cards/{cid}/move` now refuses to move a card
+into a column named **Done** / **Closed** while the card has outgoing
+`blocks` edges to non-`completed` / non-`done` cards. The response
+body returns `blocking_cards` so the UI can name the blockers. The
+guard is opt-out via `board.config.relationship_rules.enforce_blocks = false`
+(default: enforced).
+
+Tests: `kanban_relationships_api_test.go` covers full CRUD on a
+`blocks` edge, the `parent` cycle rejection, and the move-blocked
+→ unblock-and-move-succeeds sequence.
+
+This release closes the seven-tag kanbots.dev parity wave
+(v1.0.74 - v1.0.80).
+
+main.go v1.0.79 -> v1.0.80; Cargo workspace 0.2.52 -> 0.2.53.
+
 ## [1.0.79] — 2026-06-03
 
 ### Added — Card comments + @mentions (Release F of the kanbots-parity wave)
