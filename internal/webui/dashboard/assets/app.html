@@ -19,7 +19,7 @@
       </div>
       <nav class="nav" id="primary-nav">
         <a class="nav-item" data-route="overview" href="#/overview">Overview</a>
-        <a class="nav-item" data-route="boards" href="#/boards">Boards</a>
+        <a class="nav-item" data-route="boards" href="/dashboard/kanban" target="_blank">Boards</a>
         <a class="nav-item" data-route="tasks" href="#/tasks">Tasks</a>
         <a class="nav-item" data-route="users" href="#/users">Users &amp; Roles</a>
         <a class="nav-item" data-route="apikeys" href="#/apikeys">API keys</a>
@@ -208,7 +208,7 @@
                   <div class="sbody">
                     <div class="shead">
                       <div><h1>Workflow Builder</h1><p>Design the stages your agents move work through. Drag to reorder, rename inline, set WIP limits, and add approval or auto-validate gates between stages.</p></div>
-                      <div class="right"><button class="btn">Import</button><button class="btn btn-primary">Save workflow</button></div>
+                      <div class="right"><button class="btn">Import</button><button class="btn btn-primary" id="workflowSave">Save workflow</button></div>
                     </div>
                     <div id="workflowsBody"></div>
                   </div>

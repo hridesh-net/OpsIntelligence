@@ -6,6 +6,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.77] — 2026-06-03
+
+### Added — Bulk Workflow Builder save (Release D of the kanbots-parity wave)
+
+New endpoint `PUT /api/v1/boards/{id}/workflow` accepts the Workflow
+Builder's full intended stage list in one request and reconciles it
+against the current `board_columns` rows:
+
+- rows whose `id` matches an existing column are `UPDATE`d (name,
+  position, color, wip_limit);
+- rows without an `id` are `INSERT`ed;
+- IDs in `deleted[]` are removed only when no card sits in that column.
+  If any do, the entire update is rejected with `409` and the response
+  body lists the offending column IDs in `columns`, so the UI can
+  prompt the operator to move the cards first;
+- `board.config.column_overrides` is rewritten in the same call so per
+  stage `gate` ("none" / "human" / "auto-validate") and `automation`
+  flags survive — the existing schema-less bridge to the kanbots-style
+  stage gates.
+
+`wizardColumn` gained an optional `id` field. Existing call sites
+(`presetColumns`, `POST /columns`) ignore it; the workflow-save handler
+honours it.
+
+Scrun's Workflow Builder now stages stage deletions in a module-level
+queue and ships them in one PUT when the user clicks **Save workflow**.
+After success the freshly inserted columns' server IDs are folded back
+into `DB.WORKFLOW` so subsequent edits target the right rows.
+
+`scrun/api.js` adds `ScrunAPI.saveWorkflow(boardID, {columns, deleted})`.
+The Save workflow button in `app.html` is now wired (`id="workflowSave"`);
+the corresponding button in `kanban.html` keeps the standalone page's
+existing `display:none` (left intentionally hidden by the prior
+session — see Scrun dashboard port memory).
+
+Tests: `kanban_workflow_api_test.go` covers the rename/insert/reorder
+happy path with `column_overrides` round-trip, a clean delete and the
+409 with offending column ID surfaced.
+
+main.go v1.0.76 -> v1.0.77; Cargo workspace 0.2.49 -> 0.2.50.
+
 ## [1.0.76] — 2026-06-03
 
 ### Added — Default-agent seeding on board create (Release C of the kanbots-parity wave)

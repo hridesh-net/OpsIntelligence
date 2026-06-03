@@ -2,6 +2,59 @@
    SCRUN — Workflows builder · Agent Manager · Activity feed
    ============================================================ */
 
+// Server IDs of stages the user has removed since the last Save. The
+// Save handler ships these in `deleted` so the backend can DELETE the
+// corresponding board_columns rows in one round trip; we keep it on
+// the module scope so individual delete clicks don't have to thread
+// state through the render closure.
+let _pendingDeletedColumnIds = [];
+
+function workflowGateName(g){
+  if (g === "human") return "human";
+  if (g === "auto") return "auto-validate";
+  return "none";
+}
+
+async function saveWorkflowToServer(){
+  const demoMode = localStorage.getItem("scrunDemoMode") === "1";
+  if (demoMode || !window.ScrunAPI || !window.currentBoardID) {
+    toast("Workflow saved");
+    return;
+  }
+  const cols = DB.WORKFLOW.map((s, idx) => ({
+    id:         s._serverId || undefined, // omit for new stages
+    name:       s.name,
+    position:   idx,
+    color:      s.dot,
+    wip_limit:  s.wip ? s.wip : null,
+    gate:       workflowGateName(s.gate),
+    automation: s.rules || {},
+  }));
+  try {
+    const res = await window.ScrunAPI.saveWorkflow(window.currentBoardID, {
+      columns: cols,
+      deleted: _pendingDeletedColumnIds,
+    });
+    // Re-sync the local IDs so future drag-renames target the right rows.
+    if (res && res.columns) {
+      res.columns.forEach((c, i) => {
+        if (DB.WORKFLOW[i]) {
+          DB.WORKFLOW[i]._serverId = c.id;
+          DB.WORKFLOW[i].id = c.id;
+        }
+      });
+    }
+    _pendingDeletedColumnIds = [];
+    toast("Workflow saved");
+  } catch (e) {
+    if (e && e.blocked && e.blocked.length) {
+      toast("Cannot delete stages that still hold cards");
+    } else {
+      toast("Save failed: " + (e && e.message ? e.message : "network error"));
+    }
+  }
+}
+
 /* ---------------- WORKFLOWS ---------------- */
 function renderWorkflows(){
   const host=document.getElementById("workflowsBody");
@@ -60,6 +113,12 @@ function renderWorkflows(){
     </div>`;
 
   wireWorkflows(host);
+
+  // The Save button lives outside #workflowsBody (in the shead) so its
+  // click handler is wired once per renderWorkflows() call. Idempotent
+  // — re-assigning .onclick replaces the previous binding.
+  const saveBtn = document.getElementById("workflowSave");
+  if (saveBtn) saveBtn.onclick = saveWorkflowToServer;
 }
 
 function wireWorkflows(host){
@@ -81,7 +140,14 @@ function wireWorkflows(host){
     const id=c.dataset.del; const idx=DB.WORKFLOW.findIndex(s=>s.id===id);
     const fallback=DB.WORKFLOW[idx-1]||DB.WORKFLOW[idx+1];
     DB.CARDS.forEach(k=>{if(k.col===id)k.col=fallback.id;});
-    DB.WORKFLOW.splice(idx,1); renderWorkflows(); toast("Stage removed"); }));
+    const removed = DB.WORKFLOW.splice(idx,1)[0];
+    // Track for the next Save round-trip so the backend can DELETE
+    // the column row. Stages added in this session that never made it
+    // to the server (no _serverId) just disappear locally.
+    if (removed && removed._serverId) {
+      _pendingDeletedColumnIds.push(removed._serverId);
+    }
+    renderWorkflows(); toast("Stage removed"); }));
   document.getElementById("addStage").onclick=()=>{
     const id="stage"+Date.now();
     DB.WORKFLOW.splice(DB.WORKFLOW.length-1,0,{id,name:"New Stage",dot:"#2898da",wip:0,gate:null,rules:{autoAssign:null,autoValidate:false}});
@@ -120,8 +186,8 @@ function renderAgents(){
   const host=document.getElementById("agentsBody");
   let cards="";
   Object.entries(DB.AGENTS).forEach(([ak,a])=>{
-    const cur=DB.CARDS.find(k=>k.agents.includes(ak)&&(k.status==="running"||k.status==="awaiting"));
-    const st=DB.AGENT_STATS[ak];
+    const cur=DB.CARDS.find(k=>k.agents&&k.agents.includes(ak)&&(k.status==="running"||k.status==="awaiting"));
+    const st=DB.AGENT_STATS[ak]||{tasks:0,success:0,spend:0};
     const state=cur?(cur.status==="awaiting"?"working":"working"):(st.tasks%7===0?"offline":"idle");
     const busy=!!cur;
     cards+=`

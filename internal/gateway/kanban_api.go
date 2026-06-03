@@ -67,6 +67,10 @@ type createBoardRequest struct {
 }
 
 type wizardColumn struct {
+	// ID is only honored on the Workflow Builder save path. Create paths
+	// (preset seeding, POST /columns) ignore it and generate a fresh
+	// UUID — so existing call sites keep working unchanged.
+	ID         string         `json:"id,omitempty"`
 	Name       string         `json:"name"`
 	Position   int            `json:"position"`
 	Color      string         `json:"color,omitempty"`
@@ -141,6 +145,19 @@ type createAgentRequest struct {
 	ProviderID string         `json:"provider_id,omitempty"`
 	Config     map[string]any `json:"config,omitempty"`
 	IsDefault  bool           `json:"is_default,omitempty"`
+}
+
+// updateWorkflowRequest is the body of PUT /api/v1/boards/{id}/workflow.
+// It carries the full intended state of the workflow in one shot so the
+// Workflow Builder can reorder / rename / re-gate columns and commit
+// the whole change atomically rather than fan out N PUTs.
+type updateWorkflowRequest struct {
+	Columns []wizardColumn `json:"columns"`
+	// Deleted lists column IDs the caller wants removed. A column with
+	// any card in it returns 409 with the offending column IDs in the
+	// "columns" field of the error body; the rest of the update is not
+	// applied so the workflow stays consistent.
+	Deleted []string `json:"deleted,omitempty"`
 }
 
 // updateAgentRequest is a partial-update body. Top-level pointer fields
@@ -419,6 +436,8 @@ func (s *AuthService) handleBoardDetail(w http.ResponseWriter, r *http.Request, 
 		} else {
 			s.handleSingleBoardAgent(w, r, boardID, parts[2])
 		}
+	case "workflow":
+		s.handleBoardWorkflow(w, r, boardID)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -1745,6 +1764,147 @@ func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
+}
+
+// ── Workflow bulk save ────────────────────────────────────────────────
+
+// handleBoardWorkflow serves PUT /api/v1/boards/{id}/workflow — the
+// Workflow Builder's "Save workflow" button. It diffs the submitted
+// stage list against the current rows and applies all the edits in
+// one logical commit:
+//
+//   - rows with an `id` that already exists are UPDATED (name,
+//     position, color, wip_limit).
+//   - rows without an `id` are INSERTED (new columns).
+//   - ids listed in `deleted` are DELETED — but only after confirming
+//     no card sits in that column. If any do, the entire update is
+//     rejected with 409 so the workflow stays consistent and the UI
+//     can prompt the user to move the cards first.
+//   - board.config.column_overrides is rewritten so per-stage `gate`
+//     and `automation` survive (column_overrides is the schema-less
+//     bridge to the kanbots-style stage gates).
+//
+// CSRF is required (handled by the router wrapper).
+func (s *AuthService) handleBoardWorkflow(w http.ResponseWriter, r *http.Request, boardID string) {
+	p := auth.PrincipalFrom(r.Context())
+	if r.Method != http.MethodPut {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+
+	board, err := s.Store.Boards().Get(r.Context(), boardID)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req updateWorkflowRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Refuse deletes that would orphan cards. A single round-trip per
+	// candidate column is fine here — the workflow rarely has more
+	// than ~10 stages.
+	blocked := []string{}
+	for _, colID := range req.Deleted {
+		cards, err := s.Store.BoardCards().List(r.Context(), datastore.BoardCardFilter{
+			BoardID: boardID, ColumnID: colID, Limit: 1,
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if len(cards) > 0 {
+			blocked = append(blocked, colID)
+		}
+	}
+	if len(blocked) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   "cannot delete columns that still hold cards; move the cards first",
+			"columns": blocked,
+		})
+		return
+	}
+
+	// Index existing columns by id so we can tell update from insert
+	// without an extra round trip per row.
+	existing, err := s.Store.BoardColumns().ListByBoard(r.Context(), boardID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	have := make(map[string]bool, len(existing))
+	for _, c := range existing {
+		have[c.ID] = true
+	}
+
+	// Apply updates and inserts. The store-layer has no batched op so
+	// each row is a separate Exec — fine for typical N=4-8.
+	overrides := map[string]any{}
+	saved := make([]datastore.BoardColumn, 0, len(req.Columns))
+	for _, c := range req.Columns {
+		col := datastore.BoardColumn{
+			BoardID:  boardID,
+			Name:     c.Name,
+			Position: c.Position,
+			Color:    c.Color,
+			WIPLimit: c.WIPLimit,
+		}
+		if c.ID != "" && have[c.ID] {
+			col.ID = c.ID
+			if err := s.Store.BoardColumns().Update(r.Context(), &col); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		} else {
+			if err := s.Store.BoardColumns().Create(r.Context(), &col); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		if c.Gate != "" || len(c.Automation) > 0 {
+			overrides[col.ID] = map[string]any{
+				"gate":       c.Gate,
+				"automation": c.Automation,
+			}
+		}
+		saved = append(saved, col)
+	}
+
+	// Apply deletes after the upserts so position numbers stay sane.
+	for _, colID := range req.Deleted {
+		if err := s.Store.BoardColumns().Delete(r.Context(), colID); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	// Rewrite column_overrides on the board config. We replace the whole
+	// map: columns that lost their gate/automation in this save no
+	// longer appear here.
+	if board.Config == nil {
+		board.Config = map[string]any{}
+	}
+	board.Config["column_overrides"] = overrides
+	if err := s.Store.Boards().Update(r.Context(), board); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"columns": saved,
+		"deleted": req.Deleted,
+	})
 }
 
 // ── Run event SSE stream ──────────────────────────────────────────────

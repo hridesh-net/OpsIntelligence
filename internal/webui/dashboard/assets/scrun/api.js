@@ -46,6 +46,29 @@ const ScrunAPI = (function () {
     return r.json();
   }
 
+  // saveWorkflow ships the Workflow Builder's full intended state in
+  // one PUT. The server diffs against current rows, upserts each column
+  // (rows with an `id` already on the board are UPDATEd, rows without
+  // are INSERTed) and DELETEs any IDs in `deleted` whose column has no
+  // cards. A 409 lists the blocked column IDs in the `columns` field.
+  async function saveWorkflow(boardID, payload) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/workflow`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      let body = null;
+      try { body = await r.json(); } catch (e) {}
+      const err = new Error(`Save workflow failed: ${r.status}`);
+      if (body && body.error) err.message = body.error;
+      if (body && Array.isArray(body.columns)) err.blocked = body.columns;
+      throw err;
+    }
+    return r.json();
+  }
+
   // streamRunEvents opens a Server-Sent Events subscription on the
   // /api/v1/runs/{runID}/events endpoint and forwards each event /
   // lifecycle message to the supplied callback. Returns a close()
@@ -399,6 +422,7 @@ const ScrunAPI = (function () {
     updateAgent,
     deleteAgent,
     streamRunEvents,
+    saveWorkflow,
     loadFirstBoard,
     moveCard,
     createCard,
