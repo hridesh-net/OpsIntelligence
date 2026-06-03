@@ -16,6 +16,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/configsvc"
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/githubapp"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/events"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"github.com/opsintelligence/opsintelligence/internal/subagents"
@@ -76,6 +77,12 @@ type AuthService struct {
 
 	// Kanban is the card dispatch service (optional). Set from cmd/opsintelligence.
 	Kanban KanbanDispatcher
+
+	// KanbanEvents is the in-process pub/sub the dispatcher publishes
+	// every CardRunEvent into. Set from cmd/opsintelligence when the
+	// kanban subsystem is wired. SSE subscribers and webhook delivery
+	// pull from here. A nil bus disables SSE (the handler returns 503).
+	KanbanEvents *events.Bus
 
 	// KanbanAutopilot is the multi-cycle agent loop runner (feature-dev /
 	// qa). Optional; nil disables the /autopilot endpoints.

@@ -6,6 +6,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.75] — 2026-06-03
+
+### Added — Live SSE run-event stream (Release B of the kanbots-parity wave)
+
+Run detail panels stream events from `/api/v1/runs/{rid}/events` via
+Server-Sent Events instead of waiting on a 1-second batch flush.
+
+- New package `internal/kanban/events` ships a tiny per-runID pub/sub
+  bus (`events.Bus`). Subscribe/Publish are non-blocking; full
+  subscriber buffers drop the oldest event. A nil `*Bus` is safe so
+  tests that don't wire the bus keep working.
+- `DispatchService` gains an `Events *events.Bus` field. Every event
+  the dispatcher writes to `card_run_events` is now also published to
+  the bus before the DB write, so SSE subscribers see events at
+  source-of-truth latency. `finalizeRun` additionally emits a
+  `lifecycle` event with the run's terminal status, elapsed ms and
+  cost, so clients know the run finished without polling
+  `/runs/{id}`.
+- `AuthService.KanbanEvents` is the bus pointer; `attachKanbanToGateway`
+  wires it next to the dispatch service.
+- `GET /api/v1/runs/{rid}/events` (text/event-stream):
+  - Honours `Last-Event-ID` (and `?since=` for non-browser clients) to
+    replay any events the client missed via `CardRunEventRepo.List
+    (SinceID=...)`. Replayed events carry an `id:` line so the
+    browser's EventSource auto-advances its cursor.
+  - Subscribes to the in-process bus for live events. Live events do
+    not carry an `id:` — on reconnect the DB list fills any gap.
+  - Heartbeats `:ping\n\n` every 25 seconds.
+  - Returns immediately on already-terminal runs (replay + lifecycle
+    close marker).
+- Scrun panel (`scrun/panel.js`) opens the SSE stream after the initial
+  one-shot run-detail fetch and appends each event to the run log in
+  real time. Closing the panel (or opening a different card) closes
+  the stream. `scrun/api.js` exposes `ScrunAPI.streamRunEvents(runID,
+  {onEvent, onLifecycle, onError})`.
+- Tests: `internal/kanban/events/bus_test.go` covers subscribe/publish,
+  cross-run isolation, cancel, nil-bus safety and concurrent fan-out;
+  `internal/gateway/kanban_runs_sse_test.go` verifies replay + live
+  delivery on an open run and immediate-close behaviour on a terminal
+  run.
+
+main.go v1.0.74 -> v1.0.75; Cargo workspace 0.2.47 -> 0.2.48.
+
 ## [1.0.74] — 2026-06-03
 
 ### Added — Board-agent configuration write-back (Release A of the kanbots-parity wave)

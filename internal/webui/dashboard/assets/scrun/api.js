@@ -46,6 +46,45 @@ const ScrunAPI = (function () {
     return r.json();
   }
 
+  // streamRunEvents opens a Server-Sent Events subscription on the
+  // /api/v1/runs/{runID}/events endpoint and forwards each event /
+  // lifecycle message to the supplied callback. Returns a close()
+  // function the caller must invoke to release the connection.
+  //
+  //   const sub = ScrunAPI.streamRunEvents("run-id", {
+  //     onEvent: (ev) => { ... },
+  //     onLifecycle: (ev) => { ... },
+  //     onError: (e) => { ... },
+  //   });
+  //   // later:
+  //   sub.close();
+  function streamRunEvents(runID, opts) {
+    opts = opts || {};
+    const url = `${BASE}/runs/${encodeURIComponent(runID)}/events`;
+    let src;
+    try {
+      src = new EventSource(url, { withCredentials: true });
+    } catch (e) {
+      if (opts.onError) opts.onError(e);
+      return { close: () => {} };
+    }
+    const parse = (raw) => { try { return JSON.parse(raw); } catch (e) { return null; } };
+    src.addEventListener("event", (e) => {
+      const ev = parse(e.data);
+      if (ev && opts.onEvent) opts.onEvent(ev);
+    });
+    src.addEventListener("lifecycle", (e) => {
+      const ev = parse(e.data);
+      if (ev && opts.onLifecycle) opts.onLifecycle(ev);
+    });
+    src.onerror = (e) => {
+      // EventSource auto-reconnects with Last-Event-ID; we don't have
+      // to do anything special unless the caller wants a callback.
+      if (opts.onError) opts.onError(e);
+    };
+    return { close: () => { try { src.close(); } catch (e) {} } };
+  }
+
   async function deleteAgent(boardID, agentID) {
     const r = await fetch(
       `${BASE}/boards/${encodeURIComponent(boardID)}/agents/${encodeURIComponent(agentID)}`,
@@ -359,6 +398,7 @@ const ScrunAPI = (function () {
     getAgent,
     updateAgent,
     deleteAgent,
+    streamRunEvents,
     loadFirstBoard,
     moveCard,
     createCard,

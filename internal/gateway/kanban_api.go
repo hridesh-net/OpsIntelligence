@@ -931,6 +931,11 @@ func (s *AuthService) handleRunDetail(w http.ResponseWriter, r *http.Request, su
 			writeJSONError(w, http.StatusForbidden, "permission denied")
 			return
 		}
+		// Sub-path /api/v1/runs/{rid}/events streams text/event-stream.
+		if len(parts) >= 2 && (parts[1] == "events" || parts[1] == "events/") {
+			s.handleRunEventStream(w, r, runID)
+			return
+		}
 		run, err := s.Store.CardRuns().Get(r.Context(), runID)
 		if err != nil {
 			if isNotFound(err) {
@@ -940,11 +945,11 @@ func (s *AuthService) handleRunDetail(w http.ResponseWriter, r *http.Request, su
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		events, _ := s.Store.CardRunEvents().List(r.Context(), datastore.CardRunEventFilter{RunID: runID, Limit: 500})
+		evs, _ := s.Store.CardRunEvents().List(r.Context(), datastore.CardRunEventFilter{RunID: runID, Limit: 500})
 		decisions, _ := s.Store.PendingDecisions().ListByRun(r.Context(), runID)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"run":       run,
-			"events":    events,
+			"events":    evs,
 			"decisions": decisions,
 		})
 	case http.MethodPost:
@@ -1688,4 +1693,152 @@ func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
+}
+
+// ── Run event SSE stream ──────────────────────────────────────────────
+
+// handleRunEventStream serves GET /api/v1/runs/{rid}/events as a
+// text/event-stream. On open:
+//
+//  1. Replay any events the client missed via Last-Event-ID (or
+//     ?since=<id>). Each replayed event is emitted with its DB id so
+//     the client can advance its local cursor.
+//  2. Subscribe to the in-process bus for live events. Live events
+//     carry no id field — on disconnect the client reconnects with
+//     Last-Event-ID set to the highest replayed id and the DB list
+//     fills any gap from the bus drop. The bus is best-effort.
+//  3. Heartbeat with `:ping` every 25s so intermediaries don't
+//     time out the connection.
+//
+// The current run row is fetched up front; if the run is already
+// terminal the handler emits replay events and returns immediately
+// without ever subscribing.
+func (s *AuthService) handleRunEventStream(w http.ResponseWriter, r *http.Request, runID string) {
+	p := auth.PrincipalFrom(r.Context())
+	if err := rbac.Enforce(r.Context(), p, rbac.PermRunsRead); err != nil {
+		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+	if s.KanbanEvents == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "event bus not configured")
+		return
+	}
+
+	run, err := s.Store.CardRuns().Get(r.Context(), runID)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "run not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Parse the replay cursor. Last-Event-ID (per the EventSource spec)
+	// wins; ?since= is a fallback for non-browser clients.
+	since := int64(0)
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			since = n
+		}
+	} else if v := r.URL.Query().Get("since"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			since = n
+		}
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache, no-store, no-transform")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	emit := func(id int64, kind string, payload any) bool {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return true
+		}
+		if id > 0 {
+			if _, err := fmt.Fprintf(w, "id: %d\n", id); err != nil {
+				return false
+			}
+		}
+		if kind != "" {
+			if _, err := fmt.Fprintf(w, "event: %s\n", kind); err != nil {
+				return false
+			}
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// ── Replay phase ────────────────────────────────────────────────
+	missed, _ := s.Store.CardRunEvents().List(r.Context(), datastore.CardRunEventFilter{
+		RunID:   runID,
+		SinceID: since,
+		Limit:   2000,
+	})
+	lastReplayedID := since
+	for _, ev := range missed {
+		if !emit(ev.ID, "event", ev) {
+			return
+		}
+		if ev.ID > lastReplayedID {
+			lastReplayedID = ev.ID
+		}
+	}
+
+	// Terminal runs don't need a live subscription — close the stream
+	// after the replay so the client doesn't sit on an open connection.
+	if run.CompletedAt != nil {
+		_ = emit(0, "lifecycle", map[string]any{
+			"phase":     run.Status,
+			"completed": true,
+		})
+		return
+	}
+
+	// ── Live phase ─────────────────────────────────────────────────
+	ch, cancel := s.KanbanEvents.Subscribe(runID)
+	defer cancel()
+
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			if _, err := io.WriteString(w, ":ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Bus events don't carry the DB id — emit without one. The
+			// client's Last-Event-ID stays pinned to the last replayed
+			// row, so on reconnect the DB will fill any drop.
+			eventName := "event"
+			if ev.Kind == "lifecycle" {
+				eventName = "lifecycle"
+			}
+			if !emit(0, eventName, ev) {
+				return
+			}
+		}
+	}
 }

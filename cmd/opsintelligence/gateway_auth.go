@@ -20,6 +20,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/kanban"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/events"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/githubmode"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/sentry"
@@ -274,8 +275,11 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 	log.Info("kanban: registered CLI drivers", zap.Strings("drivers", driverNames))
 
 	calc := cost.NewCalculator()
+	bus := events.NewBus()
 	svc := kanban.NewDispatchService(store, wtMgr, drivers, calc)
+	svc.Events = bus
 	srv.AuthService.Kanban = svc
+	srv.AuthService.KanbanEvents = bus
 	// Card attachments live next to the worktrees so they share the same
 	// state-dir-scoped lifecycle (cleaned up when the board is deleted /
 	// state-dir purged).

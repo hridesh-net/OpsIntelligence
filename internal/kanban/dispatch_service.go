@@ -10,6 +10,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/datastore"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/events"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/worktree"
 )
 
@@ -19,6 +20,12 @@ type DispatchService struct {
 	Worktrees *worktree.Manager
 	Drivers   map[string]dispatcher.AgentDriver
 	CostCalc  *cost.Calculator
+	// Events is an optional in-process pub/sub the dispatcher publishes
+	// every CardRunEvent to alongside the DB write. SSE and webhook
+	// subscribers consume from here. A nil bus is safe — Publish is a
+	// no-op so existing call sites that never wire the bus continue to
+	// work.
+	Events *events.Bus
 }
 
 // NewDispatchService creates a dispatch service with the given dependencies.
@@ -249,13 +256,19 @@ func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, 
 				return
 			}
 
-			batch = append(batch, &datastore.CardRunEvent{
+			rec := datastore.CardRunEvent{
 				RunID:    run.ID,
 				Kind:     ev.Kind,
 				Phase:    ev.Phase,
 				Message:  ev.Message,
 				Metadata: ev.Metadata,
-			})
+			}
+			// Publish to the in-process bus first so SSE subscribers see
+			// the event at the source-of-truth latency, not the DB
+			// batch-flush latency (~1s). The DB write below is still the
+			// authoritative replay surface on reconnect.
+			s.Events.Publish(rec)
+			batch = append(batch, &rec)
 			if len(batch) >= batchSize {
 				flush()
 			}
@@ -277,11 +290,13 @@ func (s *DispatchService) runAgent(ctx context.Context, run *datastore.CardRun, 
 			if perRunCap > 0 {
 				if cost := s.CostCalc.Calculate(run.Model, totalTokensIn, totalTokensOut); cost >= perRunCap {
 					flush()
-					_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+					budgetEv := datastore.CardRunEvent{
 						RunID:   run.ID,
 						Kind:    "error",
 						Message: fmt.Sprintf("Per-run budget cap reached ($%.4f >= $%.4f). Cancelling agent.", cost, perRunCap),
-					})
+					}
+					s.Events.Publish(budgetEv)
+					_ = s.Store.CardRunEvents().Append(ctx, &budgetEv)
 					cancel()
 					s.finalizeRun(ctx, run, card, start, totalTokensIn, totalTokensOut, "per-run budget cap exceeded")
 					return
@@ -334,6 +349,24 @@ func (s *DispatchService) finalizeRun(ctx context.Context, run *datastore.CardRu
 	card.Status = run.Status
 	card.CompletedAt = &now
 	_ = s.Store.BoardCards().Update(ctx, card)
+
+	// Publish a terminal lifecycle event so SSE subscribers know the
+	// run finished without having to poll /runs/{id} themselves. The
+	// event is not persisted to card_run_events — finalization status
+	// is already reflected in card_runs.status, so SSE replay can
+	// resynthesize it from the run row on reconnect.
+	s.Events.Publish(datastore.CardRunEvent{
+		RunID:   run.ID,
+		Kind:    "lifecycle",
+		Phase:   run.Status,
+		Message: "run " + run.Status,
+		Metadata: map[string]any{
+			"elapsed_ms": elapsed,
+			"cost_usd":   costUSD,
+			"token_in":   tokensIn,
+			"token_out":  tokensOut,
+		},
+	})
 }
 
 func (s *DispatchService) cleanupWorktree(run *datastore.CardRun, wt *worktree.Worktree) {
@@ -466,7 +499,7 @@ func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer
 	}
 
 	// Append answer as event so the run timeline shows the user's reply.
-	_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+	answerEv := datastore.CardRunEvent{
 		RunID:   decision.RunID,
 		Kind:    "text",
 		Message: "User answered: " + answer,
@@ -474,7 +507,9 @@ func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer
 			"decision_id": decisionID,
 			"answer":      answer,
 		},
-	})
+	}
+	s.Events.Publish(answerEv)
+	_ = s.Store.CardRunEvents().Append(ctx, &answerEv)
 
 	// Close the paused run (it can't be resumed in-process for CLI drivers —
 	// the underlying CLI has already exited or is blocked on a TTY we don't
@@ -519,11 +554,13 @@ func (s *DispatchService) AnswerDecision(ctx context.Context, decisionID, answer
 		// Surface the failure as a card-run event so the user sees why
 		// the continuation never started; the paused run is already
 		// closed so we don't need to roll back.
-		_ = s.Store.CardRunEvents().Append(ctx, &datastore.CardRunEvent{
+		failEv := datastore.CardRunEvent{
 			RunID:   pausedRun.ID,
 			Kind:    "error",
 			Message: "Failed to dispatch continuation: " + err.Error(),
-		})
+		}
+		s.Events.Publish(failEv)
+		_ = s.Store.CardRunEvents().Append(ctx, &failEv)
 		return err
 	}
 	return nil
