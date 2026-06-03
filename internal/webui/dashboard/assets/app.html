@@ -119,6 +119,10 @@
                   <span class="ni-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg></span>
                   <span class="ni-text">Analytics</span>
                 </div>
+                <div class="nav-item" data-go="board" style="opacity:.55">
+                  <span class="ni-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M14 3v5h5"/></svg></span>
+                  <span class="ni-text">Knowledge</span>
+                </div>
               </nav>
               <div class="rail-user">
                 <span class="uav">OI</span>
@@ -131,8 +135,8 @@
                   <span class="star">★</span> <span data-boardname>AI Workforce Board</span> <span class="chev">▾</span>
                   <div class="menu" id="boardMenu" style="top:46px;left:14px;min-width:210px">
                     <div class="mlabel">Board</div>
-                    <div class="mi" id="boardReconfig">Board setup</div>
-                    <div class="mi" id="boardWorkflow">Edit workflow</div>
+                    <div class="mi" id="boardReconfig"><svg class="av" style="background:none;color:var(--text-dim)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a7 7 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.3-1a7 7 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2-1.5a7 7 0 0 0 .1-1Z"/></svg>Board setup</div>
+                    <div class="mi" id="boardWorkflow"><svg class="av" style="background:none;color:var(--text-dim)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h4a2 2 0 0 1 2 2v8"/></svg>Edit workflow</div>
                   </div>
                 </div>
                 <div id="screenTitleWrap"><span class="screen-title" id="screenTitle">Workflow Builder</span></div>
@@ -142,7 +146,7 @@
                     <input id="search" placeholder="Search tasks, agents, branches…" />
                     <span class="kbd">⌘K</span>
                   </div>
-                  <button class="btn" id="agentBtn">Agent<span class="chev">▾</span></button>
+                  <button class="btn" id="agentBtn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg>Agent<span class="chev">▾</span></button>
                   <button class="btn" id="prioBtn">Priority<span class="chev">▾</span></button>
                   <button class="btn" id="typeBtn">Type<span class="chev">▾</span></button>
                   <div class="seg" id="layoutSeg">
@@ -155,7 +159,8 @@
                 <div class="top-actions">
                   <span class="divider-v"></span>
                   <div class="theme-sw" id="themeSw" title="Toggle theme"><span class="knob"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIco"></svg></span></div>
-                  <button class="btn btn-primary" id="newTaskBtn">+ New Task</button>
+                  <span class="icon-btn" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 14a2 2 0 0 1-1-1.7H2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 7L4.5 7a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 3.6V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8 1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></span>
+                  <button class="btn btn-primary" id="newTaskBtn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>New Task</button>
                 </div>
               </header>
               <div class="menu" id="agentMenu"></div>
@@ -185,7 +190,7 @@
                 <div class="right">
                   <span class="stat" id="filtNote" style="display:none"><span class="filt-active" id="clearFilt">Clear filters ✕</span></span>
                   <span class="sim-toggle" id="simToggle" title="Pause / resume live simulation"><span class="sdot"></span><span id="simLabel">Live</span></span>
-                  <span class="stat" style="color:var(--text-faint)">Scrun demo · on-prem · 0 telemetry</span>
+                  <span class="stat" style="color:var(--text-faint)">.opsintel/board.db · on-prem · 0 telemetry</span>
                 </div>
               </div>
               <div class="screen-wrap">
@@ -195,7 +200,7 @@
                     <aside class="live-rail" id="liveRail">
                       <div class="lr-head"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2 6 4-12 2 6h6"/></svg><b>Agent Activity</b><span class="live"><span class="pulse"></span>Live</span></div>
                       <div class="lr-body" id="liveRailBody"></div>
-                      <div class="lr-foot"><button class="btn" id="railNewBtn">+ Queue a task</button></div>
+                      <div class="lr-foot"><button class="btn" id="railNewBtn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>Queue a task</button></div>
                     </aside>
                   </div>
                 </section>
@@ -211,7 +216,7 @@
                 <section class="screen" id="screen-agents" data-screen-label="Agents">
                   <div class="sbody">
                     <div class="shead">
-                      <div><h1>Agent Manager</h1><p>Connect, configure and monitor the autonomous agents in your workforce.</p></div>
+                      <div><h1>Agent Manager</h1><p>Connect, configure and monitor the autonomous agents in your workforce. Each agent carries its own model, capabilities, budget and guardrails.</p></div>
                       <div class="right"><button class="btn">Model registry</button><button class="btn btn-primary">Connect agent</button></div>
                     </div>
                     <div id="agentsBody"></div>

@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.72] — 2026-06-02
+
+### Fixed — Scrun shell parity with canonical design
+
+The Scrun shell embedded in `#view-boards` had drifted from the canonical
+Claude-Design handoff (`scrun/project/Scrun/Scrun.html`). Restored:
+
+- **Rail**: added the dimmed "Knowledge" nav-item under Insights that the
+  original carried.
+- **Board-pick menu**: restored the cog + workflow SVG icons on the
+  "Board setup" / "Edit workflow" items (were plain text).
+- **Topbar Agent button**: restored the agent-cube SVG icon.
+- **Topbar Settings**: restored the gear `icon-btn` between the theme
+  switch and New Task (the slot was empty).
+- **New Task / Queue a task buttons**: restored the canonical plus SVG
+  icon (were rendering the literal "+ " character).
+- **Status strip**: corrected the trailing label from `Scrun demo ·
+  on-prem · 0 telemetry` to `.opsintel/board.db · on-prem · 0 telemetry`
+  — it's the on-prem board, not a demo.
+- **Agent Manager subtitle**: restored the second sentence ("Each agent
+  carries its own model, capabilities, budget and guardrails") that was
+  truncated during the bridge port.
+
+No JS, no CSS, no functional behaviour changes — every Scrun script and
+stylesheet under `assets/scrun/` is already byte-identical to the design
+bundle, so this release only re-aligns the shell markup.
+
 ## [1.0.71] — 2026-06-02
 
 ### Fixed — Dashboard UI
