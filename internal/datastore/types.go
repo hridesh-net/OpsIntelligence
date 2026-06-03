@@ -333,6 +333,25 @@ type CardAttachment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// KanbanWebhook is an outbound HTTP destination notified of run-lifecycle
+// events. board_id NULL means "fire for all boards"; otherwise scoped to
+// the named board. Events is a comma-separated allow-list of event
+// names ("run.started", "run.completed", "run.error", ...). Secret is
+// the HMAC-SHA256 signing key the delivery worker uses for the
+// X-OpsIntel-Signature header on every POST.
+type KanbanWebhook struct {
+	ID            string     `json:"id"`
+	BoardID       string     `json:"board_id,omitempty"`
+	URL           string     `json:"url"`
+	Secret        string     `json:"secret,omitempty"` // omitted from list responses by the handler
+	Events        string     `json:"events"`
+	Active        bool       `json:"active"`
+	CreatedAt     time.Time  `json:"created_at"`
+	LastStatus    int        `json:"last_status,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	LastDelivery  *time.Time `json:"last_delivery,omitempty"`
+}
+
 // Persona is a named system prompt lens.
 type Persona struct {
 	ID           string    `json:"id"`

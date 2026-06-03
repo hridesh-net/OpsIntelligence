@@ -29,7 +29,11 @@ package gateway
 //   POST   /api/v1/personas                 Create persona
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -223,6 +227,10 @@ func (s *AuthService) HandleKanban(w http.ResponseWriter, r *http.Request) {
 		s.handleAutopilotList(w, r)
 	case strings.HasPrefix(path, "autopilot/"):
 		s.handleAutopilotDetail(w, r, strings.TrimPrefix(path, "autopilot/"))
+	case path == "kanban/webhooks" || path == "kanban/webhooks/":
+		s.handleKanbanWebhooks(w, r)
+	case strings.HasPrefix(path, "kanban/webhooks/"):
+		s.handleKanbanWebhookDetail(w, r, strings.TrimPrefix(path, "kanban/webhooks/"))
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -1764,6 +1772,216 @@ func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
+}
+
+// ── Kanban webhooks ───────────────────────────────────────────────────
+
+type createWebhookRequest struct {
+	BoardID string `json:"board_id,omitempty"` // empty = all boards
+	URL     string `json:"url"`
+	Secret  string `json:"secret"`
+	Events  string `json:"events"` // CSV, "*" for all
+	Active  *bool  `json:"active,omitempty"`
+}
+
+type updateWebhookRequest struct {
+	BoardID *string `json:"board_id,omitempty"`
+	URL     *string `json:"url,omitempty"`
+	Secret  *string `json:"secret,omitempty"`
+	Events  *string `json:"events,omitempty"`
+	Active  *bool   `json:"active,omitempty"`
+}
+
+// handleKanbanWebhooks serves GET / POST /api/v1/kanban/webhooks.
+func (s *AuthService) handleKanbanWebhooks(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFrom(r.Context())
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		hooks, err := s.Store.KanbanWebhooks().List(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Strip the secret from list output — operators rotate via PUT
+		// and the secret never needs to leave the server again.
+		for i := range hooks {
+			hooks[i].Secret = ""
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"webhooks": hooks})
+	case http.MethodPost:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		var req createWebhookRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.URL == "" || req.Secret == "" || req.Events == "" {
+			writeJSONError(w, http.StatusBadRequest, "url, secret and events required")
+			return
+		}
+		active := true
+		if req.Active != nil {
+			active = *req.Active
+		}
+		hook := &datastore.KanbanWebhook{
+			BoardID: req.BoardID,
+			URL:     req.URL,
+			Secret:  req.Secret,
+			Events:  req.Events,
+			Active:  active,
+		}
+		if err := s.Store.KanbanWebhooks().Create(r.Context(), hook); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Echo the secret back exactly once on create — operators need
+		// it to verify deliveries from their side.
+		writeJSON(w, http.StatusCreated, hook)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleKanbanWebhookDetail serves GET / PUT / DELETE on a single
+// /api/v1/kanban/webhooks/{id}, plus POST /test which fires a
+// `webhook.ping` synchronously to verify reachability.
+func (s *AuthService) handleKanbanWebhookDetail(w http.ResponseWriter, r *http.Request, suffix string) {
+	parts := strings.SplitN(suffix, "/", 3)
+	id := parts[0]
+	if id == "" {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	p := auth.PrincipalFrom(r.Context())
+
+	hook, err := s.Store.KanbanWebhooks().Get(r.Context(), id)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "webhook not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Sub-path /test
+	if len(parts) >= 2 && (parts[1] == "test" || parts[1] == "test/") {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		s.testWebhook(r.Context(), hook)
+		// Re-read so the response reflects the just-updated last_status.
+		updated, _ := s.Store.KanbanWebhooks().Get(r.Context(), id)
+		if updated != nil {
+			updated.Secret = ""
+			writeJSON(w, http.StatusOK, updated)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		hook.Secret = ""
+		writeJSON(w, http.StatusOK, hook)
+	case http.MethodPut:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		var req updateWebhookRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.BoardID != nil {
+			hook.BoardID = *req.BoardID
+		}
+		if req.URL != nil {
+			hook.URL = *req.URL
+		}
+		if req.Secret != nil {
+			hook.Secret = *req.Secret
+		}
+		if req.Events != nil {
+			hook.Events = *req.Events
+		}
+		if req.Active != nil {
+			hook.Active = *req.Active
+		}
+		if err := s.Store.KanbanWebhooks().Update(r.Context(), hook); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		hook.Secret = ""
+		writeJSON(w, http.StatusOK, hook)
+	case http.MethodDelete:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		if err := s.Store.KanbanWebhooks().Delete(r.Context(), id); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// testWebhook delivers a synthetic webhook.ping inline so the operator
+// gets immediate feedback. Uses the same signing path as the worker.
+func (s *AuthService) testWebhook(ctx context.Context, hook *datastore.KanbanWebhook) {
+	body, _ := json.Marshal(map[string]any{
+		"event":        "webhook.ping",
+		"webhook_id":   hook.ID,
+		"delivered_at": time.Now().UTC(),
+	})
+	delivery := uuid.NewString()
+	mac := hmac.New(sha256.New, []byte(hook.Secret))
+	mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hook.URL, bytes.NewReader(body))
+	if err != nil {
+		_ = s.Store.KanbanWebhooks().UpdateDeliveryStatus(ctx, hook.ID, 0, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "opsintelligence-kanban-webhook/1")
+	req.Header.Set("X-OpsIntel-Event", "webhook.ping")
+	req.Header.Set("X-OpsIntel-Delivery", delivery)
+	req.Header.Set("X-OpsIntel-Signature", sig)
+	resp, err := client.Do(req)
+	if err != nil {
+		_ = s.Store.KanbanWebhooks().UpdateDeliveryStatus(ctx, hook.ID, 0, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	errMsg := ""
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	_ = s.Store.KanbanWebhooks().UpdateDeliveryStatus(ctx, hook.ID, resp.StatusCode, errMsg)
 }
 
 // ── Workflow bulk save ────────────────────────────────────────────────

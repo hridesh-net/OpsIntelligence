@@ -663,5 +663,6 @@ func (f *sessionStoreFacade) PendingDecisions() datastore.PendingDecisionRepo   
 func (f *sessionStoreFacade) BoardAgents() datastore.BoardAgentRepo              { return f.store.BoardAgents() }
 func (f *sessionStoreFacade) Personas() datastore.PersonaRepo                    { return f.store.Personas() }
 func (f *sessionStoreFacade) CardAttachments() datastore.CardAttachmentRepo      { return f.store.CardAttachments() }
+func (f *sessionStoreFacade) KanbanWebhooks() datastore.KanbanWebhookRepo        { return f.store.KanbanWebhooks() }
 
 var _ datastore.Store = (*sessionStoreFacade)(nil)

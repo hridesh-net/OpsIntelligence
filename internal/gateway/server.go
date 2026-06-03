@@ -317,6 +317,8 @@ func (s *Server) Start() error {
 		mux.Handle("/api/v1/personas/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
 		mux.Handle("/api/v1/autopilot", phase2OrLegacyAuth(s.AuthService.HandleKanban))
 		mux.Handle("/api/v1/autopilot/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/kanban/webhooks", phase2OrLegacyAuth(s.AuthService.HandleKanban))
+		mux.Handle("/api/v1/kanban/webhooks/", phase2OrLegacyAuth(s.AuthService.HandleKanban))
 	}
 
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────

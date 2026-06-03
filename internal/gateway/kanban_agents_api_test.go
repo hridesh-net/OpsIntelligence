@@ -26,6 +26,8 @@ func mountKanban(svc *gateway.AuthService, mux *http.ServeMux) {
 	mux.Handle("/api/v1/boards/", h)
 	mux.Handle("/api/v1/runs/", h)
 	mux.Handle("/api/v1/personas", h)
+	mux.Handle("/api/v1/kanban/webhooks", h)
+	mux.Handle("/api/v1/kanban/webhooks/", h)
 }
 
 // doReqDecode is doReq + decode of the JSON body into a map.

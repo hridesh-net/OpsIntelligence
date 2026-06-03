@@ -98,6 +98,7 @@ func (s *Store) PendingDecisions() datastore.PendingDecisionRepo    { return &pe
 func (s *Store) BoardAgents() datastore.BoardAgentRepo              { return &boardAgentRepo{s: s} }
 func (s *Store) Personas() datastore.PersonaRepo                    { return &personaRepo{s: s} }
 func (s *Store) CardAttachments() datastore.CardAttachmentRepo      { return &cardAttachmentRepo{s: s} }
+func (s *Store) KanbanWebhooks() datastore.KanbanWebhookRepo        { return &kanbanWebhookRepo{s: s} }
 
 // ─── shared helpers ─────────────────────────────────────────────────
 

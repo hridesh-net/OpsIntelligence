@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.78] — 2026-06-03
+
+### Added — Outbound kanban webhooks (Release E of the kanbots-parity wave)
+
+New `kanban_webhooks` table (migration 0005, sqlite + postgres) stores
+operator-registered HTTP destinations. A delivery worker in
+`internal/kanban/webhooks` subscribes globally to `events.Bus`
+(new `Bus.SubscribeAll()` method) and POSTs each matching event to
+every active webhook, signing the body with HMAC-SHA256 keyed by the
+hook's `secret` and stamping:
+
+- `X-OpsIntel-Event` — event name (`run.completed`, `run.error`, etc.)
+- `X-OpsIntel-Delivery` — unique per-attempt UUID
+- `X-OpsIntel-Signature` — `sha256=<hex>` over the JSON body
+
+Event names derive from `CardRunEvent.Kind` / `.Phase`:
+`lifecycle` → `run.<phase>`, `error` → `run.error`, everything else
+→ `run.event`. Subscribers can filter via a CSV list in
+`kanban_webhooks.events` or `*` for everything. Delivery retries 3×
+with exponential backoff; `last_status` / `last_error` / `last_delivery`
+flow back into the row so a list endpoint can show health.
+
+Endpoints (`/api/v1/kanban/webhooks*`, all behind the existing
+`phase2OrLegacyAuth` wrapper):
+
+- `GET /api/v1/kanban/webhooks` — list (omits `secret`)
+- `POST /api/v1/kanban/webhooks` — create (echoes `secret` once)
+- `GET /api/v1/kanban/webhooks/{id}` — single
+- `PUT /api/v1/kanban/webhooks/{id}` — partial update (rotate secret,
+  toggle active, change event filter)
+- `DELETE /api/v1/kanban/webhooks/{id}`
+- `POST /api/v1/kanban/webhooks/{id}/test` — fires a synchronous
+  `webhook.ping` so the operator gets immediate reachability feedback
+
+Tests: `kanban_webhooks_api_test.go` covers full CRUD + secret
+omission in list output + the /test endpoint asserting the
+HMAC-SHA256 signature lines up byte-for-byte.
+
+No UI surface yet; CLI integration follows in a later wave.
+
+main.go v1.0.77 -> v1.0.78; Cargo workspace 0.2.50 -> 0.2.51.
+
 ## [1.0.77] — 2026-06-03
 
 ### Added — Bulk Workflow Builder save (Release D of the kanbots-parity wave)

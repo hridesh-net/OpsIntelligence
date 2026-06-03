@@ -21,6 +21,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/kanban/cost"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/dispatcher"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/events"
+	"github.com/opsintelligence/opsintelligence/internal/kanban/webhooks"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/githubmode"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/preview"
 	"github.com/opsintelligence/opsintelligence/internal/kanban/sentry"
@@ -280,6 +281,11 @@ func attachKanbanToGateway(cfg *config.Config, reg *provider.Registry, srv *gate
 	svc.Events = bus
 	srv.AuthService.Kanban = svc
 	srv.AuthService.KanbanEvents = bus
+
+	// Webhook delivery worker subscribes globally to the bus and POSTs
+	// matching events to every registered kanban_webhooks row.
+	whWorker := webhooks.NewWorker(store, bus)
+	whWorker.Start(context.Background())
 	// Card attachments live next to the worktrees so they share the same
 	// state-dir-scoped lifecycle (cleaned up when the board is deleted /
 	// state-dir purged).

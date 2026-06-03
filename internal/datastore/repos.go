@@ -56,6 +56,7 @@ type Store interface {
 	BoardAgents() BoardAgentRepo
 	Personas() PersonaRepo
 	CardAttachments() CardAttachmentRepo
+	KanbanWebhooks() KanbanWebhookRepo
 }
 
 // BoardRepo manages Board rows.
@@ -110,6 +111,16 @@ type PendingDecisionRepo interface {
 	Dismiss(ctx context.Context, id string) error
 	ListByRun(ctx context.Context, runID string) ([]PendingDecision, error)
 	ListByCard(ctx context.Context, cardID string) ([]PendingDecision, error)
+}
+
+// KanbanWebhookRepo manages KanbanWebhook rows.
+type KanbanWebhookRepo interface {
+	Create(ctx context.Context, w *KanbanWebhook) error
+	Get(ctx context.Context, id string) (*KanbanWebhook, error)
+	Update(ctx context.Context, w *KanbanWebhook) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]KanbanWebhook, error)
+	UpdateDeliveryStatus(ctx context.Context, id string, status int, errMsg string) error
 }
 
 // BoardAgentRepo manages BoardAgent rows.
