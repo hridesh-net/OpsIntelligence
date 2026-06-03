@@ -356,7 +356,14 @@ func (s *AuthService) handleBoards(w http.ResponseWriter, r *http.Request) {
 			board.Config["column_overrides"] = overrides
 			_ = s.Store.Boards().Update(r.Context(), board)
 		}
-		// Optional: register agents in one shot.
+		// Default-agent fallback: a missing `agents` field falls back to
+		// the preset's starter pool so the board boots dispatchable.
+		// Explicit `"agents": []` (non-nil but empty) is an opt-out and
+		// is preserved as-is.
+		if req.Agents == nil {
+			req.Agents = presetAgents(req.Preset)
+		}
+		// Register agents in one shot.
 		for _, a := range req.Agents {
 			if a.Name == "" || a.AgentType == "" {
 				continue
@@ -1671,6 +1678,51 @@ func presetColumns(slug string) []wizardColumn {
 	}
 	// Unknown preset → fall back to default so the board still seeds.
 	return workflowPresets[0].Columns
+}
+
+// presetAgents returns a small starter pool keyed by preset slug so a
+// board created via CLI / API without an explicit `agents:[]` list
+// arrives with something dispatchable instead of zero agents. The
+// agents map to drivers registered in attachKanbanToGateway, so they
+// only actually work if the matching CLI is on PATH — that's a runtime
+// check the dispatcher already does; here we just seed the rows.
+//
+// Operators who want to start dry can pass `"agents": []` with the
+// _explicit_ intent to opt out: an empty slice is preserved by the
+// caller, only a missing/nil one falls back to the preset.
+func presetAgents(slug string) []createAgentRequest {
+	switch slug {
+	case "research":
+		return []createAgentRequest{
+			{Name: "Claude Code · researcher", AgentType: "claude-code", IsDefault: true,
+				Config: map[string]any{"role": "Lead researcher", "autonomy": "supervised"}},
+			{Name: "Gemini · scout", AgentType: "gemini",
+				Config: map[string]any{"role": "Web scout", "autonomy": "supervised"}},
+		}
+	case "support":
+		return []createAgentRequest{
+			{Name: "Claude Code · support", AgentType: "claude-code", IsDefault: true,
+				Config: map[string]any{"role": "Support engineer", "autonomy": "supervised"}},
+			{Name: "Codex · triage", AgentType: "codex",
+				Config: map[string]any{"role": "Triage", "autonomy": "supervised"}},
+		}
+	case "ops":
+		return []createAgentRequest{
+			{Name: "Claude Code · SRE", AgentType: "claude-code", IsDefault: true,
+				Config: map[string]any{"role": "Site reliability engineer", "autonomy": "supervised"}},
+			{Name: "Codex · infra", AgentType: "codex",
+				Config: map[string]any{"role": "Infra engineer", "autonomy": "supervised"}},
+		}
+	default: // "default", "dev", and any unknown slug
+		return []createAgentRequest{
+			{Name: "Claude Code", AgentType: "claude-code", IsDefault: true,
+				Config: map[string]any{"role": "Lead engineer", "autonomy": "supervised"}},
+			{Name: "Codex", AgentType: "codex",
+				Config: map[string]any{"role": "Pair programmer", "autonomy": "supervised"}},
+			{Name: "Gemini", AgentType: "gemini",
+				Config: map[string]any{"role": "Reviewer", "autonomy": "supervised"}},
+		}
+	}
 }
 
 func hasColumnOverrides(cols []wizardColumn) bool {

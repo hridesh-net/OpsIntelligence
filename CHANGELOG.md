@@ -6,6 +6,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.76] — 2026-06-03
+
+### Added — Default-agent seeding on board create (Release C of the kanbots-parity wave)
+
+`POST /api/v1/boards` already fell back to `presetColumns(preset)` when
+the caller passed no `columns` field. Agents now get the matching
+treatment: a request that omits `agents` entirely is seeded with the
+preset's starter pool from a new `presetAgents(slug)` helper in
+`internal/gateway/kanban_api.go`.
+
+- **default / dev**: Claude Code · Codex · Gemini
+- **research**: Claude Code (researcher) · Gemini (scout)
+- **support**: Claude Code (support) · Codex (triage)
+- **ops**: Claude Code (SRE) · Codex (infra)
+
+Each agent rides one of the 11 drivers already registered in
+`attachKanbanToGateway`. Whether a given driver actually runs depends
+on the CLI being on PATH — that's the dispatcher's runtime check, this
+release just guarantees the rows exist.
+
+**Opt-out**: sending `"agents": []` (an explicit non-nil empty array)
+is preserved as-is and creates a board with zero agents, matching the
+spirit of the existing `"columns": []` opt-out. Only a missing /
+null `agents` field triggers the fallback.
+
+CLI: `opsintelligence kanban boards create` already POSTs without an
+`agents` field, so it now ships starter agents too — no CLI flag
+changes needed.
+
+Tests: `kanban_seed_test.go` covers the happy path, the explicit-empty
+opt-out and the four preset variations (each must include a
+`claude-code` agent).
+
+main.go v1.0.75 -> v1.0.76; Cargo workspace 0.2.48 -> 0.2.49.
+
 ## [1.0.75] — 2026-06-03
 
 ### Added — Live SSE run-event stream (Release B of the kanbots-parity wave)
