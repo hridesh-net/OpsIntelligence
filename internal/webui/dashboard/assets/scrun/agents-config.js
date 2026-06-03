@@ -150,11 +150,45 @@ function wireAgentConfig(){
   document.getElementById("acKnowAdd").onclick=()=>{ acDraft.knowledge.push(["New source","linked"]); renderAgentConfig(); };
 }
 
-function saveAgentConfig(){
+async function saveAgentConfig(){
+  // Stage the changes locally so the UI updates feel instant.
   Object.assign(DB.AGENTS[acKey], acDraft);
   const nm=DB.AGENTS[acKey].name;
+
+  // In live mode persist to the server. The agent map is keyed by
+  // server id (set in api.js#loadFirstBoard), so acKey is the id we
+  // PUT against. acDraft carries the editable fields; the rest of
+  // BoardAgent (id, board_id, created_at) is owned by the server.
+  const demoMode = localStorage.getItem("scrunDemoMode") === "1";
+  if (!demoMode && window.ScrunAPI && window.currentBoardID) {
+    const cfgPatch = {
+      role:         acDraft.role,
+      instructions: acDraft.instructions,
+      capabilities: acDraft.caps,
+      knowledge:    acDraft.knowledge,
+      memory:       acDraft.memory,
+      autonomy:     acDraft.autonomy,
+      spend_cap_daily: acDraft.spendCap,
+      max_parallel: acDraft.maxParallel,
+      model:        acDraft.model,
+      provider:     acDraft.provider,
+      color:        acDraft.color,
+      ini:          acDraft.ini,
+    };
+    try {
+      await window.ScrunAPI.updateAgent(window.currentBoardID, acKey, {
+        name: acDraft.name,
+        config: cfgPatch,
+      });
+      toast(nm+" configuration saved");
+    } catch (e) {
+      toast("Save failed: " + (e && e.message ? e.message : "network error"));
+    }
+  } else {
+    toast(nm+" configuration saved");
+  }
+
   closeAgentConfig();
   if(STATE.screen==="agents") renderAgents();
   if(STATE.screen==="board") renderBoard();
-  toast(nm+" configuration saved");
 }

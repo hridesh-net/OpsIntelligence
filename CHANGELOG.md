@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.74] — 2026-06-03
+
+### Added — Board-agent configuration write-back (Release A of the kanbots-parity wave)
+
+`GET / PUT / DELETE /api/v1/boards/{id}/agents/{aid}` are now wired in
+`internal/gateway/kanban_api.go`, exposing the `BoardAgentRepo.Update` /
+`.Delete` methods that already existed on the store layer.
+
+- **PUT** is a partial update. Top-level pointer fields (`name`,
+  `agent_type`, `provider_id`, `is_default`, `is_active`) apply only when
+  present; the `config` map is merged key-by-key into the agent's
+  existing config (passing `null` for a key deletes it, matching the
+  card-metadata convention).
+- **DELETE** returns `409` when the agent has a non-terminal `card_runs`
+  row (`queued` / `running` / `awaiting` / `paused`), so an in-flight
+  dispatch can't lose its agent reference. Added an `AgentID` filter
+  field to `datastore.CardRunFilter` to make that check cheap.
+
+Scrun's Agent Manager modal now persists role, instructions, capabilities,
+memory mode/scope, autonomy, daily spend cap, max parallel, model,
+provider, colour and initials through this PUT. Demo mode (`localStorage.
+scrunDemoMode === "1"`) still saves to the in-memory `DB.AGENTS` only.
+
+main.go v1.0.73 -> v1.0.74; Cargo workspace 0.2.46 -> 0.2.47.
+
 ## [1.0.73] — 2026-06-03
 
 ### Fixed — Empty Scrun board when live board has no columns

@@ -143,6 +143,19 @@ type createAgentRequest struct {
 	IsDefault  bool           `json:"is_default,omitempty"`
 }
 
+// updateAgentRequest is a partial-update body. Top-level pointer fields
+// are applied only when present (non-nil). Config is merged key-by-key
+// into the agent's existing config map — passing a nil value for a key
+// deletes it, matching the convention used by the card metadata path.
+type updateAgentRequest struct {
+	Name       *string        `json:"name,omitempty"`
+	AgentType  *string        `json:"agent_type,omitempty"`
+	ProviderID *string        `json:"provider_id,omitempty"`
+	IsDefault  *bool          `json:"is_default,omitempty"`
+	IsActive   *bool          `json:"is_active,omitempty"`
+	Config     map[string]any `json:"config,omitempty"`
+}
+
 type createPersonaRequest struct {
 	Name         string `json:"name"`
 	Icon         string `json:"icon,omitempty"`
@@ -394,7 +407,11 @@ func (s *AuthService) handleBoardDetail(w http.ResponseWriter, r *http.Request, 
 			s.handleCardDetail(w, r, boardID, parts[2])
 		}
 	case "agents":
-		s.handleBoardAgents(w, r, boardID)
+		if len(parts) == 2 || parts[2] == "" {
+			s.handleBoardAgents(w, r, boardID)
+		} else {
+			s.handleSingleBoardAgent(w, r, boardID, parts[2])
+		}
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -1046,6 +1063,119 @@ func (s *AuthService) handleBoardAgents(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		writeJSON(w, http.StatusCreated, agent)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleSingleBoardAgent serves GET / PUT / DELETE on
+// /api/v1/boards/{id}/agents/{aid}. PUT is a partial update: top-level
+// pointer fields are honored when present and Config is merged key-by-key
+// into the existing config map (nil-value deletes the key). DELETE is
+// blocked when the agent still has non-terminal card_runs so we don't
+// orphan an in-flight dispatch.
+func (s *AuthService) handleSingleBoardAgent(w http.ResponseWriter, r *http.Request, boardID, agentID string) {
+	p := auth.PrincipalFrom(r.Context())
+
+	agent, err := s.Store.BoardAgents().Get(r.Context(), agentID)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "agent not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if agent.BoardID != boardID {
+		writeJSONError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		writeJSON(w, http.StatusOK, agent)
+
+	case http.MethodPut:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		var req updateAgentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Name != nil {
+			if *req.Name == "" {
+				writeJSONError(w, http.StatusBadRequest, "name cannot be empty")
+				return
+			}
+			agent.Name = *req.Name
+		}
+		if req.AgentType != nil {
+			if *req.AgentType == "" {
+				writeJSONError(w, http.StatusBadRequest, "agent_type cannot be empty")
+				return
+			}
+			agent.AgentType = *req.AgentType
+		}
+		if req.ProviderID != nil {
+			agent.ProviderID = *req.ProviderID
+		}
+		if req.IsDefault != nil {
+			agent.IsDefault = *req.IsDefault
+		}
+		if req.IsActive != nil {
+			agent.IsActive = *req.IsActive
+		}
+		if req.Config != nil {
+			if agent.Config == nil {
+				agent.Config = map[string]any{}
+			}
+			for k, v := range req.Config {
+				if v == nil {
+					delete(agent.Config, k)
+				} else {
+					agent.Config[k] = v
+				}
+			}
+		}
+		if err := s.Store.BoardAgents().Update(r.Context(), agent); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, agent)
+
+	case http.MethodDelete:
+		if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+			writeJSONError(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		// Refuse to delete an agent that's mid-run. Terminal statuses
+		// (completed / error / stopped) don't count.
+		for _, st := range []string{"queued", "running", "awaiting", "paused"} {
+			runs, err := s.Store.CardRuns().List(r.Context(), datastore.CardRunFilter{
+				AgentID: agentID, Status: st, Limit: 1,
+			})
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if len(runs) > 0 {
+				writeJSONError(w, http.StatusConflict, "agent has active runs; stop them first")
+				return
+			}
+		}
+		if err := s.Store.BoardAgents().Delete(r.Context(), agentID); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

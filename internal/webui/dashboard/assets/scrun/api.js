@@ -29,6 +29,38 @@ const ScrunAPI = (function () {
     return j.agents || [];
   }
 
+  async function getAgent(boardID, agentID) {
+    return jget(`/boards/${encodeURIComponent(boardID)}/agents/${encodeURIComponent(agentID)}`);
+  }
+
+  async function updateAgent(boardID, agentID, patch) {
+    const r = await fetch(
+      `${BASE}/boards/${encodeURIComponent(boardID)}/agents/${encodeURIComponent(agentID)}`,
+      {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify(patch),
+      });
+    if (!r.ok) throw new Error(`Update agent failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function deleteAgent(boardID, agentID) {
+    const r = await fetch(
+      `${BASE}/boards/${encodeURIComponent(boardID)}/agents/${encodeURIComponent(agentID)}`,
+      {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: csrfHeaders(),
+      });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {}
+      throw new Error(`Delete agent failed: ${msg}`);
+    }
+  }
+
   // ── Mapping helpers ────────────────────────────────────────────────
 
   // Stable two-letter initials from agent name.
@@ -70,13 +102,18 @@ const ScrunAPI = (function () {
   // BoardColumn (+ board.config.column_overrides) → Scrun stage.
   function mapColumn(col, override) {
     const ov = override || {};
+    // Gate is stored at the column level; override can still override it
+    // Backend stores: "none", "human", "auto-validate"
+    let gate = ov.gate || col.gate || null;
+    if (gate === "none" || gate === "") gate = null;
+    if (gate === "auto-validate") gate = "auto";
     return {
       id: col.id,
       name: col.name,
       dot: col.color || "#586675",
       wip: col.wip_limit || 0,
-      gate: ov.gate || null,
-      rules: ov.automation || { autoAssign: null, autoValidate: false },
+      gate: gate,
+      rules: ov.automation || { autoAssign: null, autoValidate: gate === "auto" },
       _serverId: col.id,
     };
   }
@@ -204,6 +241,136 @@ const ScrunAPI = (function () {
     }
   }
 
-  return { listBoards, getBoard, listAgents, loadFirstBoard };
+  function csrfHeaders() {
+    const match = document.cookie.match(/(?:^|; )opi_csrf=([^;]*)/);
+    const tok = match ? decodeURIComponent(match[1]) : "";
+    return tok ? { "X-CSRF-Token": tok } : {};
+  }
+
+  async function moveCard(boardID, cardID, columnID) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/cards/${encodeURIComponent(cardID)}/move`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify({ column_id: columnID }),
+    });
+    if (!r.ok) throw new Error(`Move card failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function createCard(boardID, card) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/cards`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify(card),
+    });
+    if (!r.ok) throw new Error(`Create card failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function updateCard(boardID, cardID, cardUpdates) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/cards/${encodeURIComponent(cardID)}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify(cardUpdates),
+    });
+    if (!r.ok) throw new Error(`Update card failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function deleteCard(boardID, cardID) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/cards/${encodeURIComponent(cardID)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: csrfHeaders(),
+    });
+    if (!r.ok) throw new Error(`Delete card failed: ${r.statusText}`);
+  }
+
+  async function dispatchAgent(boardID, cardID, agentID, personaID, model, slashCommand) {
+    const r = await fetch(`${BASE}/boards/${encodeURIComponent(boardID)}/cards/${encodeURIComponent(cardID)}/dispatch`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify({
+        agent_id: agentID || undefined,
+        persona_id: personaID || undefined,
+        model: model || undefined,
+        slash_command: slashCommand || undefined,
+      }),
+    });
+    if (!r.ok) throw new Error(`Dispatch agent failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function stopRun(runID) {
+    const r = await fetch(`${BASE}/runs/${encodeURIComponent(runID)}/stop`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: csrfHeaders(),
+    });
+    if (!r.ok) throw new Error(`Stop run failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function answerDecision(runID, decisionID, answer) {
+    const r = await fetch(`${BASE}/runs/${encodeURIComponent(runID)}/decisions/${encodeURIComponent(decisionID)}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify({ answer }),
+    });
+    if (!r.ok) throw new Error(`Answer decision failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function createBoard(boardData) {
+    const r = await fetch(`${BASE}/boards`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...csrfHeaders() },
+      body: JSON.stringify(boardData),
+    });
+    if (!r.ok) throw new Error(`Create board failed: ${r.statusText}`);
+    return r.json();
+  }
+
+  async function getCardDetails(boardID, cardID) {
+    const j = await jget(`/boards/${encodeURIComponent(boardID)}/cards/${encodeURIComponent(cardID)}`);
+    return j;
+  }
+
+  async function getRunDetails(runID) {
+    const j = await jget(`/runs/${encodeURIComponent(runID)}`);
+    return j;
+  }
+
+  async function listPersonas() {
+    const j = await jget("/personas");
+    return j.personas || [];
+  }
+
+  return {
+    listBoards,
+    getBoard,
+    listAgents,
+    getAgent,
+    updateAgent,
+    deleteAgent,
+    loadFirstBoard,
+    moveCard,
+    createCard,
+    updateCard,
+    deleteCard,
+    dispatchAgent,
+    stopRun,
+    answerDecision,
+    createBoard,
+    getCardDetails,
+    getRunDetails,
+    listPersonas,
+  };
 })();
 window.ScrunAPI = ScrunAPI;

@@ -366,10 +366,11 @@ type BoardCardFilter struct {
 
 // CardRunFilter parameterises CardRunRepo.List.
 type CardRunFilter struct {
-	CardID string
-	Status string
-	Limit  int
-	Offset int
+	CardID  string
+	AgentID string
+	Status  string
+	Limit   int
+	Offset  int
 }
 
 // CardRunEventFilter parameterises CardRunEventRepo.List.

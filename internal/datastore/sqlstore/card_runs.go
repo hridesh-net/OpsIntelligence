@@ -56,6 +56,10 @@ func (r *cardRunRepo) List(ctx context.Context, f datastore.CardRunFilter) ([]da
 		where = append(where, `card_id = ?`)
 		args = append(args, f.CardID)
 	}
+	if f.AgentID != "" {
+		where = append(where, `agent_id = ?`)
+		args = append(args, f.AgentID)
+	}
 	if f.Status != "" {
 		where = append(where, `status = ?`)
 		args = append(args, f.Status)
