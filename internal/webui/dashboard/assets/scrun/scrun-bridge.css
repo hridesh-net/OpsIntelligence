@@ -1,0 +1,163 @@
+/* scrun-bridge.css — make the embedded Scrun shell co-exist with the
+   OpsIntelligence dashboard.
+
+   Design principle (matches /Scrun/scrun.css verbatim):
+     - body { overflow: hidden; height: 100% }   → page never scrolls
+     - .app { height: 100vh; display: flex }     → row: rail | main
+     - .main { flex: 1; display: flex; column }  → topbar / strip / screen-wrap
+     - .screen-wrap { flex: 1; overflow: hidden }
+     - .board { overflow-x: auto; overflow-y: hidden }
+     - .col-body { overflow-y: auto }            → only inner scrolls
+
+   We only override what's needed to embed Scrun inside the dashboard's
+   <main class="content"> grid cell, plus a topbar layout fix because
+   the dashboard's topbar holds extra buttons that the original Scrun
+   didn't (.top-actions with theme + New Task).
+
+   When the user leaves /boards the .scrun-active class is removed and
+   the dashboard returns to its normal scrolling layout. */
+
+/* ─── Critical fix: every flex descendant that scrolls needs
+   min-height:0 / min-width:0 so the flex algorithm doesn't
+   silently refuse to shrink and disable overflow:auto.
+   This affects .board, .sbody, .feed-main, .feed-side, .lr-body,
+   .activity-host, .flow, .live-rail and every .col. ─── */
+
+/* ─── Non-Scrun pages: never let our overrides leak ─── */
+body:not(.scrun-active) {
+  overflow: visible;
+  height: auto;
+}
+
+/* ─── Dashboard chrome hide ─── */
+body.scrun-active .sidebar { display: none !important; }
+body.app-page.scrun-active,
+body.scrun-active.app-page { grid-template-columns: 1fr !important; }
+body.scrun-active .content {
+  grid-column: 1 / -1 !important;
+  padding: 0 !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+body.scrun-active .content-header { display: none !important; }
+body.scrun-active main.content > #toast { z-index: 10000; }
+/* Hide every dashboard sibling view so a routing miss can't leak a
+   light-bg card or panel into the Scrun mount. */
+body.scrun-active main.content > .view:not(#view-boards) { display: none !important; }
+body.scrun-active main.content > .cmd-palette-backdrop.hidden { display: none !important; }
+
+/* ─── Body locked to viewport (matches original Scrun) ─── */
+body.scrun-active,
+body.scrun-active.app-page {
+  overflow: hidden !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  overscroll-behavior: none;
+}
+
+/* ─── Scrun mount becomes its own viewport ─── */
+#view-boards.scrun-mount {
+  padding: 0;
+  margin: 0;
+  display: block;
+  position: relative;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+#view-boards .app { height: 100%; }
+
+/* ─── TOPBAR — pin to 56px single row.
+   The dashboard's Scrun mount has more controls than the original Scrun
+   (.top-actions adds theme switch + "+ New Task"). Without nowrap the
+   topbar wraps to 3 rows × 56px and pushes those buttons offscreen,
+   also blowing .app past 100vh and breaking the inner scroll chain. */
+body.scrun-active .topbar {
+  flex-wrap: nowrap !important;
+  height: 56px !important;
+  min-height: 56px !important;
+  max-height: 56px !important;
+  padding: 0 18px !important;
+  align-items: center;
+  overflow: hidden;
+  gap: 14px;
+}
+body.scrun-active .topbar > * { flex-shrink: 1; min-width: 0; }
+body.scrun-active .topbar .search { flex: 1 1 220px; min-width: 160px; }
+body.scrun-active .topbar #boardToolbar {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+body.scrun-active .topbar #boardToolbar::-webkit-scrollbar { height: 4px; }
+body.scrun-active .topbar #boardToolbar::-webkit-scrollbar-thumb { background: var(--border-strong, #cbd5e1); border-radius: 2px; }
+body.scrun-active .topbar #boardToolbar > * { flex: 0 0 auto; }
+/* .top-actions holds the theme switch + "+ New Task" — pinned right. */
+body.scrun-active .topbar .top-actions {
+  display: flex !important;
+  flex: 0 0 auto !important;
+  visibility: visible !important;
+  margin-left: auto;
+  gap: 10px;
+  align-items: center;
+}
+body.scrun-active .topbar .top-actions > * { flex: none; }
+body.scrun-active .topbar #screenTitleWrap:empty,
+body.scrun-active .topbar #screenTitleWrap[style*="display: none"] { display: none !important; }
+
+/* ─── Min-height: 0 on every flex item in the scroll chain.
+   Flex items default to min-height: auto (their intrinsic content
+   height), which propagates upward and silently disables overflow:auto
+   on inner containers. Reset on the chain from .app down through every
+   screen and every scrollable panel. */
+body.scrun-active .app,
+body.scrun-active .main,
+body.scrun-active .screen-wrap,
+body.scrun-active .screen,
+body.scrun-active .board-host,
+body.scrun-active #boardHost,
+body.scrun-active .board,
+body.scrun-active .col,
+body.scrun-active .col-body,
+body.scrun-active .sbody,
+body.scrun-active .activity-host,
+body.scrun-active .feed-main,
+body.scrun-active .feed-side,
+body.scrun-active .live-rail,
+body.scrun-active .lr-body,
+body.scrun-active .flow { min-height: 0; min-width: 0; }
+
+/* Board columns must stretch to the board's definite height so that
+   .col-body (flex:1 overflow-y:auto) actually has a constrained box
+   to scroll inside.  align-items:flex-start leaves columns at their
+   intrinsic content height, which breaks overflow on .col-body in
+   Safari / Chrome when the flex chain is deeply nested. */
+body.scrun-active .board { align-items: stretch !important; }
+
+/* Safari trackpad fix: ensure every scrollable region opts into
+   momentum scrolling and stops scroll-events from chaining up to
+   the locked body. */
+body.scrun-active .board,
+body.scrun-active .col-body,
+body.scrun-active .sbody,
+body.scrun-active .feed-main,
+body.scrun-active .feed-side,
+body.scrun-active .lr-body,
+body.scrun-active .flow,
+body.scrun-active .compact,
+body.scrun-active .lanes {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* ─── Setup wizard is server-side already; never show it embedded. */
+#view-boards #setup { display: none !important; }
+
+/* ─── Hide Scrun while CSS / JS are still loading (no FOUC). */
+body:not(.scrun-ready) #view-boards #appRoot { visibility: hidden; }

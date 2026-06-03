@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.71] — 2026-06-02
+
+### Fixed — Dashboard UI
+
+- **Boards nav opened a new tab**: the `#/boards` link in the primary sidebar
+  carried `target="_blank" rel="noopener"`, so clicking Boards opened the
+  hash-route in a second window instead of switching views in the SPA. Removed
+  the target.
+- **Command-palette trigger had no accessible name**: the global search input
+  is a readonly proxy that opens the command palette on focus/click. Added
+  `aria-label="Open command palette"` and `aria-haspopup="dialog"` so screen
+  readers announce it as the dialog trigger it actually is.
+- **Command-palette dialog had no accessible name**: `#cmd-palette-backdrop`
+  declared `role="dialog" aria-modal="true"` but no labelling. Added
+  `aria-label="Command palette"`.
+
 ## [1.0.70] — 2026-06-02
 
 ### Fixed — Boards 500 when any board has NULL team_id / repo_url / repo_path
