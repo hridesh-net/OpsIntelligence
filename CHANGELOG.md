@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.73] — 2026-06-03
+
+### Fixed — Empty Scrun board when live board has no columns
+
+`/dashboard/kanban` (and the embedded `#/boards` view) rendered an empty
+board host when the live board returned from `/api/v1/boards/{id}`
+had zero columns and zero agents — e.g. a board created via the CLI
+or via the API without a `preset`. The Scrun loader was unconditionally
+wiping `DB.WORKFLOW` and `DB.AGENTS` before pushing the (empty) live
+arrays, so the fallback fixtures from `data.js` were lost.
+
+The loader now only replaces `DB.WORKFLOW` / `DB.AGENTS` when the
+server actually returns non-empty arrays. New boards now show the
+default Jira-style starter workflow (Backlog · To Do · In Progress ·
+Testing · Review · Done) which the user can edit in the Workflow
+Builder. Applies to both the initial load and the 5-second live poll.
+
 ## [1.0.72] — 2026-06-02
 
 ### Fixed — Scrun shell parity with canonical design

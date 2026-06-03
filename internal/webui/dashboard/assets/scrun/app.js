@@ -67,7 +67,7 @@ function buildMenus(){
   am.innerHTML=`<div class="mlabel">Filter by agent</div>
     <div class="mi sel" data-agent="all">All agents<span class="ck">✓</span></div>`+
     Object.entries(DB.AGENTS).map(([k,a])=>`<div class="mi" data-agent="${k}"><span class="av" style="background:${a.color}">${a.ini}</span>${a.name}<span class="ck">✓</span></div>`).join("");
-  am.querySelectorAll(".mi").forEach(mi=>mi.onclick=()=>setFilter("agent",mi.dataset.agent,am,"agentBtn"));
+  am.querySelectorAll(".mi").forEach(mi=>mi.onclick=()=>setFilter("agent",mi.dataset.agent||"all",am,"agentBtn"));
 }
 function setFilter(key,val,menu,btnId){
   STATE.filters[key]=val;
@@ -160,6 +160,98 @@ function wireTopbar(){
     if((e.metaKey||e.ctrlKey)&&e.key==="k"){e.preventDefault();document.getElementById("search").focus();} });
 }
 
+let livePollInterval = null;
+async function refreshLiveBoard() {
+  if (!window.currentBoardID) return;
+  try {
+    const detail = await ScrunAPI.getBoard(window.currentBoardID);
+    const agents = await ScrunAPI.listAgents(window.currentBoardID).catch(() => []);
+    
+    // Map them onto DB
+    const resAgents = {};
+    const stats = {};
+    agents.forEach((a, idx) => {
+      resAgents[a.id] = ScrunAPI.mapAgent(a, idx);
+      stats[a.id] = { tasks: 0, success: 0, spend: 0 };
+    });
+    
+    const overrides = (detail.board && detail.board.config && detail.board.config.column_overrides) || {};
+    const columns = (detail.columns || []).map(c => ScrunAPI.mapColumn(c, overrides[c.id]));
+    const cards = (detail.cards || []).map(c => ScrunAPI.mapCard(c));
+    
+    // Update DB in place. Same fallback rule as init(): never wipe
+    // defaults with empty server-side data — that produces a board
+    // with no columns or agents at all.
+    if (Object.keys(resAgents).length) {
+      Object.keys(DB.AGENTS).forEach(k => delete DB.AGENTS[k]);
+      Object.assign(DB.AGENTS, resAgents);
+    }
+
+    if (columns.length) {
+      DB.WORKFLOW.length = 0;
+      columns.forEach(s => DB.WORKFLOW.push(s));
+    }
+
+    DB.CARDS.length = 0;
+    cards.forEach(c => DB.CARDS.push(c));
+    
+    // Update activity list
+    const newActivity = [];
+    cards.forEach(c => {
+      if (c.agents && c.agents[0] && DB.AGENTS[c.agents[0]]) {
+        if (c.status === "running") {
+          newActivity.push({
+            id: c.id,
+            agent: c.agents[0],
+            tag: "run",
+            text: `is running: <b>${c.title}</b>` + (c.branch ? ` (branch: <b>${c.branch}</b>)` : ""),
+            time: c.when
+          });
+        } else if (c.status === "awaiting") {
+          newActivity.push({
+            id: c.id,
+            agent: c.agents[0],
+            tag: "hitl",
+            text: `requires decision: <b>${c.hitl ? c.hitl.q : 'Decision needed'}</b>`,
+            time: c.when
+          });
+        } else if (c.status === "done") {
+          newActivity.push({
+            id: c.id,
+            agent: c.agents[0],
+            tag: "done",
+            text: `completed: <b>${c.title}</b>`,
+            time: c.when
+          });
+        }
+      }
+    });
+    DB.ACTIVITY.length = 0;
+    newActivity.slice(0, 30).forEach(act => DB.ACTIVITY.push(act));
+    renderLiveRail();
+
+    // Update strip & counts
+    updateStrip();
+    
+    // If the active screen needs rendering, do it
+    if (STATE.screen === "board") {
+      renderBoard();
+    } else if (STATE.screen === "workflows") {
+      renderWorkflows();
+    } else if (STATE.screen === "agents") {
+      renderAgents();
+    }
+  } catch (e) {
+    console.warn("Live poll refresh failed", e);
+  }
+}
+
+function startLivePoll() {
+  if (livePollInterval) return;
+  refreshLiveBoard();
+  livePollInterval = setInterval(refreshLiveBoard, 5000);
+}
+
 /* ---------- init ---------- */
 function bootApp(){
   if(window.__booted){ go("board"); renderLiveRail(); return; }
@@ -169,54 +261,98 @@ function bootApp(){
   wireTopbar();
   // restore controls
   document.querySelectorAll("#layoutSeg button").forEach(x=>x.classList.toggle("on",x.dataset.layout===STATE.layout));
-  document.getElementById("simToggle").classList.toggle("paused",!STATE.simRunning);
-  document.getElementById("simLabel").textContent=STATE.simRunning?"Live":"Paused";
+  
+  const demoMode = localStorage.getItem("scrunDemoMode") === "1";
+  if (demoMode) {
+    document.getElementById("simToggle").classList.toggle("paused",!STATE.simRunning);
+    document.getElementById("simLabel").textContent=STATE.simRunning?"Live":"Paused";
+    if (document.getElementById("simToggle")) document.getElementById("simToggle").style.display = "";
+  } else {
+    if (document.getElementById("simToggle")) document.getElementById("simToggle").style.display = "none";
+    STATE.simRunning = false;
+  }
+  
   document.getElementById("liveRail").classList.toggle("hidden",!STATE.showRail);
   document.getElementById("railToggleBtn").classList.toggle("on",STATE.showRail);
   go("board");
   renderLiveRail();
-  if(STATE.simRunning) startSim();
+  
+  if (demoMode) {
+    if(STATE.simRunning) startSim();
+  } else {
+    startLivePoll();
+  }
 }
 
 async function init(){
   loadState();
   syncThemeIco();
-  const setupEl=document.getElementById("setup");
-  if(setupEl) setupEl.classList.remove("on");
-  const root=document.getElementById("appRoot"); if(root) root.style.display="";
 
-  // v1.0.51 live mode: pull the first board from /api/v1/boards and
-  // overwrite DB in place. If no boards exist or the API errors out we
-  // silently fall back to the bundled Demo fixtures so the shell still
-  // renders something. Skip the API call when the user explicitly
-  // toggled Demo mode (localStorage.scrunDemoMode === "1").
   const demoMode = localStorage.getItem("scrunDemoMode") === "1";
-  if (!demoMode && window.ScrunAPI) {
+  if (demoMode) {
+    const saved=(window.loadSetup&&loadSetup());
+    if(saved && saved.done){
+      Object.assign(SU,{name:saved.name,key:saved.key,color:saved.color,desc:saved.desc||"",
+        preset:saved.preset||"dev",stages:saved.stages||null,agents:saved.agents||Object.keys(DB.AGENTS).slice(0,5)});
+      applyBoardConfig();
+      const setupEl = document.getElementById("setup");
+      if (setupEl) setupEl.classList.remove("on");
+      const root = document.getElementById("appRoot"); if (root) root.style.display = "";
+      bootApp();
+    } else {
+      startSetup();
+    }
+    return;
+  }
+
+  // Live Mode
+  if (window.ScrunAPI) {
     try {
       const res = await window.ScrunAPI.loadFirstBoard();
       if (res && res.ok) {
-        // Wipe demo-seeded contents and replace with API data, keeping
-        // helper functions on DB so the rest of Scrun stays happy.
-        Object.keys(DB.AGENTS).forEach(k => delete DB.AGENTS[k]);
-        Object.assign(DB.AGENTS, res.agents);
-        DB.WORKFLOW.length = 0;
-        res.workflow.forEach(s => DB.WORKFLOW.push(s));
+        // Replace demo data with live data. If the live board has no
+        // columns yet (newly-created via CLI / API without a preset),
+        // keep the default Scrun workflow so the user sees Jira-style
+        // starter columns instead of an empty board.
+        if (res.agents && Object.keys(res.agents).length) {
+          Object.keys(DB.AGENTS).forEach(k => delete DB.AGENTS[k]);
+          Object.assign(DB.AGENTS, res.agents);
+        }
+        if (res.workflow && res.workflow.length) {
+          DB.WORKFLOW.length = 0;
+          res.workflow.forEach(s => DB.WORKFLOW.push(s));
+        }
         DB.CARDS.length = 0;
         res.cards.forEach(c => DB.CARDS.push(c));
         if (DB.AGENT_STATS) {
           Object.keys(DB.AGENT_STATS).forEach(k => delete DB.AGENT_STATS[k]);
           Object.assign(DB.AGENT_STATS, res.stats || {});
         }
+        // Clear demo activity seeds — they reference hardcoded agent IDs
+        // that no longer exist in live mode
+        DB.ACTIVITY.length = 0;
         if (res.boardName) {
           document.querySelectorAll("[data-boardname]").forEach(el => {
             el.textContent = res.boardName;
           });
         }
+        window.currentBoardID = localStorage.getItem("scrun.lastBoard");
+        window.personasList = await ScrunAPI.listPersonas().catch(() => []);
+        const setupEl = document.getElementById("setup");
+        if (setupEl) setupEl.classList.remove("on");
+        const root = document.getElementById("appRoot"); if (root) root.style.display = "";
+        bootApp();
+      } else if (res && res.reason === "no-boards") {
+        startSetup();
+      } else {
+        bootApp();
       }
     } catch (e) {
       console.warn("[scrun] live load threw; demo fixtures retained:", e);
+      bootApp();
     }
+  } else {
+    bootApp();
   }
-  bootApp();
 }
 window.scrunMount=function scrunMount(){ return init(); };
