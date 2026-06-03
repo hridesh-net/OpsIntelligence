@@ -57,6 +57,7 @@ type Store interface {
 	Personas() PersonaRepo
 	CardAttachments() CardAttachmentRepo
 	KanbanWebhooks() KanbanWebhookRepo
+	CardComments() CardCommentRepo
 }
 
 // BoardRepo manages Board rows.
@@ -111,6 +112,15 @@ type PendingDecisionRepo interface {
 	Dismiss(ctx context.Context, id string) error
 	ListByRun(ctx context.Context, runID string) ([]PendingDecision, error)
 	ListByCard(ctx context.Context, cardID string) ([]PendingDecision, error)
+}
+
+// CardCommentRepo manages CardComment rows.
+type CardCommentRepo interface {
+	Create(ctx context.Context, c *CardComment) error
+	Get(ctx context.Context, id string) (*CardComment, error)
+	Update(ctx context.Context, c *CardComment) error
+	SoftDelete(ctx context.Context, id string) error
+	List(ctx context.Context, f CardCommentFilter) ([]CardComment, error)
 }
 
 // KanbanWebhookRepo manages KanbanWebhook rows.

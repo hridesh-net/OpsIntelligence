@@ -6,6 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.79] — 2026-06-03
+
+### Added — Card comments + @mentions (Release F of the kanbots-parity wave)
+
+New `card_comments` table (migration 0006, sqlite + postgres) backs a
+per-card threaded conversation. author_kind discriminates `user` vs
+`agent`, `mentions` carries a CSV of resolved IDs so notifications and
+webhooks don't need to re-parse the body, and `deleted_at` enables
+soft-delete that keeps thread structure intact.
+
+Endpoints under `/api/v1/boards/{id}/cards/{cid}/comments`:
+
+- `GET` — list (excludes soft-deleted by default, paginated 100)
+- `POST` — create (CSRF). Body is parsed for `@<token>` against the
+  board's agents (`board_agents.name` lowercased and dash-joined, or
+  `config.slug`); resolved IDs land in `mentions`.
+- `PUT /{coid}` — author-only edit; stamps `edited_at` and re-resolves
+  mentions.
+- `DELETE /{coid}` — author OR `boards.manage` can soft-delete.
+
+`auth.Principal` author identity falls back through `UserID` →
+`apikey:<APIKeyID>` → `system:<Username>` so audit shows the right
+actor even for non-cookie callers.
+
+Tests: `kanban_comments_api_test.go` covers create-with-mention,
+list, edit-by-author, and the soft-delete exclusion behaviour.
+
+main.go v1.0.78 -> v1.0.79; Cargo workspace 0.2.51 -> 0.2.52.
+
 ## [1.0.78] — 2026-06-03
 
 ### Added — Outbound kanban webhooks (Release E of the kanbots-parity wave)

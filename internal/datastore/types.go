@@ -352,6 +352,33 @@ type KanbanWebhook struct {
 	LastDelivery  *time.Time `json:"last_delivery,omitempty"`
 }
 
+// CardComment is one entry in a card's thread. author_kind discriminates
+// between human ("user") and agent ("agent") authors so the UI can pick
+// the right avatar source. Mentions is a CSV of resolved IDs (agent or
+// user); the parser writes them at create time so notifications and
+// webhooks don't have to re-scan the body.
+type CardComment struct {
+	ID         string     `json:"id"`
+	BoardID    string     `json:"board_id"`
+	CardID     string     `json:"card_id"`
+	AuthorID   string     `json:"author_id"`
+	AuthorKind string     `json:"author_kind"` // "user" | "agent"
+	Body       string     `json:"body"`
+	Mentions   string     `json:"mentions,omitempty"` // CSV
+	CreatedAt  time.Time  `json:"created_at"`
+	EditedAt   *time.Time `json:"edited_at,omitempty"`
+	ReplyTo    string     `json:"reply_to,omitempty"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+}
+
+// CardCommentFilter parameterises CardCommentRepo.List.
+type CardCommentFilter struct {
+	CardID         string
+	IncludeDeleted bool
+	Limit          int
+	Offset         int
+}
+
 // Persona is a named system prompt lens.
 type Persona struct {
 	ID           string    `json:"id"`

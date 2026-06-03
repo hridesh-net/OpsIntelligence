@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -753,6 +754,12 @@ func (s *AuthService) handleCardDetail(w http.ResponseWriter, r *http.Request, b
 	sub := ""
 	if len(parts) > 1 {
 		sub = parts[1]
+	}
+
+	// Comments sub-tree gets a dedicated handler.
+	if sub == "comments" || sub == "comments/" || strings.HasPrefix(sub, "comments/") {
+		s.handleCardComments(w, r, boardID, cardID, strings.TrimPrefix(sub, "comments"))
+		return
 	}
 
 	p := auth.PrincipalFrom(r.Context())
@@ -1772,6 +1779,198 @@ func (s *AuthService) handleWorkflowPresets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"presets": workflowPresets})
+}
+
+// ── Card comments ─────────────────────────────────────────────────────
+
+type createCommentRequest struct {
+	Body    string `json:"body"`
+	ReplyTo string `json:"reply_to,omitempty"`
+}
+
+type updateCommentRequest struct {
+	Body string `json:"body"`
+}
+
+// mentionPattern matches @<token> where token is letters / digits / -
+// / _ / . — enough to span agent IDs and usernames without being too
+// permissive. Doesn't try to handle escape sequences.
+var mentionPattern = regexp.MustCompile(`@([A-Za-z0-9._-]+)`)
+
+// resolveMentions scans the comment body for @<token> and returns a
+// CSV of board_agent IDs whose name (or `slug` config) matches. We
+// stay agent-only for v1; user-mention resolution is a future wave
+// because gateway user enumeration needs its own scoping work.
+func (s *AuthService) resolveMentions(ctx context.Context, boardID, body string) string {
+	matches := mentionPattern.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	agents, err := s.Store.BoardAgents().ListByBoard(ctx, boardID)
+	if err != nil {
+		return ""
+	}
+	wanted := make(map[string]struct{}, len(matches))
+	for _, m := range matches {
+		wanted[strings.ToLower(m[1])] = struct{}{}
+	}
+	resolved := []string{}
+	for _, a := range agents {
+		nameKey := strings.ToLower(strings.ReplaceAll(a.Name, " ", "-"))
+		slugKey := ""
+		if a.Config != nil {
+			if slug, _ := a.Config["slug"].(string); slug != "" {
+				slugKey = strings.ToLower(slug)
+			}
+		}
+		if _, hit := wanted[nameKey]; hit {
+			resolved = append(resolved, a.ID)
+			continue
+		}
+		if slugKey != "" {
+			if _, hit := wanted[slugKey]; hit {
+				resolved = append(resolved, a.ID)
+			}
+		}
+	}
+	return strings.Join(resolved, ",")
+}
+
+func (s *AuthService) handleCardComments(w http.ResponseWriter, r *http.Request, boardID, cardID, sub string) {
+	sub = strings.TrimPrefix(sub, "/")
+	p := auth.PrincipalFrom(r.Context())
+
+	// Collection: GET list / POST create.
+	if sub == "" {
+		switch r.Method {
+		case http.MethodGet:
+			if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+				writeJSONError(w, http.StatusForbidden, "permission denied")
+				return
+			}
+			comments, err := s.Store.CardComments().List(r.Context(), datastore.CardCommentFilter{
+				CardID: cardID, Limit: 100,
+			})
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"comments": comments})
+			return
+		case http.MethodPost:
+			if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsRead); err != nil {
+				writeJSONError(w, http.StatusForbidden, "permission denied")
+				return
+			}
+			var req createCommentRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+				return
+			}
+			if strings.TrimSpace(req.Body) == "" {
+				writeJSONError(w, http.StatusBadRequest, "body required")
+				return
+			}
+			authorID := principalAuthorID(p)
+			if authorID == "" {
+				writeJSONError(w, http.StatusUnauthorized, "no author identity")
+				return
+			}
+			c := &datastore.CardComment{
+				BoardID:    boardID,
+				CardID:     cardID,
+				AuthorID:   authorID,
+				AuthorKind: "user",
+				Body:       req.Body,
+				ReplyTo:    req.ReplyTo,
+				Mentions:   s.resolveMentions(r.Context(), boardID, req.Body),
+			}
+			if err := s.Store.CardComments().Create(r.Context(), c); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, c)
+			return
+		default:
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+	}
+
+	// Single: /{coid} → GET (not exposed today) / PUT / DELETE.
+	commentID := strings.TrimSuffix(sub, "/")
+	c, err := s.Store.CardComments().Get(r.Context(), commentID)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "comment not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if c.CardID != cardID || c.BoardID != boardID {
+		writeJSONError(w, http.StatusNotFound, "comment not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		// Only the original author may edit.
+		if principalAuthorID(p) != c.AuthorID {
+			writeJSONError(w, http.StatusForbidden, "only the author may edit a comment")
+			return
+		}
+		var req updateCommentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if strings.TrimSpace(req.Body) == "" {
+			writeJSONError(w, http.StatusBadRequest, "body required")
+			return
+		}
+		c.Body = req.Body
+		c.Mentions = s.resolveMentions(r.Context(), boardID, req.Body)
+		if err := s.Store.CardComments().Update(r.Context(), c); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, c)
+	case http.MethodDelete:
+		// Author OR users with boards.manage may delete.
+		if principalAuthorID(p) != c.AuthorID {
+			if err := rbac.Enforce(r.Context(), p, rbac.PermBoardsManage); err != nil {
+				writeJSONError(w, http.StatusForbidden, "permission denied")
+				return
+			}
+		}
+		if err := s.Store.CardComments().SoftDelete(r.Context(), commentID); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// principalAuthorID extracts a stable identity string from the auth
+// principal. Phase-2 user sessions carry UserID; API-key callers carry
+// APIKeyID; system callers fall back to a Username sentinel.
+func principalAuthorID(p *auth.Principal) string {
+	if p == nil {
+		return ""
+	}
+	if p.UserID != "" {
+		return p.UserID
+	}
+	if p.APIKeyID != "" {
+		return "apikey:" + p.APIKeyID
+	}
+	if p.Type == auth.PrincipalSystem && p.Username != "" {
+		return "system:" + p.Username
+	}
+	return ""
 }
 
 // ── Kanban webhooks ───────────────────────────────────────────────────

@@ -99,6 +99,7 @@ func (s *Store) BoardAgents() datastore.BoardAgentRepo              { return &bo
 func (s *Store) Personas() datastore.PersonaRepo                    { return &personaRepo{s: s} }
 func (s *Store) CardAttachments() datastore.CardAttachmentRepo      { return &cardAttachmentRepo{s: s} }
 func (s *Store) KanbanWebhooks() datastore.KanbanWebhookRepo        { return &kanbanWebhookRepo{s: s} }
+func (s *Store) CardComments() datastore.CardCommentRepo            { return &cardCommentRepo{s: s} }
 
 // ─── shared helpers ─────────────────────────────────────────────────
 
