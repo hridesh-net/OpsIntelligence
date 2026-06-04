@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.82] — 2026-06-04
+
+### Changed — CI/release pipelines build the Scrun React app
+
+`ci.yml` and `release.yml` now run `npm ci && npm run build` inside
+`scrun/` after the dashboard UI build, so the Vite bundle for the
+Boards tab is present under `internal/webui/dashboard/assets/scrun/`
+before `go build` runs `//go:embed`. The Node.js cache key now
+covers both `internal/webui/dashboard/ui/package-lock.json` and
+`scrun/package-lock.json`.
+
 ## [1.0.81] — 2026-06-04
 
 ### Added — Scrun React app on the Boards tab

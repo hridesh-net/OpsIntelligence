@@ -63,7 +63,9 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: internal/webui/dashboard/ui/package-lock.json
+          cache-dependency-path: |
+            internal/webui/dashboard/ui/package-lock.json
+            scrun/package-lock.json
 
       - name: Build dashboard UI (Vite → //go:embed assets)
         shell: bash
@@ -75,6 +77,16 @@ jobs:
           # runs //go:embed, otherwise the binary ships a stale dashboard.
           ls -la ../assets/
           ls -la ../assets/assets/
+
+      - name: Build Scrun React app (Vite → //go:embed assets/scrun)
+        shell: bash
+        run: |
+          cd scrun
+          npm ci --no-audit --no-fund
+          npm run build
+          # Sanity check: the Scrun bundle must be present before `go build`.
+          ls -la ../internal/webui/dashboard/assets/scrun/
+          ls -la ../internal/webui/dashboard/assets/scrun/assets/
 
       - name: Setup Rust (with target)
         uses: dtolnay/rust-toolchain@stable
