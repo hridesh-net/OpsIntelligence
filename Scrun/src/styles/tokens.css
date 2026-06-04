@@ -1,0 +1,82 @@
+/* ============================================================
+   SCRUN — Design tokens (light + dark)
+   Forked from opsintelai.com (brand blue #2898da), blended
+   with a terminal / mission-control flavour.
+   ============================================================ */
+:root {
+  --font-ui: "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* DARK (default) */
+  --bg: #0e171e;
+  --bg-grad-1: rgba(40, 152, 218, 0.1);
+  --bg-grad-2: rgba(14, 23, 30, 0);
+  --elev: #0c141c;
+  --rail: #070f16;
+  --surface: #101922;
+  --surface-2: #0c141c;
+  --card: #141e29;
+  --card-hover: #19232f;
+  --card-active: #1d2835;
+  --border: rgba(255, 255, 255, 0.065);
+  --border-strong: rgba(255, 255, 255, 0.115);
+  --text: #e7edf5;
+  --text-dim: #8a97aa;
+  --text-faint: #586675;
+  --accent: #2898da;
+  --accent-bright: #4db0ef;
+  --accent-soft: rgba(40, 152, 218, 0.16);
+  --accent-line: rgba(40, 152, 218, 0.45);
+  --running: #2898da;
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.14);
+  --warning: #f5b042;
+  --warning-soft: rgba(245, 176, 66, 0.14);
+  --danger: #f4685f;
+  --danger-soft: rgba(244, 104, 95, 0.14);
+  --purple: #a78bfa;
+  --purple-soft: rgba(167, 139, 250, 0.14);
+  --teal: #2dd4bf;
+  --teal-soft: rgba(45, 212, 191, 0.13);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-panel: -24px 0 60px rgba(0, 0, 0, 0.45);
+  --grid-line: rgba(255, 255, 255, 0.04);
+  --accent-rgb: 40, 152, 218;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7fb;
+  --bg-grad-1: rgba(40, 152, 218, 0.08);
+  --bg-grad-2: rgba(255, 255, 255, 0);
+  --elev: #ffffff;
+  --rail: #f7f8fa;
+  --surface: #edf0f5;
+  --surface-2: #f1f3f8;
+  --card: #ffffff;
+  --card-hover: #fafbfd;
+  --card-active: #f3f6fb;
+  --border: rgba(15, 24, 40, 0.085);
+  --border-strong: rgba(15, 24, 40, 0.15);
+  --text: #0f1822;
+  --text-dim: #5b6776;
+  --text-faint: #94a0b1;
+  --accent: #1f86c9;
+  --accent-bright: #1f86c9;
+  --accent-soft: rgba(31, 134, 201, 0.1);
+  --accent-line: rgba(31, 134, 201, 0.32);
+  --running: #1f86c9;
+  --success: #0fa968;
+  --success-soft: rgba(15, 169, 104, 0.12);
+  --warning: #c9820a;
+  --warning-soft: rgba(201, 130, 10, 0.13);
+  --danger: #d94a3f;
+  --danger-soft: rgba(217, 74, 63, 0.12);
+  --purple: #7c5cf0;
+  --purple-soft: rgba(124, 92, 240, 0.12);
+  --teal: #0d9488;
+  --teal-soft: rgba(13, 148, 136, 0.12);
+  --shadow: 0 1px 2px rgba(15, 24, 40, 0.06), 0 10px 28px rgba(15, 24, 40, 0.1);
+  --shadow-panel: -24px 0 60px rgba(15, 24, 40, 0.14);
+  --grid-line: rgba(15, 24, 40, 0.035);
+  --accent-rgb: 31, 134, 201;
+}

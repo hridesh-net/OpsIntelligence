@@ -59,16 +59,21 @@ func Handler() http.Handler {
 	static := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
-		switch path {
-		case "", "/":
+		switch {
+		case path == "" || path == "/":
 			// Absolute path so the redirect survives http.StripPrefix,
 			// which rewrites r.URL.Path to "/" before reaching us.
 			http.Redirect(w, r, "/dashboard/app", http.StatusFound)
 			return
-		case "app":
+		case path == "app":
 			r.URL.Path = "/app.html"
-		case "login":
+		case path == "login":
 			r.URL.Path = "/login.html"
+		case path == "kanban" || path == "boards" || path == "scrun" || path == "scrun/":
+			// Boards tab. The React Scrun bundle is emitted under
+			// assets/scrun/ by scrun/vite.config.ts; the entry point
+			// is its index.html.
+			r.URL.Path = "/scrun/index.html"
 		}
 		setDashboardHeaders(w)
 		static.ServeHTTP(w, r)

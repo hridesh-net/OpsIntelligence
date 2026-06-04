@@ -208,52 +208,6 @@
     }
   }
 
-  // Inject Scrun stylesheets on first /boards visit, scoping the
-  // ":root" design-token blocks to body.scrun-active so they don't
-  // bleed into the rest of the dashboard once loaded.
-  let scrunStylesLoaded = false;
-  async function ensureScrunStyles() {
-    if (scrunStylesLoaded) return;
-    scrunStylesLoaded = true;
-    // Strip any stale injected scrun styles from a previous load so
-    // we never accumulate duplicated or unscoped rules.
-    document.querySelectorAll("style[data-scrun]").forEach((el) => el.remove());
-    const sheets = [
-      "scrun/scrun.css",
-      "scrun/scrun-board.css",
-      "scrun/scrun-screens.css",
-      "scrun/scrun-analytics.css",
-      "scrun/setup.css",
-    ];
-    for (const href of sheets) {
-      try {
-        const res = await fetch(href);
-        let css = await res.text();
-        // Scope :root token blocks so dashboard's own tokens win when
-        // the user navigates away from /boards.
-        // Rewrite ":root { ... }" → "body.scrun-active { ... }" so Scrun
-        // tokens don't leak into the rest of the dashboard. Also rewrite
-        // ":root[data-theme="light"] { ... }" → "body.scrun-active[data-theme="light"] { ... }"
-        // so the theme override actually wins the cascade (otherwise body's
-        // tokens beat :root's by being closer in the inheritance chain).
-        css = css.replace(/:root(\[[^\]]+\])?\s*\{/g, (_m, attr) => `body.scrun-active${attr || ""} {`);
-        // Scrun's base sheet (scrun.css) sets bare html/body rules
-        // (height:100%, overflow:hidden) that would lock scrolling on the
-        // entire dashboard once injected. Scope them to scrun-active.
-        if (href.includes("scrun.css")) {
-          css = css.replace(/html,body\s*\{[^}]*\}/, "body.scrun-active, body.scrun-active.app-page { height: 100vh; margin: 0; }");
-          css = css.replace(/body\s*\{/, "body.scrun-active {");
-        }
-        const style = document.createElement("style");
-        style.dataset.scrun = href;
-        style.textContent = css;
-        document.head.appendChild(style);
-      } catch (e) {
-        console.warn("scrun css load failed", href, e);
-      }
-    }
-  }
-
   async function bootAppPage() {
     const me = await getJSON(`${API}/whoami`).catch(() => null);
     if (!me || me.type !== "user") {
@@ -315,12 +269,6 @@
     clearOverviewPoll();
     clearBoardsPoll();
     const { view, sub } = parseHash();
-    // Leaving the Scrun shell? Drop the body classes so the dashboard's
-    // sidebar / header / padding come back.
-    if (view !== "boards") {
-      document.body.classList.remove("scrun-active");
-      document.body.classList.remove("scrun-ready");
-    }
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     const target = document.getElementById(`view-${view}`);
     if (target) {
@@ -347,17 +295,11 @@
         overviewPollId = setInterval(refreshOverviewStatus, 10000);
         break;
       case "boards":
-        // Scrun shell takes over the section. CSS is injected on first
-        // mount because Scrun's :root tokens would otherwise leak into
-        // the rest of the dashboard. We await styles before flipping
-        // .scrun-ready so the first paint isn't an FOUC frame.
-        document.body.classList.add("scrun-active");
-        ensureScrunStyles().then(async () => {
-          if (typeof window.scrunMount === "function") {
-            try { await window.scrunMount(); } catch (e) { console.error("scrunMount failed", e); }
-          }
-          document.body.classList.add("scrun-ready");
-        });
+        // Boards is an external tab now (Scrun React app at
+        // /dashboard/kanban). The sidebar link uses target="_blank";
+        // if this case is reached via the back button, redirect there.
+        window.open("/dashboard/kanban", "_blank", "noopener");
+        window.location.hash = "#/overview";
         break;
       case "tasks":
         titleEl.textContent = "Tasks";

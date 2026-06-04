@@ -1,0 +1,130 @@
+.fab {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 250;
+  height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.fab:hover {
+  color: var(--text);
+}
+.panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 250;
+  width: 280px;
+  background: var(--elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: pop 0.16s ease;
+}
+.head {
+  display: flex;
+  align-items: center;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border);
+}
+.head b {
+  font-size: 13px;
+  font-weight: 700;
+}
+.head .x {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+}
+.head .x:hover {
+  color: var(--text);
+}
+.body {
+  padding: 6px 15px 15px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin: 14px 0 8px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.row .lbl {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  flex: none;
+  width: 78px;
+}
+.swatches {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+}
+.swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+.swatch.on {
+  border-color: var(--text);
+}
+.radio {
+  margin-left: auto;
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.radio button {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  text-transform: capitalize;
+}
+.radio button.on {
+  background: var(--card);
+  color: var(--accent-bright);
+}
+.slider {
+  width: 100%;
+}
+.sliderRow {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}

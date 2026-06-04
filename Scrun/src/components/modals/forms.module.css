@@ -1,0 +1,206 @@
+/* ============================================================
+   SCRUN — Shared form layout for task + agent modals
+   ============================================================ */
+.cfg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.cfg-grid .cfg-col {
+  min-width: 0;
+}
+@media (max-width: 680px) {
+  .cfg-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+.modal-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* agent picker chips */
+.apick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.apick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 5px 10px 5px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: 0.12s;
+}
+.apick:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.apick.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+}
+.apick :global(.av) {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 9px;
+}
+.apick .chk {
+  font-size: 11px;
+}
+
+/* acceptance criteria editor */
+.ac-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ac-list:empty {
+  margin-bottom: 0;
+}
+.ac-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+.ac-row .ac-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--success-soft);
+  color: var(--success);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.ac-row .ac-txt {
+  flex: 1;
+  line-height: 1.4;
+}
+.ac-row .ac-x {
+  color: var(--text-faint);
+  cursor: pointer;
+  display: flex;
+}
+.ac-row .ac-x:hover {
+  color: var(--danger);
+}
+.ac-add {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  padding: 7px 10px;
+}
+.ac-add:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ac-add .ac-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text-faint);
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 14px;
+}
+.ac-add input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+}
+.ac-add input::placeholder {
+  color: var(--text-faint);
+}
+
+/* knowledge sources */
+.know {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.know .ksrc {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+.know .ksrc .kico {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  color: var(--accent-bright);
+  flex: none;
+}
+.know .ksrc .kname {
+  font-weight: 600;
+}
+.know .ksrc .kmeta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.know .ksrc .x {
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+}
+.know .ksrc .x:hover {
+  color: var(--danger);
+}
+.know-add {
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  padding: 8px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.know-add:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-bright);
+}
+.aav {
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #fff;
+}

@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.81] — 2026-06-04
+
+### Added — Scrun React app on the Boards tab
+
+The Boards tab in the dashboard sidebar now opens the new React +
+TypeScript + Vite Scrun shell in its own browser tab, replacing the
+legacy vanilla-JS Scrun that lived at `/dashboard/kanban`.
+
+- New Vite project at `scrun/` (Zustand + Immer store, CSS Modules,
+  Hanken Grotesk + JetBrains Mono) builds straight into
+  `internal/webui/dashboard/assets/scrun/` via the new `make build-scrun`
+  target, so `//go:embed assets/*` ships it inside the binary.
+- Live `/api/v1/boards*` integration: the store hydrates from
+  `GET /boards` + `GET /boards/{id}` on mount (last-active board pinned
+  to `localStorage.scrun.lastBoard`), card drag-and-drop persists via
+  `POST /cards/{id}/move` with optimistic rollback on failure, and the
+  setup wizard launches a new board with `POST /boards` once the
+  4-step flow completes.
+- `/dashboard/kanban` (and `/boards`, `/scrun`) now resolves to the
+  React entry; the same whoami gate runs before mount so unsigned
+  visitors land on `/dashboard/login`.
+- Removed `assets/kanban.html`, `assets/scrun/*.{js,css}`, and the
+  in-sidebar `body.scrun-active` mount inside `app.html` / `app.js`.
+
 ## [1.0.80] — 2026-06-03
 
 ### Added — Card relationships (Release G of the kanbots-parity wave)

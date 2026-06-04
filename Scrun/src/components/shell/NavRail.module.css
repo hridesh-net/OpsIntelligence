@@ -1,0 +1,194 @@
+.rail {
+  width: 228px;
+  flex: none;
+  background: var(--rail);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  position: relative;
+  transition: width 0.2s ease;
+}
+.rail.collapsed {
+  width: 64px;
+}
+.railTop {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 16px 16px 14px;
+  height: 56px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-size: 16px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.collapsed .brand .name {
+  display: none;
+}
+.collapseBtn {
+  margin-left: auto;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.collapseBtn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.collapsed .collapseBtn {
+  margin: 0 auto;
+}
+.collapsed .collapseBtn svg {
+  transform: rotate(180deg);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  flex: 1;
+  overflow-y: auto;
+}
+.navLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  font-weight: 700;
+  padding: 12px 10px 6px;
+}
+.collapsed .navLabel {
+  opacity: 0;
+  height: 8px;
+  padding: 4px;
+}
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  transition: 0.13s;
+  position: relative;
+}
+.navItem:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.navItem.on {
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+}
+.navItem.on::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.niIco {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.niIco svg {
+  width: 18px;
+  height: 18px;
+}
+.badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--surface);
+  color: var(--text-dim);
+  border-radius: 20px;
+  padding: 1px 7px;
+  min-width: 20px;
+  text-align: center;
+}
+.navItem.on .badge {
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent-bright);
+}
+.collapsed .niText,
+.collapsed .badge {
+  display: none;
+}
+.collapsed .navItem {
+  justify-content: center;
+  padding: 9px 0;
+}
+
+.railUser {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.railUser:hover {
+  background: var(--surface);
+}
+.uav {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  flex: none;
+  background: linear-gradient(135deg, var(--purple), var(--accent));
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #fff;
+  font-size: 12px;
+}
+.uinfo {
+  line-height: 1.25;
+  overflow: hidden;
+}
+.uinfo b {
+  font-size: 13px;
+  display: block;
+}
+.uinfo small {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.uchev {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+.collapsed .uinfo,
+.collapsed .uchev {
+  display: none;
+}
+.collapsed .railUser {
+  justify-content: center;
+  padding: 12px 0;
+}

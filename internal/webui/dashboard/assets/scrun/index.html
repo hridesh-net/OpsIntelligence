@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scrun — Autonomous Agent Workforce Board</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Auth gate — match the rest of /dashboard/*. Bypass when running the
+      // Vite dev server (origin :5174) so local UI work doesn't require a
+      // running gateway.
+      (async () => {
+        if (location.port === "5174") return;
+        try {
+          const who = await fetch("/api/v1/whoami", { credentials: "same-origin" }).then((r) => r.json()).catch(() => null);
+          if (!who || who.type !== "user") {
+            window.location.href = "/dashboard/login";
+          }
+        } catch (e) {
+          window.location.href = "/dashboard/login";
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/dashboard/scrun/assets/index-C_-mDLFB.js"></script>
+    <link rel="stylesheet" crossorigin href="/dashboard/scrun/assets/index-CQhl9JF0.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

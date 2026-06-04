@@ -1,0 +1,129 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  height: 56px;
+  background: var(--elev);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  z-index: 15;
+}
+.boardPick {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  position: relative;
+}
+.boardPick:hover {
+  background: var(--surface);
+}
+.star {
+  color: var(--warning);
+  font-size: 14px;
+}
+.chev {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.screenTitle {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.titleWrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.toolbar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.search {
+  flex: 1;
+  max-width: 380px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--text-dim);
+}
+.search:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.search input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  width: 100%;
+}
+.search input::placeholder {
+  color: var(--text-faint);
+}
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.topActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dividerV {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  flex: none;
+}
+.themeSw {
+  width: 58px;
+  height: 30px;
+  border-radius: 30px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+}
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: 0.22s cubic-bezier(0.4, 1.2, 0.4, 1);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.knobLight {
+  left: 30px;
+}
+.themeSw svg {
+  width: 13px;
+  height: 13px;
+}
