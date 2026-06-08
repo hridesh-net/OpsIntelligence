@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.83] — 2026-06-04
+
+### Fixed — Scrun setup flow now follows the Claude Design intent
+
+Two bugs broke the design's intended Boards-tab flow once the React
+shell talked to the live `/api/v1/boards` API; both fixed:
+
+- **`POST /boards` payload reshape.** The wizard's "Launch" step now
+  sends a body that matches `createBoardRequest` in
+  `internal/gateway/kanban_api.go`: agents are emitted as full
+  `createAgentRequest` objects (name + agent_type + provider_id +
+  config) instead of bare keys, columns carry a `position`, and
+  board color / description / key ride in `config` instead of as
+  unknown top-level fields. Previously the POST 400'd silently and
+  reloads bounced the user back to the wizard.
+- **`hydrateFromApi` no longer overrides localStorage on the no-boards
+  /error path.** Returning users with `scrun_setup.done=true` stay on
+  the board (matching the design's "Reload page → straight to board"
+  behaviour); only first-time users with no completed setup land on
+  the wizard. API errors no longer toast and just flip apiMode to
+  "demo" so writeback short-circuits.
+
 ## [1.0.82] — 2026-06-04
 
 ### Changed — CI/release pipelines build the Scrun React app
