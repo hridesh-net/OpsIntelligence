@@ -6,7 +6,6 @@ import { AppRoutes } from "@/routes";
 
 import "@/theme/tokens.css";
 import "@/chrome/chrome.css";
-import "@/kanban/kanban.css";
 
 const qc = new QueryClient({
   defaultOptions: {

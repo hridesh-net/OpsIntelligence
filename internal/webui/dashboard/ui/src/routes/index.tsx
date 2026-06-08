@@ -1,10 +1,17 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/chrome/AppShell";
 import { Overview } from "./Overview";
-import { Board } from "@/kanban/Board";
 import { Chat } from "./Chat";
 import { Repos } from "./Repos";
 import { Stub } from "./Stub";
+
+// /boards is served by the Go binary directly out of /dashboard/kanban
+// (the Scrun React shell). If someone lands here via an old bookmark or
+// hash route, send them to the Scrun tab.
+function BoardsRedirect() {
+  if (typeof window !== "undefined") window.location.replace("/dashboard/kanban");
+  return null;
+}
 
 export function AppRoutes() {
   return (
@@ -12,7 +19,7 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<Overview />} />
-        <Route path="/boards" element={<Board />} />
+        <Route path="/boards" element={<BoardsRedirect />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/tasks" element={<Stub title="Tasks" sub="Async task manager" />} />
         <Route path="/repos" element={<Repos />} />

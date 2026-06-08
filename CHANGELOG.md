@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.85] — 2026-06-08
+
+### Fixed — Boards nav now opens the Scrun tab, not the inline stub kanban
+
+The earlier Scrun work edited the legacy vanilla-JS dashboard frame
+(`assets/app.html` / `assets/app.js`), but the binary actually serves
+the React dashboard built from `internal/webui/dashboard/ui/`. That
+React shell had its own sidebar in
+`internal/webui/dashboard/ui/src/chrome/sidebar.tsx` routing **Boards**
+to a 4-column stub component at `src/kanban/Board.tsx`, never to
+Scrun. So clicking Boards rendered a basic Inbox / Backlog / Todo /
+In Progress board inside the dashboard frame, not the Scrun React
+shell shipped at `/dashboard/kanban`.
+
+- Sidebar: change the Boards entry to an external link that opens
+  `/dashboard/kanban` in a new tab — `<a target="_blank" rel="noopener">`
+  instead of `NavLink`. Matches the original "Boards tab should open a
+  new browser tab with the Scrun code" ask.
+- Routes: replace the inline `<Route path="/boards" element={<Board />}>`
+  with a redirect to `/dashboard/kanban` so any stale `#/boards`
+  bookmark still lands on Scrun.
+- Delete the now-dead inline kanban components
+  (`Board.tsx`, `Card.tsx`, `Column.tsx`, `CreateBoardModal.tsx`,
+  `kanban.css`) and drop the unused `kanban.css` import from
+  `entry/app.tsx`. App bundle drops from 148 kB → 82 kB.
+
 ## [1.0.84] — 2026-06-08
 
 ### Fixed — CI failed on Linux because Scrun source dir was committed as Scrun/
