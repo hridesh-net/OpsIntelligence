@@ -505,7 +505,9 @@ export const useStore = create<Store>()(
         if (s0.setup.step < 3) {
           set((s) => void (s.setup.step += 1));
         } else {
-          // launch
+          // Launch: flip the local view to the board immediately so the
+          // design's "wizard fades out → board appears" beat is preserved
+          // even when the backend is slow or offline.
           set((s) => {
             applyBoardConfig(s);
             L.seedActivity(s);
@@ -515,29 +517,65 @@ export const useStore = create<Store>()(
             s.screen = "board";
           });
           saveSetup(get().setup);
-          // Live API: persist the new board server-side.
+          // Live API: persist the new board server-side. Build the payload
+          // in the shape gateway/kanban_api.go createBoardRequest expects:
+          // agents as createAgentRequest objects, columns with position,
+          // and color/desc/key tucked into config (no top-level fields).
           const st = get();
-          if (st.apiMode !== "demo") {
+          if (st.apiMode === "live") {
+            const stages = st.setup.stages
+              ?? (st.workflow.map((s) => [s.id, s.name, s.dot, s.gate] as [string, string, string, typeof s.gate]));
             const payload = {
               name: st.setup.name,
-              key: st.setup.key,
-              color: st.setup.color,
-              description: st.setup.desc,
               preset: st.setup.preset,
-              agents: st.setup.agents,
-              columns: (st.setup.stages ?? []).map(([id, name, dot, gate]) => ({
-                id, name, color: dot, gate: gate ?? "none",
+              config: {
+                key: st.setup.key,
+                color: st.setup.color,
+                description: st.setup.desc,
+              },
+              columns: stages.map(([_id, name, color, gate], position) => ({
+                name,
+                position,
+                color,
+                gate: gate ?? "none",
               })),
+              agents: st.setup.agents.map((key) => {
+                const a = st.agents[key];
+                if (!a) return null;
+                return {
+                  name: a.name,
+                  agent_type: a.model || "claude-opus-4.7",
+                  provider_id: (a.provider || "").toLowerCase(),
+                  config: {
+                    color: a.color,
+                    ini: a.ini,
+                    caps: a.caps,
+                    role: a.role,
+                    instructions: a.instructions,
+                    knowledge: a.knowledge,
+                    memory: a.memory,
+                    autonomy: a.autonomy,
+                    spend_cap_daily: a.spendCap,
+                    max_parallel: a.maxParallel,
+                  },
+                };
+              }).filter(Boolean),
             };
-            API.createBoard(payload as unknown as Record<string, unknown>).then((b) => {
-              set((s) => { s.boardId = b.id; s.apiMode = "live"; });
-              API.rememberBoard(b.id);
-              get().hydrateFromApi();
-            }).catch((e) => {
-              get().showToast(`Save failed: ${(e as Error).message}`);
-            });
+            get().showToast(get().setup.name + " is live");
+            API.createBoard(payload as unknown as Record<string, unknown>)
+              .then((b) => {
+                API.rememberBoard(b.id);
+                set((s) => { s.boardId = b.id; });
+                // Re-hydrate so the board reflects what the server actually
+                // stored (column IDs, agent IDs, normalised values).
+                get().hydrateFromApi();
+              })
+              .catch((e) => {
+                get().showToast(`Save failed: ${(e as Error).message}`);
+              });
+          } else {
+            get().showToast(get().setup.name + " is live");
           }
-          get().showToast(get().setup.name + " is live");
         }
       },
       suBack: () => set((s) => void (s.setup.step = Math.max(0, s.setup.step - 1))),
@@ -571,17 +609,23 @@ export const useStore = create<Store>()(
       hydrateFromApi: async () => {
         const result = await API.loadFirstBoard();
         if (!result.ok) {
-          // No boards yet, or transient error: stay in setup wizard with
-          // the demo seed visible so the UX never blanks. apiMode flips
-          // to "live" the moment the wizard POSTs a board.
+          // Respect the design's localStorage-first flow:
+          //  - No boards on the server AND no completed setup locally → wizard.
+          //  - No boards on the server BUT user has previously completed setup
+          //    → stay on whatever initialData() decided (board with demo data).
+          //  - Transient API error → drop to "demo" so writeback paths short-
+          //    circuit; never bounce the user back to the wizard.
           set((s) => {
-            s.apiMode = result.reason === "no-boards" ? "live" : "demo";
-            s.phase = "setup";
-            s.setup.step = 0;
+            if (result.reason === "no-boards") {
+              s.apiMode = "live";
+              if (!s.setup.done) {
+                s.phase = "setup";
+                s.setup.step = 0;
+              }
+            } else {
+              s.apiMode = "demo";
+            }
           });
-          if (result.reason === "error") {
-            get().showToast("Live API unavailable — Demo mode");
-          }
           return;
         }
         const d = result.data;
