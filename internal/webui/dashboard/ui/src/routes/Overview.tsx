@@ -57,7 +57,7 @@ export function Overview() {
               gap: 10,
             }}>
               {boardsQ.data.slice(0, 8).map((b) => (
-                <a key={b.id} href={`#/boards`} style={cardLinkStyle}>
+                <a key={b.id} href="/dashboard/kanban" target="_blank" rel="noopener" style={cardLinkStyle}>
                   <div style={{ fontWeight: 500 }}>{b.name}</div>
                   <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--fg-muted)" }}>{b.id}</div>
                 </a>

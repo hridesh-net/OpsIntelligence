@@ -59,6 +59,7 @@ func Handler() http.Handler {
 	static := http.FileServer(http.FS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
+		htmlEntry := false
 		switch {
 		case path == "" || path == "/":
 			// Absolute path so the redirect survives http.StripPrefix,
@@ -67,15 +68,18 @@ func Handler() http.Handler {
 			return
 		case path == "app":
 			r.URL.Path = "/app.html"
+			htmlEntry = true
 		case path == "login":
 			r.URL.Path = "/login.html"
+			htmlEntry = true
 		case path == "kanban" || path == "boards" || path == "scrun" || path == "scrun/":
 			// Boards tab. The React Scrun bundle is emitted under
 			// assets/scrun/ by scrun/vite.config.ts; the entry point
 			// is its index.html.
 			r.URL.Path = "/scrun/index.html"
+			htmlEntry = true
 		}
-		setDashboardHeaders(w)
+		setDashboardHeaders(w, htmlEntry)
 		static.ServeHTTP(w, r)
 	})
 }
@@ -83,9 +87,20 @@ func Handler() http.Handler {
 // setDashboardHeaders stamps the small set of security headers the
 // dashboard depends on. Kept in a helper so it's easy to tighten CSP
 // later when we inline less HTML.
-func setDashboardHeaders(w http.ResponseWriter) {
+//
+// htmlEntry should be true for the *.html shell responses (app, login,
+// kanban/scrun) so browsers always re-fetch the entry HTML and pick up
+// fresh hashed-asset URLs after a redeploy. Hashed JS/CSS bundles
+// under /assets/ stay cacheable — their content is keyed by hash.
+func setDashboardHeaders(w http.ResponseWriter, htmlEntry bool) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Referrer-Policy", "same-origin")
-	w.Header().Set("Cache-Control", "no-cache")
+	if htmlEntry {
+		w.Header().Set("Cache-Control", "no-store, max-age=0, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 }

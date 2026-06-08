@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.86] — 2026-06-08
+
+### Fixed — Three holes that kept Boards from opening Scrun
+
+Re-scan after v1.0.85 turned up the rest of the in-app paths that
+still routed to the deprecated hash-based `/boards` instead of the
+Scrun React bundle at `/dashboard/kanban`:
+
+- **Overview tiles** (`ui/src/routes/Overview.tsx`): the "Boards"
+  card grid was using `href="#/boards"`, which on the new binary
+  redirected but stayed in-tab and on the old binary rendered the
+  deleted stub. Now each tile opens `/dashboard/kanban` in a new
+  tab, matching the sidebar entry.
+- **`BoardsRedirect`** (`ui/src/routes/index.tsx`): called
+  `window.location.replace()` *during render* which is a React
+  side-effect-during-render bug — runs twice under StrictMode, can
+  be skipped if React tears down. Moved into a `useEffect` and
+  added a placeholder body so navigation is robust.
+- **Cache-Control on dashboard HTML** (`dashboard.go`): the entry
+  HTML responses (`/dashboard/app`, `/login`, `/kanban`) now ship
+  `Cache-Control: no-store, max-age=0, must-revalidate` so a
+  browser-cached `app.html` from a previous deploy can't keep
+  loading an old hashed JS bundle. Hashed `/assets/*` files stay
+  cacheable since their content is keyed by the hash.
+
 ## [1.0.85] — 2026-06-08
 
 ### Fixed — Boards nav now opens the Scrun tab, not the inline stub kanban
