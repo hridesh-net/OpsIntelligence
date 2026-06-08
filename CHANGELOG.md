@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.84] — 2026-06-08
+
+### Fixed — CI failed on Linux because Scrun source dir was committed as Scrun/
+
+Linux is case-sensitive; macOS isn't. The Scrun source dir was
+originally extracted from `Scrun.zip` and got committed with a
+capital S (`Scrun/`), while every consumer (`Makefile build-scrun`,
+`.github/workflows/{ci,release}.yml`, `vite.config.ts` outDir) uses
+the lowercase `scrun/`. Local builds worked because the macOS dev
+filesystem folds the case; CI runners on Linux failed with
+`cd: scrun: No such file or directory`.
+
+Renamed the tracked path `Scrun/` → `scrun/` in the index so
+Linux runners find the directory. No content changes; the
+Makefile / Vite / CI configs were already correct.
+
 ## [1.0.83] — 2026-06-04
 
 ### Fixed — Scrun setup flow now follows the Claude Design intent
