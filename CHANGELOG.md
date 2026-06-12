@@ -6,6 +6,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.87] — 2026-06-11
+
+### Fixed — Agents tab in the status TUI was permanently empty
+
+`opsintelligence status` runs in its own process, so it has no in-process
+`subagents.TaskManager` — `buildDashboardInfo(..., nil)` meant the Rust
+dashboard's Agents tab always showed "No specialist agents have been
+spawned yet", even while the daemon was actively running sub-agents.
+
+- `tuibridge.DashboardInfo` gains a `FetchAgents` hook used when `Tasks`
+  is nil; the snapshot ticker calls it each second.
+- `statusCmd` wires the hook to the daemon's `GET /api/v1/agent-tasks`
+  (loopback base + `gateway.token` bearer, same resolution as the kanban
+  CLI; `OPSINTELLIGENCE_GATEWAY_URL/_TOKEN` env overrides respected).
+- New `agents_hint` snapshot field (Go + Rust protocol): when the fetch
+  fails (daemon API unreachable, 401, …) the Agents tab shows the actual
+  error instead of the misleading "no agents spawned" empty state.
+
+### Fixed — API-created cards had status "" instead of "queued"
+
+`POST /api/v1/boards/{id}/cards` never set `Status`, and the repo INSERT
+binds the status column explicitly, so the schema's `DEFAULT 'queued'`
+never fired. New cards now get `queued`; migration
+`0008_card_status_backfill` (sqlite + postgres) repairs existing rows.
+
+### Added — Boards analytics endpoint (owed since v1.0.48)
+
+`GET /api/v1/boards/{id}/analytics` computes real numbers from persisted
+cards/runs (no synthetic data): KPI block (tasks shipped, 7-day shipped,
+avg cycle hours, run success rate, spend today/total), 7-day throughput,
+14-day spend trend, per-column avg-time-in-stage, and a per-agent
+leaderboard (tasks, success %, spend, active runs). Covered by
+`kanban_analytics_api_test.go`.
+
+The Scrun Analytics screen now fetches it (30 s refresh) when the store
+is in live mode — KPIs, throughput bars, spend trend, stage hours and the
+agent leaderboard all render live data; demo mode keeps the synthetic
+series so the screen still works offline.
+
+### Changed — Dashboard UI assets rebuilt
+
+The embedded dashboard bundle now includes the v1.0.85/86 Boards-nav
+fixes (sidebar "Boards" opens `/dashboard/kanban` in a new tab).
+
 ## [1.0.86] — 2026-06-08
 
 ### Fixed — Three holes that kept Boards from opening Scrun

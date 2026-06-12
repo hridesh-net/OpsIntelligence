@@ -10,13 +10,17 @@ interface NavEntry {
   to: string;
   label: string;
   icon: string;
+  /** When set, render an <a target> link instead of a NavLink (escapes the SPA). */
+  external?: "_blank" | "_self";
 }
 
 const SECTIONS: Array<{ title?: string; entries: NavEntry[] }> = [
   {
     entries: [
       { to: "/overview", label: "Overview", icon: "◆" },
-      { to: "/boards", label: "Boards", icon: "▣" },
+      // Boards is the Scrun React shell, served by the binary at /dashboard/kanban.
+      // Open in a new tab so the user can keep the dashboard frame open alongside.
+      { to: "/dashboard/kanban", label: "Boards", icon: "▣", external: "_blank" },
       { to: "/tasks", label: "Tasks", icon: "≡" },
       { to: "/repos", label: "Repos", icon: "{}" },
     ],
@@ -58,16 +62,29 @@ export function Sidebar({ me }: SidebarProps) {
         {SECTIONS.map((section, i) => (
           <div key={i}>
             {section.title && <div className="nav-section">{section.title}</div>}
-            {section.entries.map((e) => (
-              <NavLink
-                key={e.to}
-                to={e.to}
-                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-              >
-                <span className="mono" style={{ width: 14, color: "inherit", opacity: 0.7 }}>{e.icon}</span>
-                <span>{e.label}</span>
-              </NavLink>
-            ))}
+            {section.entries.map((e) =>
+              e.external ? (
+                <a
+                  key={e.to}
+                  href={e.to}
+                  target={e.external}
+                  rel={e.external === "_blank" ? "noopener" : undefined}
+                  className="nav-item"
+                >
+                  <span className="mono" style={{ width: 14, color: "inherit", opacity: 0.7 }}>{e.icon}</span>
+                  <span>{e.label}</span>
+                </a>
+              ) : (
+                <NavLink
+                  key={e.to}
+                  to={e.to}
+                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                >
+                  <span className="mono" style={{ width: 14, color: "inherit", opacity: 0.7 }}>{e.icon}</span>
+                  <span>{e.label}</span>
+                </NavLink>
+              ),
+            )}
           </div>
         ))}
       </nav>

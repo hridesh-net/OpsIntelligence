@@ -314,6 +314,37 @@ export function saveWorkflow(boardID: string, payload: Record<string, unknown>):
   return jsend("PUT", `/boards/${encodeURIComponent(boardID)}/workflow`, payload);
 }
 
+/* ---------- Analytics ------------------------------------------------ */
+
+export interface BoardAnalytics {
+  kpis: {
+    tasks_shipped: number;
+    shipped_last7: number;
+    avg_cycle_hours: number;
+    success_rate: number;
+    spend_today_usd: number;
+    spend_total_usd: number;
+  };
+  status_counts: Record<string, number>;
+  throughput: Array<{ date: string; day: string; shipped: number; started: number }>;
+  spend_trend: Array<{ date: string; usd: number }>;
+  stage_hours: Array<{ column_id: string; name: string; avg_hours: number; cards: number }>;
+  leaderboard: Array<{
+    agent_id: string;
+    name: string;
+    agent_type: string;
+    model?: string;
+    tasks: number;
+    success_pct: number;
+    spend_usd: number;
+    active: number;
+  }>;
+}
+
+export function getBoardAnalytics(boardID: string): Promise<BoardAnalytics> {
+  return jget<BoardAnalytics>(`/boards/${encodeURIComponent(boardID)}/analytics`);
+}
+
 /* ---------- SSE run stream ------------------------------------------ */
 
 export interface RunStreamOpts {

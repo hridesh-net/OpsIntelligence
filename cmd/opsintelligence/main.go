@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -69,7 +70,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.86" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.87" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -654,6 +655,10 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				gwBind = "loopback"
 			}
 			dash := buildDashboardInfo(cfg, gf.configPath, pid, version, skillSummary, channels, mcpTransport, gwBind, nil)
+			// `status` runs outside the daemon, so it has no in-process
+			// TaskManager; pull the Agents tab from the daemon's HTTP API
+			// instead of showing a permanently empty tab.
+			dash.FetchAgents = makeAgentTasksFetcher(gf)
 			configPath := gf.configPath
 			if configPath == "" {
 				configPath = config.DefaultConfigPath()
@@ -666,6 +671,75 @@ func statusCmd(gf *globalFlags) *cobra.Command {
 				EditConfig:   makeDashboardConfigEditor(configPath),
 			})
 		},
+	}
+}
+
+// makeAgentTasksFetcher returns a callback the dashboard TUI polls (1s tick)
+// to populate the Agents tab from the running daemon's GET /api/v1/agent-tasks.
+// Auth and base-URL resolution match the kanban CLI (loopback + gateway token).
+func makeAgentTasksFetcher(gf *globalFlags) func() ([]tuibridge.AgentInfo, error) {
+	client := &http.Client{Timeout: 900 * time.Millisecond}
+	return func() ([]tuibridge.AgentInfo, error) {
+		base, token, err := kanbanGatewayBase(gf)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(base, "/")+"/api/v1/agent-tasks", nil)
+		if err != nil {
+			return nil, err
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			return nil, fmt.Errorf("gateway %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		}
+		var payload struct {
+			Tasks []struct {
+				ID           string `json:"id"`
+				SubAgentName string `json:"sub_agent_name"`
+				Status       string `json:"status"`
+				ElapsedMs    int64  `json:"elapsed_ms"`
+				Error        string `json:"error"`
+				LastEvent    *struct {
+					Kind    string `json:"kind"`
+					Phase   string `json:"phase"`
+					Message string `json:"message"`
+				} `json:"last_event"`
+			} `json:"tasks"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		out := make([]tuibridge.AgentInfo, 0, len(payload.Tasks))
+		for _, t := range payload.Tasks {
+			ai := tuibridge.AgentInfo{
+				ID:      t.ID,
+				Name:    t.SubAgentName,
+				Status:  t.Status,
+				Elapsed: (time.Duration(t.ElapsedMs) * time.Millisecond).Round(time.Second).String(),
+				Error:   t.Error,
+			}
+			if ev := t.LastEvent; ev != nil && ev.Message != "" {
+				ai.LastPhase = ev.Phase
+				if ai.LastPhase == "" {
+					ai.LastPhase = ev.Kind
+				}
+				if msg := []rune(ev.Message); len(msg) > 80 {
+					ai.LastMessage = string(msg[:79]) + "…"
+				} else {
+					ai.LastMessage = ev.Message
+				}
+			}
+			out = append(out, ai)
+		}
+		return out, nil
 	}
 }
 

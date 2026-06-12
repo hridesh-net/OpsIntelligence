@@ -74,6 +74,12 @@ type DashboardInfo struct {
 	SubagentTracePath string
 	LogsDir           string
 	DatastoreKind     string
+
+	// FetchAgents, when set and Tasks is nil, supplies the Agents tab from an
+	// out-of-process source (the `status` command querying the daemon's
+	// GET /api/v1/agent-tasks). A returned error becomes a one-line hint on
+	// the Agents tab instead of the misleading "no agents spawned" empty state.
+	FetchAgents func() ([]AgentInfo, error)
 }
 
 // SessionUsage matches the REPL footer accumulator. Optional.
@@ -262,7 +268,9 @@ type toggle struct {
 	Detail  string `json:"detail"`
 }
 
-type agentInfo struct {
+// AgentInfo is one row on the dashboard's Agents tab. Exported so hosts can
+// supply rows via DashboardInfo.FetchAgents.
+type AgentInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Status      string `json:"status"`
@@ -286,7 +294,8 @@ type snapshot struct {
 	Limits         []kvPair    `json:"limits"`
 	Usage          []kvPair    `json:"usage"`
 	UsageEmptyHint string      `json:"usage_empty_hint"`
-	Agents         []agentInfo `json:"agents"`
+	Agents         []AgentInfo `json:"agents"`
+	AgentsHint     string      `json:"agents_hint"`
 	Logs           []logSnap   `json:"logs"`
 	LogSourcePath  string      `json:"log_source_path"`
 }
@@ -300,13 +309,15 @@ func (c *dashboardCache) snapshot(opts DashboardOptions) snapshot {
 			_ = f.Close()
 		}
 	}
+	agents, agentsHint := c.buildAgents()
 	return snapshot{
 		Status:         c.buildStatus(ps),
 		Config:         c.buildConfig(),
 		Limits:         c.buildLimits(),
 		Usage:          c.buildUsage(opts.SessionUsage, ps),
 		UsageEmptyHint: "Session token usage appears after you send messages in the agent REPL.",
-		Agents:         c.buildAgents(),
+		Agents:         agents,
+		AgentsHint:     agentsHint,
 		Logs:           c.refreshAndBuildLogs(),
 		LogSourcePath:  c.info.RunTracePath,
 	}
@@ -420,17 +431,27 @@ func (c *dashboardCache) buildUsage(s *SessionUsage, ps psResult) []kvPair {
 	return nil
 }
 
-func (c *dashboardCache) buildAgents() []agentInfo {
+func (c *dashboardCache) buildAgents() ([]AgentInfo, string) {
 	if c.info.Tasks == nil {
+		if c.info.FetchAgents != nil {
+			agents, err := c.info.FetchAgents()
+			if err != nil {
+				return []AgentInfo{}, "Live agent list unavailable: " + truncRunes(err.Error(), 120)
+			}
+			if agents == nil {
+				agents = []AgentInfo{}
+			}
+			return agents, ""
+		}
 		// Same nil-vs-empty issue as Channels: returning nil makes Go emit
 		// `"agents":null` which Rust's Vec<AgentInfo> rejects, cascading to a
 		// failed snapshot deserialization. Always return an empty slice.
-		return []agentInfo{}
+		return []AgentInfo{}, ""
 	}
 	tasks := c.info.Tasks.List()
-	out := make([]agentInfo, 0, len(tasks))
+	out := make([]AgentInfo, 0, len(tasks))
 	for _, tk := range tasks {
-		ai := agentInfo{
+		ai := AgentInfo{
 			ID:      tk.ID,
 			Name:    tk.SubAgentNm,
 			Status:  string(tk.Status),
@@ -447,7 +468,7 @@ func (c *dashboardCache) buildAgents() []agentInfo {
 		}
 		out = append(out, ai)
 	}
-	return out
+	return out, ""
 }
 
 // ── Log scanning (ported from cmd/opsintelligence/tui/dashboard.go) ──────

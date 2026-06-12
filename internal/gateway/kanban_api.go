@@ -447,6 +447,8 @@ func (s *AuthService) handleBoardDetail(w http.ResponseWriter, r *http.Request, 
 		}
 	case "workflow":
 		s.handleBoardWorkflow(w, r, boardID)
+	case "analytics":
+		s.handleBoardAnalytics(w, r, boardID)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -721,6 +723,10 @@ func (s *AuthService) handleBoardCards(w http.ResponseWriter, r *http.Request, b
 			CardType:     cardType,
 			Priority:     priority,
 			Effort:       req.Effort,
+			// The repo INSERT always binds the status column, so the schema's
+			// DEFAULT 'queued' never fires — set it explicitly or new cards
+			// end up with status "".
+			Status:       "queued",
 			Assignee:     req.Assignee,
 			AssigneeType: assigneeType,
 			Metadata:     req.Metadata,

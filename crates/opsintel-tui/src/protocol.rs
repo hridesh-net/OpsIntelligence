@@ -546,6 +546,10 @@ pub struct DashboardSnapshot {
     pub usage_empty_hint: String,
     #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub agents: Vec<AgentInfo>,
+    /// One-line notice shown on the Agents tab when the agent list could not
+    /// be fetched (e.g. `status` command can't reach the daemon's HTTP API).
+    #[serde(default)]
+    pub agents_hint: String,
     #[serde(default, deserialize_with = "null_as_empty_vec")]
     pub logs: Vec<LogEntry>,
     #[serde(default)]

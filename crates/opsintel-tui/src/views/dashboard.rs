@@ -352,7 +352,7 @@ impl DashboardView {
             1 => render_kv(&self.snap.config, "Configuration", q),
             2 => render_kv(&self.snap.limits, "Limits", q),
             3 => render_usage(&self.snap.usage, &self.snap.usage_empty_hint, q),
-            4 => render_agents(&self.snap.agents, q),
+            4 => render_agents(&self.snap.agents, &self.snap.agents_hint, q),
             5 => render_logs(&self.snap.logs, &self.snap.log_source_path, q),
             _ => Vec::new(),
         };
@@ -709,7 +709,7 @@ fn render_usage(rows: &[KeyValue], empty_hint: &str, query: &str) -> Vec<Line<'s
     lines
 }
 
-fn render_agents(agents: &[AgentInfo], query: &str) -> Vec<Line<'static>> {
+fn render_agents(agents: &[AgentInfo], hint: &str, query: &str) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(
         "Active Agents",
         theme::header(),
@@ -798,10 +798,14 @@ fn render_agents(agents: &[AgentInfo], query: &str) -> Vec<Line<'static>> {
     }
     if active.is_empty() && done.is_empty() {
         lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            "No specialist agents have been spawned yet in this session.",
-            theme::muted(),
-        )));
+        if hint.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No specialist agents have been spawned yet in this session.",
+                theme::muted(),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(hint.to_string(), theme::error_style())));
+        }
     }
     lines
 }
