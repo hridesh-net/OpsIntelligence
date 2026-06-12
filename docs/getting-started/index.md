@@ -32,7 +32,7 @@ OpsIntelligence is a **multi-agent autonomous system** written in Go that handle
 
 ## Next steps
 
-1. **[Install](installation.md)** — binary release or build from source
+1. **[Install](../install.md)** — binary release or build from source
 2. **[Quickstart](quickstart.md)** — first agent run in 5 minutes
 3. **[Configuration](../configuration.md)** — providers, webhooks, auth
-4. **[User Guide](../guides/user-guide/)** — dashboard, CLI, workflows
+4. **[User Guide](../guides/user-guide/index.md)** — dashboard, CLI, workflows

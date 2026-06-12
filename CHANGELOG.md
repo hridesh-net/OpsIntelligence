@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.92] — 2026-06-12
+
+### Fixed — Docs CI red since v1.0.87
+
+`mkdocs build --strict` aborted on a broken link: `getting-started/index.md`
+pointed at a non-existent `installation.md` (the real page is `install.md`).
+Also resolved the ambiguous trailing-slash links in the quickstart
+(`../guides/user-guide/` → `index.md`; `../guides/multi-agent/` pointed at
+an EMPTY directory — now `../guides/multi-agent-go/index.md`) and removed
+the empty `docs/guides/multi-agent/` dir. Verified locally with the CI's
+exact `requirements-docs.txt` + `mkdocs build --strict`.
+
 ## [1.0.91] — 2026-06-12
 
 ### Added — Scrun boards gallery: pick or create a board before entering it

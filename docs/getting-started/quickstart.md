@@ -91,6 +91,6 @@ Key pages to explore:
 
 ## Next steps
 
-- [User Guide](../guides/user-guide/) — daily operations and workflows
+- [User Guide](../guides/user-guide/index.md) — daily operations and workflows
 - [Configuration](../configuration.md) — full config reference
-- [Multi-Agent Systems in Go](../guides/multi-agent/) — learn the concepts behind the engine
+- [Multi-Agent Systems in Go](../guides/multi-agent-go/index.md) — learn the concepts behind the engine
