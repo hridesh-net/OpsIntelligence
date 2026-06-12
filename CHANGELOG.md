@@ -6,6 +6,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.89] — 2026-06-12
+
+### Security — Enterprise Phase 1: identity reaches the agent loop
+
+First wave of the enterprise hardening roadmap: every network-facing agent
+surface now carries the caller's identity end-to-end, and the agent
+enforces it.
+
+- **`/ws` is no longer anonymous.** The WebSocket upgrade previously had
+  no auth at all — any client on a non-loopback bind could connect and the
+  hub broadcast every message to every client. The endpoint now sits
+  behind the same credential chain as the rest of the API (cookie session
+  → API key → legacy gateway Bearer) plus a `chat.use` permission check.
+  No in-repo client used `/ws` unauthenticated; external scripts can
+  present the gateway Bearer token in the handshake.
+- **`/api/chat` and `/api/rag-chat` carry a principal.** Both moved from
+  the legacy token-only wrapper to the phase-2 auth chain, enforce
+  `chat.use`, and attach the caller's `auth.Principal` to the request
+  context that flows into `RunStream`.
+- **The agent runner enforces RBAC per tool call.** `executeTool` now
+  requires `agent.invoke` when the turn context carries an explicitly
+  attached identity. System principals bypass per convention; internal
+  trusted paths (CLI REPL, channel adapters, cron) attach no principal
+  and behave as before — giving channel users real principals is the next
+  wave. New `auth.MaybePrincipalFrom` distinguishes "attached identity"
+  from "internal path" without weakening `PrincipalFrom`'s
+  never-nil contract.
+- **Tool-call audit entries name the real actor.** Previously the
+  tamper-evident audit log recorded an empty actor for every tool call.
+  Entries now carry `user:<name>` / `apikey:<user/key>` /
+  `system:<name>` derived from the context principal.
+
+Bare deployments with neither phase-2 auth nor a gateway token configured
+keep their current open-on-loopback behaviour.
+
 ## [1.0.88] — 2026-06-12
 
 ### Fixed — `opsintelligence agent` REPL rendered garbage and got corrupted mid-session

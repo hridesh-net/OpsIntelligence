@@ -29,6 +29,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/correlation"
 	"github.com/opsintelligence/opsintelligence/internal/observability/metrics"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
+	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"github.com/opsintelligence/opsintelligence/internal/webhookadapter"
 	"github.com/opsintelligence/opsintelligence/internal/webui"
 	"github.com/opsintelligence/opsintelligence/internal/webui/dashboard"
@@ -322,15 +323,35 @@ func (s *Server) Start() error {
 	}
 
 	// ── API: Chat (SSE streaming) ─────────────────────────────────────────────
-	mux.HandleFunc("/api/chat", auth(s.withCorrelation(s.handleChat)))
+	// phase2OrLegacyAuth attaches the caller's principal so the agent loop
+	// can enforce RBAC per tool call and audit the real actor. chat.use is
+	// enforced here at the surface.
+	mux.Handle("/api/chat", phase2OrLegacyAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !s.enforceCtxPerm(w, r, rbac.PermChatUse) {
+			return
+		}
+		s.handleChat(w, r)
+	}))
 
 	// ── API: RAG Chat (repo-grounded SSE streaming) ───────────────────────────
 	// Like /api/chat but retrieves context from repointel hybrid store first
 	// and injects it into the prompt. FTS5 search works without embeddings.
-	mux.HandleFunc("/api/rag-chat", auth(s.withCorrelation(s.handleRAGChat)))
+	mux.Handle("/api/rag-chat", phase2OrLegacyAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !s.enforceCtxPerm(w, r, rbac.PermChatUse) {
+			return
+		}
+		s.handleRAGChat(w, r)
+	}))
 
 	// ── WebSocket (legacy / channel use) ─────────────────────────────────────
-	mux.HandleFunc("/ws", s.withCorrelation(func(w http.ResponseWriter, r *http.Request) {
+	// The upgrade is gated by the same credential chain as every other API
+	// surface (cookie session / API key / legacy Bearer). Before v1.0.89 this
+	// endpoint accepted anonymous connections and the hub broadcast every
+	// message to every client — an open door on any non-loopback bind.
+	mux.Handle("/ws", phase2OrLegacyAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !s.enforceCtxPerm(w, r, rbac.PermChatUse) {
+			return
+		}
 		serveWs(s.Hub, s.logger(), w, r)
 	}))
 
@@ -988,6 +1009,29 @@ func (h *sseStreamHandler) OnError(err error) {
 }
 
 // ── WebSocket (unchanged from original) ──────────────────────────────────────
+
+// enforceCtxPerm applies perm when (and only when) the request context
+// carries an explicitly attached principal. System principals bypass per
+// RBAC convention. Bare deployments (no AuthService, no gateway token)
+// attach no principal and remain open — same trust model as the legacy
+// Bearer wrapper. Returns false after writing the 403 response.
+func (s *Server) enforceCtxPerm(w http.ResponseWriter, r *http.Request, perm rbac.Permission) bool {
+	p, attached := authpkg.MaybePrincipalFrom(r.Context())
+	if !attached {
+		return true
+	}
+	if err := rbac.Enforce(r.Context(), p, perm); err != nil {
+		s.logger().Warn("gateway: permission denied",
+			append(correlation.Fields(r.Context()),
+				zap.String("permission", string(perm)),
+				zap.String("principal", p.Username),
+			)...,
+		)
+		http.Error(w, `{"error":"permission denied"}`, http.StatusForbidden)
+		return false
+	}
+	return true
+}
 
 func serveWs(hub *Hub, logger *zap.Logger, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)

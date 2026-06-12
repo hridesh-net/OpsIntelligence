@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/opsintelligence/opsintelligence/internal/auth"
 	"github.com/opsintelligence/opsintelligence/internal/channels"
 	chadapter "github.com/opsintelligence/opsintelligence/internal/channels/adapter"
 	"github.com/opsintelligence/opsintelligence/internal/config"
@@ -28,6 +29,7 @@ import (
 	"github.com/opsintelligence/opsintelligence/internal/observability/runtrace"
 	obstracing "github.com/opsintelligence/opsintelligence/internal/observability/tracing"
 	"github.com/opsintelligence/opsintelligence/internal/provider"
+	"github.com/opsintelligence/opsintelligence/internal/rbac"
 	"github.com/opsintelligence/opsintelligence/internal/security"
 )
 
@@ -580,6 +582,25 @@ func (r *Runner) traceModelIteration(ctx context.Context, iteration int, userMes
 	})
 }
 
+// auditActor renders the principal attached to ctx as a stable
+// "type:identifier" audit string ("user:hridesh", "apikey:hridesh/k1",
+// "system:gateway-cli"). Empty when the turn carries no identity (CLI
+// REPL, channel adapters) — those paths attach their own actor upstream.
+func auditActor(ctx context.Context) string {
+	p, attached := auth.MaybePrincipalFrom(ctx)
+	if !attached {
+		return ""
+	}
+	id := p.Username
+	if id == "" {
+		id = p.UserID
+	}
+	if id == "" {
+		return string(p.Type)
+	}
+	return string(p.Type) + ":" + id
+}
+
 func truncateForTrace(s string, max int) string {
 	s = strings.TrimSpace(s)
 	if max <= 0 || len(s) <= max {
@@ -998,6 +1019,25 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 		return result
 	}
 
+	// ── RBAC: scope tool execution to the calling principal ──────────────
+	// When the turn context carries an explicitly attached identity (gateway
+	// chat / WS / API requests), agent-driven tool calls require agent.invoke.
+	// System principals bypass per RBAC convention; internal paths that never
+	// pass auth middleware (CLI REPL, channel adapters, cron) attach no
+	// principal and remain trusted until they mint their own identities.
+	if p, attached := auth.MaybePrincipalFrom(ctx); attached && !p.IsSystem() {
+		if err := rbac.Enforce(ctx, p, rbac.PermAgentInvoke); err != nil {
+			r.log.Warn("rbac denied tool call",
+				r.logFields(ctx,
+					zap.String("tool", resolved),
+					zap.String("principal", p.Username),
+				)...,
+			)
+			result = "[RBAC] Tool call denied: the requesting account lacks the agent.invoke permission."
+			return result
+		}
+	}
+
 	// ── Guardrail: pre-execution tool check ──────────────────────────────
 	if r.guardrail != nil {
 		stateDir := r.cfg.StateDir
@@ -1070,7 +1110,7 @@ func (r *Runner) executeTool(ctx context.Context, tc provider.ContentPart) (resu
 			PolicyBundleHash: strings.TrimSpace(r.turnAuditPolicyHash),
 		}
 		r.auditLog.WriteToolCall(
-			r.sessionID, r.channelID, "", // actor resolved by channel layer
+			r.sessionID, r.channelID, auditActor(ctx),
 			resolved, inputJSON, result, dur,
 			security.CheckResult{Action: security.ActionAllow},
 			meta,

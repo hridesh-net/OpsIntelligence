@@ -175,6 +175,23 @@ func PrincipalFrom(ctx context.Context) *Principal {
 	return AnonymousPrincipal
 }
 
+// MaybePrincipalFrom returns the Principal explicitly attached to ctx and
+// whether one was attached at all. Unlike PrincipalFrom it does NOT fall
+// back to AnonymousPrincipal, so callers deep in the agent loop can tell
+// "network request with an identity" (enforce RBAC) apart from "internal
+// trusted path that never went through auth middleware" (CLI REPL,
+// channel adapters, cron — no enforcement yet).
+func MaybePrincipalFrom(ctx context.Context) (*Principal, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	p, ok := ctx.Value(principalCtxKey{}).(*Principal)
+	if !ok || p == nil {
+		return nil, false
+	}
+	return p, true
+}
+
 // MustPrincipal is the strict variant used inside handlers that MUST
 // have already passed an Authenticator middleware. It panics if the
 // context was never populated — calling it in the wrong handler is a
