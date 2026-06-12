@@ -404,10 +404,20 @@ func (p *Provider) newRequest(ctx context.Context, method, path string, body []b
 	return req, nil
 }
 
+type chatToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"` // always "function"
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"` // JSON-encoded string, per the OpenAI spec
+	} `json:"function"`
+}
+
 type chatMessage struct {
-	Role       string `json:"role"`
-	Content    any    `json:"content"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
+	Role       string         `json:"role"`
+	Content    any            `json:"content"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 type toolDef struct {
@@ -442,23 +452,49 @@ func (p *Provider) buildBody(req *provider.CompletionRequest, stream bool) ([]by
 		messages = append(messages, chatMessage{Role: "system", Content: req.SystemPrompt})
 	}
 	for _, m := range req.Messages {
-		cm := chatMessage{Role: string(m.Role)}
-		if len(m.Content) == 0 {
-			cm.Content = ""
-			messages = append(messages, cm)
+		// Translate provider content-parts into the OpenAI chat schema:
+		//   - text          → message.content (string)
+		//   - tool_use       → message.tool_calls[] (NOT a content part — Gemini
+		//     and other compat servers reject {"type":"tool_use"} parts with
+		//     "Invalid content part type")
+		//   - tool_result    → a role:"tool" message with content + tool_call_id
+		var textBuf strings.Builder
+		var toolCalls []chatToolCall
+		var toolResultID, toolResultContent string
+		hasToolResult := false
+		for _, part := range m.Content {
+			switch part.Type {
+			case provider.ContentTypeText:
+				textBuf.WriteString(part.Text)
+			case provider.ContentTypeToolUse:
+				tc := chatToolCall{ID: part.ToolUseID, Type: "function"}
+				tc.Function.Name = part.ToolName
+				args, err := json.Marshal(part.ToolInput)
+				if err != nil || len(args) == 0 {
+					args = []byte("{}")
+				}
+				tc.Function.Arguments = string(args)
+				toolCalls = append(toolCalls, tc)
+			case provider.ContentTypeToolResult:
+				hasToolResult = true
+				toolResultID = part.ToolResultID
+				toolResultContent = part.ToolResultContent
+			}
+		}
+
+		// A tool result is its own role:"tool" message keyed by the call id.
+		if hasToolResult {
+			messages = append(messages, chatMessage{
+				Role:       "tool",
+				ToolCallID: toolResultID,
+				Content:    toolResultContent,
+			})
 			continue
 		}
-		first := m.Content[0]
-		if len(m.Content) == 1 && first.Type == provider.ContentTypeToolResult {
-			cm.ToolCallID = first.ToolResultID
-			cm.Content = first.ToolResultContent
-			messages = append(messages, cm)
-			continue
-		}
-		if len(m.Content) == 1 && first.Type == provider.ContentTypeText {
-			cm.Content = first.Text
-		} else {
-			cm.Content = m.Content
+
+		cm := chatMessage{Role: string(m.Role), Content: textBuf.String()}
+		if len(toolCalls) > 0 {
+			cm.ToolCalls = toolCalls
 		}
 		messages = append(messages, cm)
 	}

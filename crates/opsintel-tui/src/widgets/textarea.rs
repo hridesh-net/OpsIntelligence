@@ -42,6 +42,28 @@ impl TextArea {
         self.buf.is_empty()
     }
 
+    /// Number of display rows the buffer occupies when hard-wrapped to `width`
+    /// columns (newlines force a break). Always at least 1. Used by the host to
+    /// grow the input panel so wrapped text stays visible.
+    pub fn display_rows(&self, width: u16) -> u16 {
+        let w = width.max(1) as usize;
+        let mut rows: u16 = 1;
+        let mut col = 0usize;
+        for ch in self.buf.chars() {
+            if ch == '\n' {
+                rows = rows.saturating_add(1);
+                col = 0;
+                continue;
+            }
+            if col >= w {
+                rows = rows.saturating_add(1);
+                col = 0;
+            }
+            col += 1;
+        }
+        rows
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         if key.kind != KeyEventKind::Press {
             return false;
@@ -148,73 +170,83 @@ pub struct TextAreaView<'a> {
 
 impl<'a> Widget for TextAreaView<'a> {
     fn render(self, rect: Rect, buf: &mut Buffer) {
+        // Empty + unfocused → placeholder.
         if self.area.buf.is_empty() && !self.focused {
-            let p = Paragraph::new(Line::from(Span::styled(
+            Paragraph::new(Line::from(Span::styled(
                 self.area.placeholder.clone(),
                 self.placeholder_style,
             )))
-            .wrap(Wrap { trim: false });
-            p.render(rect, buf);
-            return;
-        }
-        if self.area.buf.is_empty() {
-            // Just a cursor block.
-            let cursor = Span::styled(" ", self.style.add_modifier(Modifier::REVERSED));
-            let p = Paragraph::new(Line::from(vec![cursor])).wrap(Wrap { trim: false });
-            p.render(rect, buf);
+            .wrap(Wrap { trim: false })
+            .render(rect, buf);
             return;
         }
 
+        let width = rect.width.max(1) as usize;
+        let height = rect.height.max(1) as usize;
         let cursor = self.area.cursor.min(self.area.buf.len());
-        let before = &self.area.buf[..cursor];
-        let after = &self.area.buf[cursor..];
+        let normal = self.style;
+        let cursor_style = self.style.add_modifier(Modifier::REVERSED);
 
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        let mut current: Vec<Span<'static>> = Vec::new();
-
-        // Emit "before" text, splitting on '\n'.
-        for ch in before.chars() {
+        // Hard-wrap the buffer into display rows ourselves so the cursor row is
+        // known exactly — that lets us scroll to keep the caret on screen and
+        // guarantees no character is clipped past the right edge. We don't use
+        // Paragraph's Wrap here because it can't report the wrapped cursor row.
+        let mut rows: Vec<String> = vec![String::new()];
+        let mut col = 0usize;
+        let mut cur_row = 0usize;
+        let mut cur_col = 0usize;
+        let mut placed = false;
+        for (b, ch) in self.area.buf.char_indices() {
+            if ch != '\n' && col >= width {
+                rows.push(String::new());
+                col = 0;
+            }
+            if b == cursor {
+                cur_row = rows.len() - 1;
+                cur_col = col;
+                placed = true;
+            }
             if ch == '\n' {
-                lines.push(Line::from(std::mem::take(&mut current)));
-            } else {
-                current.push(Span::styled(ch.to_string(), self.style));
+                rows.push(String::new());
+                col = 0;
+                continue;
             }
+            rows.last_mut().unwrap().push(ch);
+            col += 1;
+        }
+        if !placed {
+            // Caret at end of buffer; it needs its own cell, wrapping if the
+            // final row is already full.
+            if col >= width {
+                rows.push(String::new());
+                col = 0;
+            }
+            cur_row = rows.len() - 1;
+            cur_col = col;
         }
 
-        // Insert cursor.
-        let mut after_chars = after.chars();
-        let cursor_char = after_chars.next();
-        if self.focused {
-            let s = self.style.add_modifier(Modifier::REVERSED);
-            match cursor_char {
-                Some('\n') => {
-                    current.push(Span::styled(" ".to_string(), s));
-                    lines.push(Line::from(std::mem::take(&mut current)));
-                }
-                Some(c) => current.push(Span::styled(c.to_string(), s)),
-                None => current.push(Span::styled(" ".to_string(), s)),
+        // Vertical scroll so the cursor row stays within the visible window.
+        let scroll = cur_row.saturating_sub(height.saturating_sub(1));
+
+        let mut out: Vec<Line<'static>> = Vec::with_capacity(height);
+        for (ri, row) in rows.iter().enumerate().skip(scroll).take(height) {
+            let chars: Vec<char> = row.chars().collect();
+            let mut spans: Vec<Span<'static>> = Vec::with_capacity(chars.len() + 1);
+            for (ci, c) in chars.iter().enumerate() {
+                let st = if self.focused && ri == cur_row && ci == cur_col {
+                    cursor_style
+                } else {
+                    normal
+                };
+                spans.push(Span::styled(c.to_string(), st));
             }
-        } else if let Some(c) = cursor_char {
-            if c == '\n' {
-                lines.push(Line::from(std::mem::take(&mut current)));
-            } else {
-                current.push(Span::styled(c.to_string(), self.style));
+            // Caret sitting just past the last char of its row.
+            if self.focused && ri == cur_row && cur_col >= chars.len() {
+                spans.push(Span::styled(" ".to_string(), cursor_style));
             }
+            out.push(Line::from(spans));
         }
 
-        // Remaining "after" text.
-        for ch in after_chars {
-            if ch == '\n' {
-                lines.push(Line::from(std::mem::take(&mut current)));
-            } else {
-                current.push(Span::styled(ch.to_string(), self.style));
-            }
-        }
-        if !current.is_empty() {
-            lines.push(Line::from(current));
-        }
-
-        let p = Paragraph::new(lines).wrap(Wrap { trim: false });
-        p.render(rect, buf);
+        Paragraph::new(out).render(rect, buf);
     }
 }

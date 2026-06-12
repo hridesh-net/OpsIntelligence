@@ -292,16 +292,25 @@ impl ReplView {
         let pill = format!(" {} ", short_id(&self.state.session_id));
         crate::widgets::chrome::render_pill(f, area, &pill, theme::PRIMARY);
 
+        // Grow the Message panel with the wrapped input, capped so it never
+        // eats the conversation. text width = inner − panel borders (2) −
+        // "› " prefix (2). Panel height = input rows + 2 borders + status +
+        // command bar.
+        const MAX_INPUT_ROWS: u16 = 6;
+        let text_w = inner.width.saturating_sub(4).max(8);
+        let input_rows = self.input.display_rows(text_w).clamp(1, MAX_INPUT_ROWS);
+        let panel_h = input_rows + 4;
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(3),    // chat panel
-                Constraint::Length(5), // input + status
+                Constraint::Min(3),            // chat panel
+                Constraint::Length(panel_h),   // input + status, grows with text
             ])
             .split(inner);
 
         self.render_chat(f, layout[0]);
-        self.render_input(f, layout[1]);
+        self.render_input(f, layout[1], input_rows);
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: Rect) {
@@ -371,7 +380,7 @@ impl ReplView {
         );
     }
 
-    fn render_input(&self, f: &mut Frame, area: Rect) {
+    fn render_input(&self, f: &mut Frame, area: Rect, input_rows: u16) {
         // Input panel (bordered).
         let input_block = crate::widgets::chrome::panel_block(
             "Message",
@@ -383,7 +392,11 @@ impl ReplView {
 
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(input_rows), // input (grows + scrolls)
+                Constraint::Length(1),           // status
+                Constraint::Length(1),           // command bar
+            ])
             .split(inner);
 
         // Input row: "› " prefix + textarea.

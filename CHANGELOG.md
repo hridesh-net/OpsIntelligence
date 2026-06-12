@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.93] — 2026-06-12
+
+### Fixed — Gemini HTTP 400 on any multi-turn conversation that used a tool
+
+Once the agent called a tool (e.g. `write_file` while learning your
+identity), the *next* request 400'd with `Invalid content part type
+"tool_use", expected text or refusal`. The OpenAI-compat request builder
+dumped the assistant's tool call and the tool result as
+`{"type":"tool_use"}` / `{"type":"tool_result"}` content parts, but the
+OpenAI chat schema (which Gemini's compat endpoint enforces) requires tool
+calls in a separate `tool_calls` field and tool results as a `role:"tool"`
+message keyed by `tool_call_id`. `buildBody` now translates all three part
+types correctly. Affects every openai-compat provider (Gemini, Groq,
+Mistral, OpenRouter, vLLM, LM Studio, …); covered by
+`buildbody_test.go`.
+
+### Fixed — REPL input box clipped long messages
+
+The message input was a fixed 1-row box: typing past the width pushed text
+off-screen with no wrap and no scroll. The textarea now hard-wraps to the
+panel width with exact cursor tracking and vertical scroll-to-caret, and
+the Message panel grows with the text (up to 6 rows) before scrolling.
+
 ## [1.0.92] — 2026-06-12
 
 ### Fixed — Docs CI red since v1.0.87
