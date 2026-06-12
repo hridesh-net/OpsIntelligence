@@ -697,6 +697,20 @@ type Manager struct {
 
 	Episodic *EpisodicMemory
 	Semantic SemanticStore
+
+	// Logf, when set, receives progress lines from background jobs (the
+	// Markdown file watcher). Defaults to stdout — hosts that run a
+	// full-screen TUI must point this at their logger or the prints land
+	// on top of the TUI.
+	Logf func(format string, args ...any)
+}
+
+func (m *Manager) logf(format string, args ...any) {
+	if m.Logf != nil {
+		m.Logf(format, args...)
+		return
+	}
+	fmt.Printf(format, args...)
 }
 
 // ListSessions returns all session IDs from both working and episodic memory.

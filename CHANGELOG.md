@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.88] — 2026-06-12
+
+### Fixed — `opsintelligence agent` REPL rendered garbage and got corrupted mid-session
+
+Two independent bugs compounded:
+
+1. **ANSI escapes rendered as literal text.** The Go side built the splash
+   banner with lipgloss (truecolor SGR codes) and shipped it raw over the
+   JSON-RPC protocol; ratatui renders text literally, so the screen filled
+   with fragments like `[1;38;2;255;112;67m` and stray background runs.
+   New `tuibridge.StripANSI` (CSI/OSC/charset-aware) now sanitises the
+   banner, streamed tokens, and tool-result snippets at the protocol edge.
+2. **Process logs wrote over the TUI.** `runAgent` logged to stderr
+   (default level `info`) for the whole session — provider registration,
+   memory watcher `fmt.Printf`s, per-turn subsystem logs all landed on the
+   Rust TUI's alternate screen, smearing the layout (and dumping JSON into
+   the parent shell on exit). In REPL mode all zap output now goes to
+   `<state>/logs/agent-cli.log`, and the Markdown memory watcher gained a
+   `Manager.Logf` hook so its progress lines follow the logger instead of
+   stdout.
+
 ## [1.0.87] — 2026-06-11
 
 ### Fixed — Agents tab in the status TUI was permanently empty

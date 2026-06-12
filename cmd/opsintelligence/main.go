@@ -70,7 +70,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.87" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.88" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -1696,6 +1696,16 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		log.Warn("state directory setup incomplete", zap.Error(err))
 	}
 
+	// The interactive REPL hands the whole terminal to the Rust TUI; any
+	// stderr writes after that (zap's default sink) land on top of the
+	// alternate screen and shred the layout. Swap ALL process logging to a
+	// file now, before the subsystems below start emitting.
+	replMode := message == "" && !serve && !auto
+	if replMode {
+		log = buildLogger(gf.logLevel, filepath.Join(layout.Logs, "agent-cli.log"))
+		defer log.Sync() //nolint:errcheck
+	}
+
 	shutdownTracing := obstracing.Init(ctx, obstracing.Config{
 		Enabled:     cfg.Tracing.Enabled,
 		Endpoint:    cfg.Tracing.OTLPEndpoint,
@@ -1758,6 +1768,10 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		return fmt.Errorf("memory init: %w", err)
 	}
 	defer memMgr.Close()
+	// Watcher progress used to go to stdout, which corrupts the REPL TUI.
+	memMgr.Logf = func(format string, args ...any) {
+		log.Info(strings.TrimSpace(fmt.Sprintf(format, args...)))
+	}
 
 	// Start Markdown memory watcher/synchronizer
 	go func() {
@@ -2069,10 +2083,9 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 		}
 	}
 
-	// Bubbletea uses the alternate screen; zap JSON on stderr corrupts the layout and
-	// causes flicker. When we're headed for REPL-only mode, send agent-loop logs to the
-	// run trace file (same path as structured run_trace) instead of the terminal.
-	replMode := message == "" && !serve && !auto
+	// The agent loop's own logs go to the run trace file in REPL mode so the
+	// Logs tab can tail one canonical stream (the global `log` already points
+	// at agent-cli.log — see the swap right after layout.EnsureAll above).
 	runnerLog := log
 	if replMode {
 		runnerLog = buildLogger(gf.logLevel, layout.AgentRunTrace())

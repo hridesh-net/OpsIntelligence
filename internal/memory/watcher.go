@@ -22,7 +22,7 @@ func (m *Manager) Watch(ctx context.Context, registry *embeddings.Registry, work
 
 	// Initial sync
 	if err := m.SyncFiles(ctx, registry, workspaceDir); err != nil {
-		fmt.Printf("[memory] initial sync error: %v\n", err)
+		m.logf("[memory] initial sync error: %v\n", err)
 	}
 
 	// Watch the root and the memory/ subdirectory
@@ -32,10 +32,10 @@ func (m *Manager) Watch(ctx context.Context, registry *embeddings.Registry, work
 	memoryDir := filepath.Join(workspaceDir, "memory")
 	_ = os.MkdirAll(memoryDir, 0755)
 	if err := watcher.Add(memoryDir); err != nil {
-		fmt.Printf("[memory] warning: could not watch memory directory: %v\n", err)
+		m.logf("[memory] warning: could not watch memory directory: %v\n", err)
 	}
 
-	fmt.Printf("[memory] watching for changes in %s\n", workspaceDir)
+	m.logf("[memory] watching for changes in %s\n", workspaceDir)
 
 	debouncer := make(map[string]*time.Timer)
 
@@ -62,7 +62,7 @@ func (m *Manager) Watch(ctx context.Context, registry *embeddings.Registry, work
 				debouncer[event.Name] = time.AfterFunc(500*time.Millisecond, func() {
 					relPath, _ := filepath.Rel(workspaceDir, event.Name)
 					if err := m.syncFile(ctx, registry, workspaceDir, event.Name, relPath); err != nil {
-						fmt.Printf("[memory] error syncing changed file %s: %v\n", relPath, err)
+						m.logf("[memory] error syncing changed file %s: %v\n", relPath, err)
 					}
 				})
 			}
@@ -70,9 +70,9 @@ func (m *Manager) Watch(ctx context.Context, registry *embeddings.Registry, work
 			// Delete event
 			if event.Has(fsnotify.Remove) {
 				relPath, _ := filepath.Rel(workspaceDir, event.Name)
-				fmt.Printf("[memory] file removed: %s, clearing index\n", relPath)
+				m.logf("[memory] file removed: %s, clearing index\n", relPath)
 				if err := m.Semantic.DeleteBySource(ctx, relPath); err != nil {
-					fmt.Printf("[memory] error deleting source %s: %v\n", relPath, err)
+					m.logf("[memory] error deleting source %s: %v\n", relPath, err)
 				}
 			}
 
@@ -80,7 +80,7 @@ func (m *Manager) Watch(ctx context.Context, registry *embeddings.Registry, work
 			if !ok {
 				return nil
 			}
-			fmt.Printf("[memory] watcher error: %v\n", err)
+			m.logf("[memory] watcher error: %v\n", err)
 		}
 	}
 }

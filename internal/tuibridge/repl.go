@@ -131,7 +131,7 @@ func RunREPL(ctx context.Context, opts ReplOptions) error {
 			"model_name":     opts.ModelName,
 			"provider_count": opts.ProviderCount,
 			"skill_count":    opts.SkillCount,
-			"banner":         opts.Banner,
+			"banner":         StripANSI(opts.Banner),
 		},
 	}); err != nil {
 		return err
@@ -162,7 +162,7 @@ func (s *streamForwarder) send(method string, params any) {
 }
 
 func (s *streamForwarder) OnToken(t string) {
-	s.send("agent.delta", map[string]any{"kind": "token", "text": t})
+	s.send("agent.delta", map[string]any{"kind": "token", "text": StripANSI(t)})
 }
 
 func (s *streamForwarder) OnToolCall(name string, input json.RawMessage) {
@@ -177,7 +177,7 @@ func (s *streamForwarder) OnToolResult(name, result string) {
 	s.send("agent.delta", map[string]any{
 		"kind":   "tool_result",
 		"name":   name,
-		"result": resultSnippet(result),
+		"result": StripANSI(resultSnippet(result)),
 	})
 }
 
