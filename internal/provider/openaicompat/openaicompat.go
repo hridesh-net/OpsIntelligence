@@ -9,13 +9,57 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/opsintelligence/opsintelligence/internal/provider"
 )
+
+// providerTrace appends raw request/response data to the file named by
+// OPSINTEL_PROVIDER_TRACE. Debug aid for "the model returned nothing"
+// class of bugs — shows exactly what went over the wire.
+func providerTrace(label string, data []byte) {
+	path := os.Getenv("OPSINTEL_PROVIDER_TRACE")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "── %s %s ──\n%s\n", time.Now().Format(time.RFC3339), label, data)
+}
+
+// traceBody wraps an SSE response body so every byte read is mirrored into
+// the OPSINTEL_PROVIDER_TRACE file. No-op wrapper when tracing is off.
+func traceBody(rc io.ReadCloser) io.ReadCloser {
+	path := os.Getenv("OPSINTEL_PROVIDER_TRACE")
+	if path == "" {
+		return rc
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return rc
+	}
+	return &teeReadCloser{r: io.TeeReader(rc, f), c: rc, f: f}
+}
+
+type teeReadCloser struct {
+	r io.Reader
+	c io.Closer
+	f *os.File
+}
+
+func (t *teeReadCloser) Read(p []byte) (int, error) { return t.r.Read(p) }
+func (t *teeReadCloser) Close() error {
+	_ = t.f.Close()
+	return t.c.Close()
+}
 
 const defaultTimeout = 120 * time.Second
 
@@ -267,6 +311,7 @@ func (p *Provider) Stream(ctx context.Context, req *provider.CompletionRequest) 
 	if err != nil {
 		return nil, err
 	}
+	providerTrace(p.Name()+" stream request", body)
 	httpReq, err := p.newRequest(ctx, http.MethodPost, "/chat/completions", body)
 	if err != nil {
 		return nil, err
@@ -280,6 +325,7 @@ func (p *Provider) Stream(ctx context.Context, req *provider.CompletionRequest) 
 		httpResp.Body.Close()
 		return nil, parseError(p.Name(), httpResp)
 	}
+	httpResp.Body = traceBody(httpResp.Body)
 
 	ch := make(chan provider.StreamEvent, 64)
 	go func() {
@@ -442,6 +488,10 @@ func (p *Provider) buildBody(req *provider.CompletionRequest, stream bool) ([]by
 
 func readSSE(ctx context.Context, resp *http.Response, ch chan<- provider.StreamEvent) {
 	scanner := bufio.NewScanner(resp.Body)
+	// Default Scanner cap is 64KB per line; Gemini and several compat
+	// servers pack large deltas into single SSE lines. A too-small buffer
+	// makes Scan() fail silently and the stream just stops.
+	scanner.Buffer(make([]byte, 256*1024), 4*1024*1024)
 
 	// State for accumulating fragmented JSON tool calls during the stream
 	type activeToolCall struct {
@@ -450,6 +500,17 @@ func readSSE(ctx context.Context, resp *http.Response, ch chan<- provider.Stream
 		Arguments string
 	}
 	var activeToolCalls []*activeToolCall
+
+	// Usage handling must tolerate BOTH conventions:
+	//   - OpenAI: usage arrives once, in a dedicated final chunk with empty
+	//     choices (stream_options.include_usage).
+	//   - Gemini's OpenAI-compat endpoint: cumulative usage is attached to
+	//     EVERY chunk, alongside real content.
+	// The old code treated any usage-bearing chunk as the end of the stream
+	// and returned before processing its choices — on Gemini that killed the
+	// stream at chunk #1 and every reply rendered empty. Remember the most
+	// recent usage instead and emit it exactly once at [DONE] / EOF.
+	var lastUsage *provider.TokenUsage
 
 	for scanner.Scan() {
 		select {
@@ -464,7 +525,7 @@ func readSSE(ctx context.Context, resp *http.Response, ch chan<- provider.Stream
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			ch <- provider.StreamEvent{Type: provider.StreamEventDone}
+			ch <- provider.StreamEvent{Type: provider.StreamEventDone, Usage: lastUsage}
 			return
 		}
 		var chunk struct {
@@ -492,15 +553,11 @@ func readSSE(ctx context.Context, resp *http.Response, ch chan<- provider.Stream
 			continue
 		}
 		if chunk.Usage != nil {
-			ch <- provider.StreamEvent{
-				Type: provider.StreamEventDone,
-				Usage: &provider.TokenUsage{
-					PromptTokens:     chunk.Usage.PromptTokens,
-					CompletionTokens: chunk.Usage.CompletionTokens,
-					TotalTokens:      chunk.Usage.TotalTokens,
-				},
+			lastUsage = &provider.TokenUsage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
 			}
-			return
 		}
 		for _, c := range chunk.Choices {
 			if c.Delta.Content != "" {
@@ -556,6 +613,11 @@ func readSSE(ctx context.Context, resp *http.Response, ch chan<- provider.Stream
 			}
 		}
 	}
+
+	// Stream ended without a [DONE] sentinel (EOF, connection close, or a
+	// scanner error on an oversized line). Surface whatever usage we saw so
+	// accounting still lands.
+	ch <- provider.StreamEvent{Type: provider.StreamEventDone, Usage: lastUsage}
 }
 
 func parseError(provName string, resp *http.Response) error {

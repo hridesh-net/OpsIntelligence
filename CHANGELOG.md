@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.90] — 2026-06-12
+
+### Fixed — Gemini replies rendered empty (every reply, all surfaces)
+
+The OpenAI-compat SSE parser treated any usage-bearing chunk as the
+dedicated final usage chunk (OpenAI's `stream_options.include_usage`
+convention) and ended the stream there — before processing that chunk's
+`choices`. Gemini's OpenAI-compat endpoint attaches cumulative `usage` to
+EVERY chunk, so the stream died at chunk #1: the model's text was
+discarded, the turn ended "stop" with plausible token counts, and the
+REPL/chat showed `▸ 1 iter · N tok` with no reply. Affected every
+`gemini/*` model (and any compat server that inlines usage), on every
+surface (REPL, /api/chat, channels).
+
+- `readSSE` now remembers the latest usage and emits it exactly once at
+  `[DONE]` (or EOF when a server closes without the sentinel), processing
+  every chunk's content regardless of usage presence.
+- Scanner line buffer raised 64KB → 4MB: large single-line SSE deltas
+  previously made `bufio.Scanner` fail silently, truncating long replies.
+- New `OPSINTEL_PROVIDER_TRACE=<file>` env dumps the raw request body and
+  SSE bytes for any openai-compat provider — the debugging aid that found
+  this.
+- Regression tests cover both SSE conventions, tool-call assembly with
+  per-chunk usage, oversized lines, and EOF-without-DONE.
+
 ## [1.0.89] — 2026-06-12
 
 ### Security — Enterprise Phase 1: identity reaches the agent loop
