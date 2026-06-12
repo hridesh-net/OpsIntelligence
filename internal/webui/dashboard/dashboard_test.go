@@ -97,6 +97,36 @@ func TestAssets_EmbedsHashedBundle(t *testing.T) {
 	}
 }
 
+// TestHandler_BoardsServesScrun pins the Boards-tab entry: every alias
+// must return the Scrun bundle's HTML with a 200 — NOT a redirect.
+// http.FileServer 301-redirects any "/index.html" path to "./", which used
+// to bounce /dashboard/kanban back to /dashboard/app (the Boards tab opened
+// the dashboard again instead of Scrun). Regression guard for that.
+func TestHandler_BoardsServesScrun(t *testing.T) {
+	srv := httptest.NewServer(http.StripPrefix("/dashboard", Handler()))
+	defer srv.Close()
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	for _, path := range []string{"/kanban", "/boards", "/scrun"} {
+		resp, err := client.Get(srv.URL + "/dashboard" + path)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d (Location=%q), want 200 — the Boards tab must not redirect",
+				path, resp.StatusCode, resp.Header.Get("Location"))
+		}
+		if !strings.Contains(string(body), "/dashboard/scrun/assets/") {
+			t.Fatalf("%s: body is not the Scrun bundle", path)
+		}
+	}
+}
+
 func getDashboard(t *testing.T, path string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.StripPrefix("/dashboard", Handler()))

@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.94] — 2026-06-12
+
+### Fixed — Boards tab opened the dashboard again instead of Scrun
+
+Clicking **Boards** opened a new tab that bounced straight back to
+`/dashboard/app`. The dashboard handler rewrote the request path to
+`/scrun/index.html` and handed it to `http.FileServer`, whose built-in URL
+canonicalisation **301-redirects any `/index.html` path to `./`** — so
+`/dashboard/kanban` → `./` → `/dashboard/` → `/dashboard/app`, and the
+Boards tab never reached Scrun. The handler now writes the Scrun entry
+HTML's bytes directly (new `serveEntry`), bypassing FileServer's redirect,
+for all three aliases (`/dashboard/kanban`, `/boards`, `/scrun`). Regression
+test in `dashboard_test.go` asserts each returns 200 with the Scrun bundle,
+not a redirect.
+
 ## [1.0.93] — 2026-06-12
 
 ### Fixed — Gemini HTTP 400 on any multi-turn conversation that used a tool

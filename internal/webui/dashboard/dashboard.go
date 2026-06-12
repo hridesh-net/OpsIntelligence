@@ -73,15 +73,31 @@ func Handler() http.Handler {
 			r.URL.Path = "/login.html"
 			htmlEntry = true
 		case path == "kanban" || path == "boards" || path == "scrun" || path == "scrun/":
-			// Boards tab. The React Scrun bundle is emitted under
-			// assets/scrun/ by scrun/vite.config.ts; the entry point
-			// is its index.html.
-			r.URL.Path = "/scrun/index.html"
-			htmlEntry = true
+			// Boards tab → the React Scrun bundle under assets/scrun/.
+			// Serve the entry HTML's bytes directly: rewriting to
+			// "/scrun/index.html" and handing it to http.FileServer
+			// trips its built-in canonicalisation, which 301-redirects any
+			// "/index.html" path to "./" — that bounced the Boards tab back
+			// to /dashboard/ → /dashboard/app instead of showing Scrun.
+			setDashboardHeaders(w, true)
+			serveEntry(w, r, assets, "scrun/index.html")
+			return
 		}
 		setDashboardHeaders(w, htmlEntry)
 		static.ServeHTTP(w, r)
 	})
+}
+
+// serveEntry writes a single embedded HTML entry file directly, bypassing
+// http.FileServer so its "/index.html" → "./" redirect never fires.
+func serveEntry(w http.ResponseWriter, r *http.Request, assets fs.FS, name string) {
+	data, err := fs.ReadFile(assets, name)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(data)
 }
 
 // setDashboardHeaders stamps the small set of security headers the
