@@ -5,7 +5,7 @@ import Logo from "../Logo";
 import { ArrowRight, Check, ChevronRight, Close, Grip } from "../Icons";
 import s from "./Setup.module.css";
 
-const SU_COLORS = ["#2898da", "#2dd4bf", "#a78bfa", "#f5b042", "#34d399", "#f4685f", "#60a5fa"];
+const SU_COLORS = ["#e4572e", "#2898da", "#2dd4bf", "#a78bfa", "#f5b042", "#34d399", "#60a5fa"];
 const STEPS = [
   ["Project", "Name, key & accent"],
   ["Workflow", "Stages & gates"],

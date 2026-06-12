@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.91] — 2026-06-12
+
+### Added — Scrun boards gallery: pick or create a board before entering it
+
+Clicking **Boards** on the dashboard now lands on a boards gallery instead
+of auto-loading the first board: every configured board renders as a card
+(key chip, accent bar, description), with a dashed "Create a new board"
+tile that launches the setup wizard. Opening a card enters that board's
+full Scrun workspace; the wizard now lands inside the board it just
+created. A new "All boards" entry at the top of the workspace rail
+returns to the gallery.
+
+- New `boards` phase + `openBoard`/`goToBoards` store actions;
+  `loadBoard(id)` extracted from `loadFirstBoard` in the API client.
+- Fixed a latent metadata bug: board `key`/`color`/`description` are
+  stored inside `board.config` by the gateway but were read top-level —
+  every board silently fell back to "AI"/default colour. New `boardMeta()`
+  helper resolves both locations.
+- Demo fallback unchanged: if the daemon API is unreachable, the app
+  drops to the demo board as before.
+
+### Changed — Scrun adopts the OpsIntelligence brand theme
+
+Default accent across both Scrun themes switched from blue `#2898da` to
+the dashboard's brand orange (`#e4572e` dark / `#d44a22` light),
+including the wizard colour palette (orange first), accent presets and
+favicon. Per-board accent colours still override.
+
 ## [1.0.90] — 2026-06-12
 
 ### Fixed — Gemini replies rendered empty (every reply, all surfaces)

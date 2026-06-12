@@ -17,6 +17,7 @@ import type {
   Stage,
   Theme,
 } from "../types";
+import type { BoardSummary } from "../api/kanban";
 
 export interface AppData {
   /* domain */
@@ -36,11 +37,15 @@ export interface AppData {
   boardDesc: string;
   boardAgents: AgentKey[];
 
+  /* boards gallery — every board on the server (live mode) */
+  boards: BoardSummary[];
+
   /* data source */
   apiMode: "loading" | "live" | "demo";
 
-  /* ui */
-  phase: "setup" | "app";
+  /* ui — "boards" is the landing gallery (pick or create a board);
+     "setup" is the creation wizard; "app" is a board's full workspace */
+  phase: "setup" | "boards" | "app";
   screen: Screen;
   layout: Layout;
   density: Density;

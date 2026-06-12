@@ -15,6 +15,7 @@ import TaskDetailModal from "./components/modals/TaskDetailModal";
 import TaskFormModal from "./components/modals/TaskFormModal";
 import AgentConfigModal from "./components/modals/AgentConfigModal";
 import SetupWizard from "./components/setup/SetupWizard";
+import BoardsHome from "./components/screens/BoardsHome";
 import Tweaks from "./components/tweaks/Tweaks";
 import Toast from "./components/Toast";
 
@@ -42,7 +43,7 @@ export default function App() {
 
   /* accent — only drive it from app state once launched (the wizard owns it during setup) */
   useEffect(() => {
-    if (phase === "app") applyAccentVars(accent);
+    if (phase !== "setup") applyAccentVars(accent);
   }, [accent, phase]);
 
   /* live simulation loop */
@@ -75,6 +76,15 @@ export default function App() {
     return (
       <>
         <SetupWizard />
+        <Toast />
+      </>
+    );
+  }
+
+  if (phase === "boards") {
+    return (
+      <>
+        <BoardsHome />
         <Toast />
       </>
     );

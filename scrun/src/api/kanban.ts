@@ -62,6 +62,20 @@ export interface BoardSummary {
 
 export interface BoardConfig {
   column_overrides?: Record<string, ColumnOverride>;
+  /* wizard metadata — the gateway stores these inside board.config */
+  key?: string;
+  color?: string;
+  description?: string;
+}
+
+/** Board display metadata; top-level fields win, config-stored wizard values
+    fall back (the gateway persists key/color/description inside config). */
+export function boardMeta(b: BoardSummary | undefined): { key: string; color: string; desc: string } {
+  return {
+    key: b?.key || b?.config?.key || "AI",
+    color: b?.color || b?.config?.color || "#e4572e",
+    desc: b?.description || b?.config?.description || "",
+  };
 }
 
 export interface ColumnOverride {
@@ -395,22 +409,12 @@ export type LoadResult =
   | { ok: true; data: HydratedBoard }
   | { ok: false; reason: "no-boards" | "error"; error?: unknown };
 
-export async function loadFirstBoard(): Promise<LoadResult> {
+/** Fetch one board's full detail (columns, cards, agents) by id. */
+export async function loadBoard(boardID: string): Promise<LoadResult> {
   try {
-    const boards = await listBoards();
-    if (!boards.length) return { ok: false, reason: "no-boards" };
-
-    let pick = boards[0];
-    const saved = localStorage.getItem("scrun.lastBoard");
-    if (saved) {
-      const hit = boards.find((b) => b.id === saved);
-      if (hit) pick = hit;
-    }
-    localStorage.setItem("scrun.lastBoard", pick.id);
-
     const [detail, agents] = await Promise.all([
-      getBoard(pick.id),
-      listAgents(pick.id).catch(() => [] as BoardAgent[]),
+      getBoard(boardID),
+      listAgents(boardID).catch(() => [] as BoardAgent[]),
     ]);
 
     const overrides = detail.board?.config?.column_overrides || {};
@@ -424,20 +428,40 @@ export async function loadFirstBoard(): Promise<LoadResult> {
       agentStats[a.id] = { tasks: 0, success: 0, spend: 0 };
     });
 
+    const meta = boardMeta(detail.board);
     return {
       ok: true,
       data: {
-        boardId: pick.id,
+        boardId: boardID,
         boardName: detail.board?.name || "Board",
-        boardKey: detail.board?.key || "AI",
-        boardColor: detail.board?.color || "#2898da",
-        boardDesc: detail.board?.description || "",
+        boardKey: meta.key,
+        boardColor: meta.color,
+        boardDesc: meta.desc,
         agents: agentsObj,
         workflow,
         cards,
         agentStats,
       },
     };
+  } catch (error) {
+    console.warn("[scrun] API load failed:", error);
+    return { ok: false, reason: "error", error };
+  }
+}
+
+export async function loadFirstBoard(): Promise<LoadResult> {
+  try {
+    const boards = await listBoards();
+    if (!boards.length) return { ok: false, reason: "no-boards" };
+
+    let pick = boards[0];
+    const saved = localStorage.getItem("scrun.lastBoard");
+    if (saved) {
+      const hit = boards.find((b) => b.id === saved);
+      if (hit) pick = hit;
+    }
+    localStorage.setItem("scrun.lastBoard", pick.id);
+    return loadBoard(pick.id);
   } catch (error) {
     console.warn("[scrun] API load failed:", error);
     return { ok: false, reason: "error", error };

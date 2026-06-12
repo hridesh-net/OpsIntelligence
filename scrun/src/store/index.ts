@@ -36,9 +36,11 @@ function initialData(): AppData {
     boardId: null,
     boardName: "AI Workforce Board",
     boardKey: "AI",
-    boardColor: "#2898da",
+    boardColor: "#e4572e",
     boardDesc: "",
     boardAgents: firstFive,
+
+    boards: [],
 
     apiMode: "loading",
 
@@ -47,7 +49,7 @@ function initialData(): AppData {
     layout: prefs.layout ?? "columns",
     density: prefs.density ?? "rich",
     theme: prefs.theme ?? "light",
-    accent: prefs.accent ?? "#2898da",
+    accent: prefs.accent ?? "#e4572e",
     simSpeed: 2200,
     simRunning: prefs.simRunning ?? true,
     dragging: false,
@@ -71,7 +73,7 @@ function initialData(): AppData {
       name: "AI Workforce Board",
       key: "AI",
       desc: "",
-      color: "#2898da",
+      color: "#e4572e",
       preset: "dev",
       stages: null,
       agents: firstFive,
@@ -169,6 +171,10 @@ export interface Actions {
   /* live api */
   hydrateFromApi: () => Promise<void>;
   switchBoard: (id: string) => Promise<void>;
+  /** Open one board's full workspace (remembers it for deep links). */
+  openBoard: (id: string) => Promise<void>;
+  /** Return to the boards gallery and refresh the list. */
+  goToBoards: () => Promise<void>;
 }
 
 export type Store = AppData & Actions;
@@ -564,11 +570,11 @@ export const useStore = create<Store>()(
             get().showToast(get().setup.name + " is live");
             API.createBoard(payload as unknown as Record<string, unknown>)
               .then((b) => {
-                API.rememberBoard(b.id);
                 set((s) => { s.boardId = b.id; });
-                // Re-hydrate so the board reflects what the server actually
-                // stored (column IDs, agent IDs, normalised values).
-                get().hydrateFromApi();
+                // Re-hydrate the specific board so it reflects what the
+                // server actually stored (column IDs, agent IDs, normalised
+                // values) — and land inside it, not back on the gallery.
+                get().openBoard(b.id);
               })
               .catch((e) => {
                 get().showToast(`Save failed: ${(e as Error).message}`);
@@ -607,25 +613,29 @@ export const useStore = create<Store>()(
 
       /* ---------- live api ---------- */
       hydrateFromApi: async () => {
-        const result = await API.loadFirstBoard();
-        if (!result.ok) {
-          // Respect the design's localStorage-first flow:
-          //  - No boards on the server AND no completed setup locally → wizard.
-          //  - No boards on the server BUT user has previously completed setup
-          //    → stay on whatever initialData() decided (board with demo data).
-          //  - Transient API error → drop to "demo" so writeback paths short-
-          //    circuit; never bounce the user back to the wizard.
+        // Entry flow: land on the boards gallery — every configured board
+        // plus "create new". Opening or creating a board enters the full
+        // workspace. Transient API errors drop to "demo" so writeback paths
+        // short-circuit; never bounce the user back to the wizard.
+        try {
+          const boards = await API.listBoards();
           set((s) => {
-            if (result.reason === "no-boards") {
-              s.apiMode = "live";
-              if (!s.setup.done) {
-                s.phase = "setup";
-                s.setup.step = 0;
-              }
-            } else {
-              s.apiMode = "demo";
-            }
+            s.apiMode = "live";
+            s.boards = boards;
+            s.phase = "boards";
           });
+        } catch (e) {
+          console.warn("[scrun] boards list failed:", e);
+          set((s) => {
+            s.apiMode = "demo";
+          });
+        }
+      },
+      openBoard: async (id) => {
+        API.rememberBoard(id);
+        const result = await API.loadBoard(id);
+        if (!result.ok) {
+          get().showToast("Could not open board — is the daemon running?");
           return;
         }
         const d = result.data;
@@ -652,9 +662,21 @@ export const useStore = create<Store>()(
           s.setup.agents = Object.keys(d.agents);
         });
       },
+      goToBoards: async () => {
+        set((s) => {
+          s.phase = "boards";
+        });
+        try {
+          const boards = await API.listBoards();
+          set((s) => {
+            s.boards = boards;
+          });
+        } catch {
+          /* keep the stale list; gallery still renders */
+        }
+      },
       switchBoard: async (id) => {
-        API.rememberBoard(id);
-        await get().hydrateFromApi();
+        await get().openBoard(id);
       },
     };
   }),
