@@ -16,6 +16,7 @@ import TaskFormModal from "./components/modals/TaskFormModal";
 import AgentConfigModal from "./components/modals/AgentConfigModal";
 import SetupWizard from "./components/setup/SetupWizard";
 import BoardsHome from "./components/screens/BoardsHome";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Tweaks from "./components/tweaks/Tweaks";
 import Toast from "./components/Toast";
 
@@ -99,11 +100,13 @@ export default function App() {
         <StatsStrip />
         <div className={shell.screenWrap}>
           <section className={shell.screen}>
-            {screen === "board" && <Board />}
-            {screen === "workflows" && <Workflows />}
-            {screen === "agents" && <Agents />}
-            {screen === "activity" && <ActivityScreen />}
-            {screen === "analytics" && <Analytics />}
+            <ErrorBoundary onReset={() => useStore.getState().goToBoards()}>
+              {screen === "board" && <Board />}
+              {screen === "workflows" && <Workflows />}
+              {screen === "agents" && <Agents />}
+              {screen === "activity" && <ActivityScreen />}
+              {screen === "analytics" && <Analytics />}
+            </ErrorBoundary>
           </section>
         </div>
       </div>

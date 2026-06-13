@@ -34,7 +34,15 @@ export default function TaskDetailModal() {
   const k = st.cards.find((x) => x.id === st.selectedId);
   if (!k) return null;
   const tab = st.panelTab;
-  const a0 = st.agents[k.agents[0]];
+  // Fallback keeps the modal rendering when a card's assignee isn't among the
+  // loaded board agents (live boards) instead of crashing on a0.model/.caps.
+  const a0 = st.agents[k.agents[0]] ?? {
+    name: "Unassigned",
+    model: "—",
+    color: "var(--text-faint)",
+    ini: "—",
+    caps: [] as string[],
+  };
 
   const statusPill = (
     <span className={"pill " + k.status}><span className="pd" />{STATUS_LABEL[k.status]}</span>
@@ -46,6 +54,7 @@ export default function TaskDetailModal() {
       <div className={m["p-agents"]}>
         {k.agents.map((ak) => {
           const a = st.agents[ak];
+          if (!a) return null;
           return (
             <div className={m["p-agent"]} key={ak}>
               <Avatar color={a.color} ini={a.ini} name={a.name} />

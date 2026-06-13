@@ -18,6 +18,7 @@ export default function Activity() {
           {items.length === 0 && <div className="p-desc" style={{ color: "var(--text-faint)" }}>No activity yet — the agents are warming up.</div>}
           {items.map((e, i) => {
             const a = st.agents[e.agent];
+            if (!a) return null;
             return (
               <div className={s.fitem} key={e.time + e.id + i}>
                 <span className={s.fdot} style={{ background: a.color }}>{a.ini}</span>
@@ -45,6 +46,7 @@ export default function Activity() {
         {running.length === 0 && <div className="p-desc" style={{ color: "var(--text-faint)", fontSize: 12 }}>Nothing running</div>}
         {running.map((k) => {
           const a = st.agents[k.agents[0]];
+          if (!a) return null;
           return (
             <div className={s["mini-agent"]} key={k.id}>
               <Avatar color={a.color} ini={a.ini} name={a.name} />

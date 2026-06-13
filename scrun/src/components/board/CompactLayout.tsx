@@ -50,6 +50,7 @@ export default function CompactLayout() {
                       <div className={c.agents} style={{ margin: 0 }}>
                         {k.agents.map((ak, i) => {
                           const a = st.agents[ak];
+                          if (!a) return null;
                           return <Avatar key={ak} color={a.color} ini={a.ini} name={a.name} stack={i > 0} />;
                         })}
                       </div>

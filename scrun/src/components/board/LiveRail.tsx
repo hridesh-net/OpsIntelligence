@@ -24,6 +24,7 @@ export default function LiveRail() {
         {items.length === 0 && <div className={s.empty}>Waiting for agent activity…</div>}
         {items.map((e, i) => {
           const a = agents[e.agent];
+          if (!a) return null;
           return (
             <div className={s["lr-item"]} key={e.time + e.id + i}>
               <span className={s.lav} style={{ background: a.color }}>

@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.95] — 2026-06-13
+
+### Fixed — Opening a live board showed a blank white screen
+
+Every board card crashed React with `Cannot read properties of undefined
+(reading 'model')`: the `Card` dereferenced `agentsMap[card.agents[0]].model`
+unconditionally, but live boards carry cards whose assignee isn't among the
+loaded board agents (or no assignee at all). The demo seed always had
+agents, so this only surfaced once boards came from the API — taking down
+the whole Scrun tab.
+
+- `Card` now resolves agents defensively (drops unknown ids, renders
+  "Unassigned", hides the model chip when there's no agent). Same guard
+  applied to `CompactLayout`, `LanesLayout`, `TaskDetailModal`, the
+  `Activity` feed and `LiveRail`.
+- Added an `ErrorBoundary` around the screen area so any future render
+  crash shows a recovery card ("Back to boards") instead of a white
+  screen.
+
 ## [1.0.94] — 2026-06-12
 
 ### Fixed — Boards tab opened the dashboard again instead of Scrun

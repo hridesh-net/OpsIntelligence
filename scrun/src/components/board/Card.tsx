@@ -37,7 +37,12 @@ export default function Card({ k }: { k: CardT }) {
   const setDragging = useStore((s) => s.setDragging);
   const [drag, setDrag] = useState(false);
 
-  const a0 = agentsMap[k.agents[0]];
+  // Resolve assigned agents, dropping any id that isn't in the loaded map.
+  // Live boards can carry cards whose assignee isn't among the board's
+  // agents (or no assignee at all) — without this guard the Card crashed
+  // on `a0.model`/`a0.color` and blanked the whole board.
+  const resolvedAgents = k.agents.map((ak) => agentsMap[ak]).filter(Boolean);
+  const a0 = resolvedAgents[0];
   const cls = [
     c.card,
     c.lvl,
@@ -71,18 +76,22 @@ export default function Card({ k }: { k: CardT }) {
       </div>
       <div className={c.ctitle2}>{k.title}</div>
       <div className={c.agents}>
-        {k.agents.length === 1 ? (
+        {resolvedAgents.length === 0 ? (
+          <>
+            <Avatar color="var(--text-faint)" ini="—" name="Unassigned" />
+            <span className="aname">Unassigned</span>
+          </>
+        ) : resolvedAgents.length === 1 ? (
           <>
             <Avatar color={a0.color} ini={a0.ini} name={a0.name} />
             <span className="aname">{a0.name}</span>
           </>
         ) : (
           <>
-            {k.agents.map((ak, i) => {
-              const a = agentsMap[ak];
-              return <Avatar key={ak} color={a.color} ini={a.ini} name={a.name} stack={i > 0} />;
-            })}
-            <span className="aname">{k.agents.length} agents</span>
+            {resolvedAgents.map((a, i) => (
+              <Avatar key={a.name + i} color={a.color} ini={a.ini} name={a.name} stack={i > 0} />
+            ))}
+            <span className="aname">{resolvedAgents.length} agents</span>
           </>
         )}
       </div>
@@ -91,7 +100,7 @@ export default function Card({ k }: { k: CardT }) {
           <span className="pd" />
           {STATUS_LABEL[k.status]}
         </span>
-        <span className="model">{a0.model}</span>
+        {a0?.model && <span className="model">{a0.model}</span>}
       </div>
 
       {k.status === "running" && k.progress != null && (
