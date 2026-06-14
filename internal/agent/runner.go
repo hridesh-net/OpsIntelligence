@@ -701,6 +701,7 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 		r.doFlush(ctx, &totalUsage)
 	}
 
+	guard := newLoopGuard()
 	for iterations < r.cfg.MaxIterations {
 		iterations++
 		r.traceLoopIteration = iterations
@@ -804,6 +805,19 @@ func (r *Runner) Run(ctx context.Context, msg memory.Message) (*RunResult, error
 			if err := r.memory.Episodic.Save(ctx, toolResultMsg); err != nil {
 				r.log.Warn("episodic save failed", zap.Error(err))
 			}
+		}
+
+		// Loop guard: bail out if the model keeps re-issuing the same failing call.
+		if tripped, name, n := guard.record(toolResults); tripped {
+			msg := loopBreakMessage(name, n)
+			r.log.Warn("agent: loop guard tripped", zap.String("tool", name), zap.Int("repeats", n))
+			r.emitTraceTaskDone(ctx, iterations, "loop_break", msg)
+			return &RunResult{
+				SessionID:  r.sessionID,
+				Response:   msg,
+				Iterations: iterations,
+				Usage:      totalUsage,
+			}, nil
 		}
 	}
 
@@ -935,6 +949,43 @@ func (r *Runner) boundedToolExecute(ctx context.Context, tc provider.ContentPart
 type toolCallResult struct {
 	tc     provider.ContentPart
 	result string
+}
+
+// loopBreakRepeats is how many times an identical tool call (same name + same
+// input) may recur within one Run/RunStream before the loop guard trips. A
+// model that keeps re-issuing a failing call (e.g. forgetting a required arg)
+// would otherwise narrate every retry up to MaxIterations.
+const loopBreakRepeats = 3
+
+// loopGuard detects a no-progress loop: the model re-issuing the exact same
+// tool call (name + input) over and over. Keyed on input, not result, so it
+// catches the failure regardless of how the error text reads.
+type loopGuard struct {
+	seen map[string]int
+}
+
+func newLoopGuard() *loopGuard { return &loopGuard{seen: make(map[string]int)} }
+
+// record ingests one iteration's tool results. It returns (tripped, toolName,
+// count) when any identical call has now recurred loopBreakRepeats times.
+func (g *loopGuard) record(results []toolCallResult) (bool, string, int) {
+	for _, tr := range results {
+		input, _ := json.Marshal(tr.tc.ToolInput)
+		sig := tr.tc.ToolName + "|" + string(input)
+		g.seen[sig]++
+		if g.seen[sig] >= loopBreakRepeats {
+			return true, tr.tc.ToolName, g.seen[sig]
+		}
+	}
+	return false, "", 0
+}
+
+// loopBreakMessage is the user-facing explanation when the guard trips.
+func loopBreakMessage(toolName string, count int) string {
+	return fmt.Sprintf(
+		"I stopped because I called `%s` with the same input %d times and kept getting the same result — I was looping rather than making progress. "+
+			"This usually means a required argument is missing or wrong. Try rephrasing your request with the specific details (e.g. the exact repository as `owner/name`), or ask me something more narrowly scoped.",
+		toolName, count)
 }
 
 // executeToolCallsParallel runs tool calls with bounded concurrency (up to 4
@@ -1799,6 +1850,7 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 		r.doFlushStream(ctx, handler, &totalUsage)
 	}
 
+	guard := newLoopGuard()
 	for iterations < r.cfg.MaxIterations {
 		iterations++
 		r.traceLoopIteration = iterations
@@ -1914,6 +1966,21 @@ func (r *Runner) RunStream(ctx context.Context, msg memory.Message, handler Stre
 			if err := r.memory.Episodic.Save(ctx, toolMsg); err != nil {
 				r.log.Warn("episodic save failed", zap.Error(err))
 			}
+		}
+
+		// Loop guard: bail out if the model keeps re-issuing the same failing call.
+		if tripped, name, n := guard.record(toolResults); tripped {
+			msg := loopBreakMessage(name, n)
+			r.log.Warn("agent: loop guard tripped (stream)", zap.String("tool", name), zap.Int("repeats", n))
+			handler.OnToken("\n\n" + msg)
+			r.emitTraceTaskDone(ctx, iterations, "loop_break", msg)
+			handler.OnDone(&RunResult{
+				SessionID:  r.sessionID,
+				Response:   fullResponse.String() + "\n\n" + msg,
+				Iterations: iterations,
+				Usage:      totalUsage,
+			})
+			return
 		}
 	}
 

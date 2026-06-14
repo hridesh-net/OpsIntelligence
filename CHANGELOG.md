@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.98] — 2026-06-14
+
+### Fixed — Chat composer no longer pushed below the fold
+
+The composer was absolutely positioned inside a container that wasn't height-
+bounded, so a long reply grew the page and dragged the input off-screen. The
+Chat view is now fully height-capped: only the message list scrolls and the
+composer is a normal pinned element that stays put regardless of reply length.
+
+### Added — Chat history and visible agent activity
+
+- **Conversation history** panel: past chats with message count + relative
+  time, `+ New chat`, `Hide history`, click to resume, hover-× to delete.
+  Persisted in `localStorage` (on-device, zero egress); each conversation
+  sends a stable `session_id` so backend memory threads correctly.
+- **Tool steps**: the UI now renders the `tool_start`/`tool_end` SSE events it
+  previously dropped — each tool call shows as "Called `<tool>`" → ✓, so agent
+  work (or a loop) is legible instead of a wall of prose. Errors render as a
+  distinct note; a **Stop** button aborts a running stream.
+
+### Fixed — Agent loop guard stops repeated identical tool calls
+
+A model that forgot a required argument (e.g. `owner` for
+`devops.github.workflow_runs`) would re-issue the same failing call and narrate
+each retry up to `MaxIterations` (64) — producing a giant looping reply. The
+runner now tracks tool-call signatures (name + input) within a Run/RunStream
+and aborts cleanly after the same call recurs `loopBreakRepeats` (3) times,
+returning a clear message that names the tool and suggests fixing the
+arguments. Covered by `loop_guard_test.go`; applies to both `Run` and
+`RunStream`.
+
 ## [1.0.97] — 2026-06-14
 
 ### Changed — Dashboard re-skinned to a cool neutral theme + Chat redesigned
