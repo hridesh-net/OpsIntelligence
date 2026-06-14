@@ -211,7 +211,7 @@ export function Overview() {
                 <span className="ov-card-meta">{activeRuns} live · {tasks.length} total</span>
               </div>
               {tasks.length === 0 ? (
-                <div className="ov-empty" style={{ color: "#b8b0a2" }}>No agent runs yet. Dispatch a card to begin.</div>
+                <div className="ov-empty" style={{ color: "#9aa6b6" }}>No agent runs yet. Dispatch a card to begin.</div>
               ) : (
                 <div className="ov-list">
                   {tasks.slice(0, 5).map((t) => (

@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.97] — 2026-06-14
+
+### Changed — Dashboard re-skinned to a cool neutral theme + Chat redesigned
+
+The web dashboard's warm brown/cream neutrals read as "too yellow". The whole
+app now uses the cool blue-grey palette shared with the Scrun shell, keeping
+the brand orange accent. Because it is fully token-driven, every screen
+flipped at once — Overview, Chat, Repos, stubs, sidebar/topbar glass, the
+login page and the Overview dark card (now cool slate).
+
+- `theme/tokens.css`: neutrals retuned to `--bg #f6f7fb`, white surfaces,
+  slate text `#0f1822`, cool borders and shadows; body gradient cooled.
+- `chrome/chrome.css`: sidebar/topbar glass tints cooled.
+- `routes/overview.css`: dark "Active runs" card and run-list greys cooled.
+
+### Changed — Chat is now a modern AI assistant surface
+
+The Chat page was a plain bubble list that rendered raw markdown. It is now a
+centered conversation with a proper welcome and a pill composer.
+
+- Empty state: centered hero (gradient mark, time-of-day-free greeting with
+  the user's first name, scope note) and four clickable starter chips.
+- Messages: user/assistant bubbles in a 760px column with avatars and
+  animated typing dots while streaming.
+- New dependency-free `components/Markdown.tsx` renders bold, italic, inline
+  code, fenced code blocks, ordered/unordered lists and links — tolerant of
+  partial (streaming) input.
+- Composer: pill input with a `+` affordance, auto-growing textarea, icon
+  send button, Enter-to-send / Shift+Enter newline, on-premise hint.
+
+New `routes/chat.css`; `Chat.tsx` rewritten; embedded dashboard bundle rebuilt.
+
 ## [1.0.96] — 2026-06-14
 
 ### Changed — Dashboard Overview redesigned as an operational home

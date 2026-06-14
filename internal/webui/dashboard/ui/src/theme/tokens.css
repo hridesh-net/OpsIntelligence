@@ -2,28 +2,29 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5f3ec;
-  --bg-elev: #fffdf6;
-  --bg-elev-1: #faf7ee;
-  --bg-elev-2: #eeeae0;
-  --border: #ddd6c7;
-  --border-strong: #c8c0ae;
-  --fg: #0f0e0c;
-  --fg-dim: #5a5853;
-  --fg-muted: #8a857b;
+  /* Cool blue-grey neutrals (shared with the Scrun shell) + brand orange accent. */
+  --bg: #f6f7fb;
+  --bg-elev: #ffffff;
+  --bg-elev-1: #f1f3f8;
+  --bg-elev-2: #e9edf4;
+  --border: #e3e7ef;
+  --border-strong: #d0d6e1;
+  --fg: #0f1822;
+  --fg-dim: #5b6776;
+  --fg-muted: #93a0b1;
   --accent: #e4572e;
   --accent-bright: #f06a40;
   --accent-strong: #111111;
   --accent-soft: rgba(228, 87, 46, 0.10);
   --accent-ring: rgba(228, 87, 46, 0.22);
-  --danger: #b42318;
-  --ok: #0f766e;
-  --warn: #b45309;
+  --danger: #d94a3f;
+  --ok: #0fa968;
+  --warn: #c9820a;
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 16px;
-  --shadow-card: 0 1px 2px rgba(40, 30, 15, 0.04), 0 8px 24px -8px rgba(40, 30, 15, 0.06);
-  --shadow-overlay: 0 24px 70px -10px rgba(40, 30, 15, 0.35);
+  --shadow-card: 0 1px 2px rgba(15, 24, 40, 0.05), 0 8px 24px -8px rgba(15, 24, 40, 0.10);
+  --shadow-overlay: 0 24px 70px -10px rgba(15, 24, 40, 0.30);
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   --sans: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --z-toast: 80;
@@ -44,9 +45,9 @@ html, body, #root {
 
 body {
   background:
-    radial-gradient(900px 540px at 90% -10%, rgba(228, 87, 46, 0.045), transparent 60%),
-    radial-gradient(700px 480px at -10% 110%, rgba(228, 87, 46, 0.035), transparent 60%),
-    linear-gradient(180deg, rgba(255, 253, 248, 0.85) 0%, rgba(245, 243, 236, 0) 360px),
+    radial-gradient(900px 540px at 90% -10%, rgba(228, 87, 46, 0.05), transparent 60%),
+    radial-gradient(760px 480px at -10% 110%, rgba(40, 120, 220, 0.045), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(246, 247, 251, 0) 360px),
     var(--bg);
   color: var(--fg);
   font-family: var(--sans);
