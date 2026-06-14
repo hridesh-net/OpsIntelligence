@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.100] — 2026-06-14
+
+### Added — Repo detail view: intelligence + interactive code graph
+
+The dashboard Repos table was a fresh React port that only listed repos and a
+Sync button — clicking a row did nothing, so the repo intelligence and code
+graph (both already served by the backend) were unreachable from the UI.
+Clicking a repo row now opens a detail view with three tabs:
+
+- **Intelligence** — the LLM-extracted repo memory: architecture, languages,
+  key files, key dependencies (name/version/purpose), conventions, common
+  issues, CI/CD summary and review focus. From `GET /api/v1/repos/{id}/memory`.
+- **Code graph** — an interactive, dependency-free force-directed call graph
+  (`GET /api/v1/repos/{id}/callgraph`). Nodes coloured by kind and sized by
+  connectivity; function search, click-to-highlight neighbours with file:line,
+  node drag, scroll-zoom and background-pan. Capped to the highest-degree nodes
+  on large graphs (count shown).
+- **Security scan** — severity breakdown + scan summary (`/scan`).
+
+New `components/CodeGraph.tsx`, `routes/RepoDetail.tsx`, `routes/repos.css`;
+`api/repos.ts` extended with memory + call-graph types and fetchers; `Repos.tsx`
+rows made clickable (Sync still works inline). Embedded dashboard bundle rebuilt.
+
 ## [1.0.99] — 2026-06-14
 
 ### Added — Chat "Thinking…" indicator with collapsible reasoning

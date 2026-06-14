@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Topbar } from "@/chrome/Topbar";
 import { listRepos, syncRepo, type Repo } from "@/api/repos";
+import { RepoDetail } from "./RepoDetail";
+import "./repos.css";
 
 const PILL_BG: Record<string, { bg: string; fg: string }> = {
   ready: { bg: "rgba(15,118,110,0.10)", fg: "var(--ok)" },
@@ -30,6 +32,7 @@ function Pill({ value }: { value?: string }) {
 export function Repos() {
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Repo | null>(null);
 
   const q = useQuery({
     queryKey: ["repos"],
@@ -42,6 +45,11 @@ export function Repos() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["repos"] }),
     onError: (err: Error) => setError(err.message),
   });
+
+  // All hooks above this line — the detail view is a full-screen replacement.
+  if (selected) {
+    return <RepoDetail repo={selected} onBack={() => setSelected(null)} />;
+  }
 
   return (
     <>
@@ -105,10 +113,14 @@ export function Repos() {
               </thead>
               <tbody>
                 {q.data.map((r: Repo) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <tr key={r.id} className="repo-row" onClick={() => setSelected(r)}>
                     <td style={td}>
-                      <div style={{ fontWeight: 500 }}>{r.full_name || r.id}</div>
-                      <div style={{ fontSize: 11, color: "var(--fg-muted)", fontFamily: "var(--mono)" }}>{r.id}</div>
+                      <div className="rn">
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{r.full_name || r.id}</div>
+                          <div style={{ fontSize: 11, color: "var(--fg-muted)", fontFamily: "var(--mono)" }}>{r.id}</div>
+                        </div>
+                      </div>
                     </td>
                     <td style={td}>{r.platform || "—"}</td>
                     <td style={td}><Pill value={r.index_status} /></td>
@@ -116,13 +128,16 @@ export function Repos() {
                     <td style={td}>{r.risk_level || "—"}</td>
                     <td style={td}>{r.user_count ?? 0}</td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <button
-                        className="btn ghost"
-                        disabled={sync.isPending}
-                        onClick={() => sync.mutate(r.id)}
-                      >
-                        {sync.isPending && sync.variables === r.id ? "…" : "Sync"}
-                      </button>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                        <button
+                          className="btn ghost"
+                          disabled={sync.isPending}
+                          onClick={(e) => { e.stopPropagation(); sync.mutate(r.id); }}
+                        >
+                          {sync.isPending && sync.variables === r.id ? "…" : "Sync"}
+                        </button>
+                        <span className="chev">›</span>
+                      </span>
                     </td>
                   </tr>
                 ))}

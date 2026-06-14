@@ -70,7 +70,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.0.99" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.0.100" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
