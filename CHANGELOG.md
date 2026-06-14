@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.96] — 2026-06-14
+
+### Changed — Dashboard Overview redesigned as an operational home
+
+The dashboard landing page (`/dashboard/app#/overview`) was a flat strip of
+four KPI tiles over a bare board list. It is now a branded bento dashboard
+that surfaces what the autonomous workforce is actually doing, built entirely
+on existing data (boards, repos, agent tasks, whoami) with graceful empty
+states — no new endpoints.
+
+- Time-aware hero greeting (`Good morning/afternoon/evening, {name}`) with a
+  big Active runs / Boards / Repos stat trio.
+- Pipeline bar: a segmented progress bar of every card's status across all
+  boards (running / awaiting / queued / done / blocked) with a live legend.
+- Spotlight card carrying the user's identity, role and the on-premise ·
+  zero-egress positioning, with primary CTAs into Boards and Chat.
+- Activity chart: a 7-day weekday bar chart bucketed from card update times,
+  today highlighted in the brand accent.
+- Index-coverage ring (animated SVG gauge), Risk-posture meters
+  (critical/high/medium/low repos), an Active-runs dark contrast card listing
+  live agent tasks with status ticks and relative timestamps, and a Boards
+  mini-grid with per-board completion bars.
+- Fully responsive (12 → 6 → 1 column); uses only existing design tokens.
+
+New `internal/webui/dashboard/ui/src/routes/overview.css`; `Overview.tsx`
+rewritten. Embedded dashboard bundle rebuilt.
+
 ## [1.0.95] — 2026-06-13
 
 ### Fixed — Opening a live board showed a blank white screen
