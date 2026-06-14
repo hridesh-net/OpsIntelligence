@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.99] — 2026-06-14
+
+### Added — Chat "Thinking…" indicator with collapsible reasoning
+
+The Chat now shows the agent's reasoning the way Claude / ChatGPT / Gemini do.
+
+- While the agent works, an animated **"Thinking… · N steps"** header (spinner +
+  shimmer) appears with the live tool steps expanded beneath it — each step
+  shows ✓ when done or a spinning gear while running.
+- When the answer arrives it auto-collapses into a **"Thought process · N steps"**
+  disclosure above the reply; click to re-expand and review what the agent did.
+- Turns that use no tools show only a brief "Thinking…" shimmer that clears once
+  the reply starts — no empty dropdown.
+
+Frontend-only, wired to the `tool_start`/`tool_end` SSE events the backend
+already emits. New `ThinkingBlock` in `routes/Chat.tsx` + styles in
+`routes/chat.css`; embedded dashboard bundle rebuilt.
+
 ## [1.0.98] — 2026-06-14
 
 ### Fixed — Chat composer no longer pushed below the fold

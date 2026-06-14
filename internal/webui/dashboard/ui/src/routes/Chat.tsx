@@ -213,22 +213,15 @@ export function Chat() {
                     <div key={i} className={`msg ${m.role}`}>
                       <div className="av">{m.role === "assistant" ? "✦" : (firstName[0] || "?").toUpperCase()}</div>
                       <div className="stack">
-                        {m.steps && m.steps.length > 0 && (
-                          <div className="steps">
-                            {m.steps.map((s, si) => (
-                              <span key={si} className={`step ${s.done ? "done" : "running"}`}>
-                                <span className="si">{s.done ? "✓" : <Gear />}</span>
-                                <span>Called</span><span className="sn">{s.name}</span>
-                              </span>
-                            ))}
-                          </div>
+                        {m.role === "assistant" && (
+                          <ThinkingBlock
+                            steps={m.steps ?? []}
+                            active={busy && i === messages.length - 1}
+                            hasContent={!!m.content}
+                          />
                         )}
-                        {(m.content || (m.role === "assistant" && !m.error && (!m.steps || m.steps.length === 0))) && (
-                          <div className="bubble">
-                            {m.content
-                              ? <Markdown text={m.content} />
-                              : <span className="typing"><i /><i /><i /></span>}
-                          </div>
+                        {m.content && (
+                          <div className="bubble"><Markdown text={m.content} /></div>
                         )}
                         {m.error && <div className="msg-error">{m.error}</div>}
                       </div>
@@ -288,6 +281,62 @@ export function Chat() {
         </div>
       </div>
     </>
+  );
+}
+
+// ThinkingBlock shows an animated "Thinking…" indicator while the agent works,
+// then collapses into a "Thought process" disclosure revealing the steps it took
+// (the tool calls). Mirrors the reasoning dropdown in Claude / ChatGPT / Gemini.
+function ThinkingBlock({ steps, active, hasContent }: { steps: Step[]; active: boolean; hasContent: boolean }) {
+  const [open, setOpen] = useState(false);
+  const hasSteps = steps.length > 0;
+  const thinking = active && !hasContent; // still reasoning, answer not started
+
+  // Expand live while reasoning; auto-collapse once the answer begins.
+  useEffect(() => { setOpen(thinking); }, [thinking]);
+
+  // Nothing to disclose: a finished turn that used no tools.
+  if (!hasSteps && !thinking) return null;
+
+  // Plain animated line when there are no steps to reveal yet.
+  if (!hasSteps) {
+    return (
+      <div className="think">
+        <div className="think-head active">
+          <span className="think-spin" />
+          <span className="think-label shimmer">Thinking…</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="think">
+      <button className="think-head" onClick={() => setOpen((o) => !o)}>
+        {thinking ? <span className="think-spin" /> : <span className="think-ico"><Spark /></span>}
+        <span className={`think-label${thinking ? " shimmer" : ""}`}>{thinking ? "Thinking…" : "Thought process"}</span>
+        <span className="think-meta">· {steps.length} step{steps.length > 1 ? "s" : ""}</span>
+        <span className={`think-chev${open ? " open" : ""}`}>▸</span>
+      </button>
+      {open && (
+        <div className="think-body">
+          {steps.map((s, si) => (
+            <span key={si} className={`step ${s.done ? "done" : "running"}`}>
+              <span className="si">{s.done ? "✓" : <Gear />}</span>
+              <span>Called</span><span className="sn">{s.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Spark() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2Z" />
+    </svg>
   );
 }
 
