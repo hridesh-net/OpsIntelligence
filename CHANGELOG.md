@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-14
+
+### Fixed — Repo security scan showed all zeros
+
+The dashboard scan tab assumed a `{critical/high/medium/low/total_findings}`
+shape, but the backend `ScanResult` is `{risk_level, summary, cves[],
+bottlenecks[], suggestions[]}` — so it always rendered zeros while the TUI (which
+reads the real shape) showed findings. The scan tab now renders the real data:
+CVE severity counts (derived from `cves[]`), an overall-risk badge + summary, a
+**Vulnerabilities** list (severity, package@version, CVE IDs, description, fix /
+fixed-versions), **Performance bottlenecks** and **Architecture suggestions**.
+
+### Changed — Code graph opens fit-to-view and is easier to operate
+
+- Auto fit-to-view: the call graph frames itself in the canvas as the layout
+  settles (and stays framed), instead of a small off-centre cluster.
+- Stronger repulsion + tuned springs spread nodes out legibly.
+- Controls: a **Fit** button and **+/-** zoom, scroll-to-zoom toward the cursor
+  (not the origin), and hover-to-highlight a node's neighbourhood (in addition to
+  click). Auto-fit yields the moment the user pans/zooms/drags.
+
+`api/repos.ts` scan types corrected to `ScanResult` + finding shapes;
+`RepoDetail.tsx` scan rendering rewritten; `CodeGraph.tsx` fit-view + controls;
+`repos.css` findings + control styles. Embedded dashboard bundle rebuilt.
+
 ## [1.0.100] — 2026-06-14
 
 ### Added — Repo detail view: intelligence + interactive code graph

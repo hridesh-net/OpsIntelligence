@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/chrome/Topbar";
 import { CodeGraph } from "@/components/CodeGraph";
 import { getRepoMemory, getCallGraph, getScan, syncRepo } from "@/api/repos";
-import type { Repo, RepoMemory, CallGraph, ScanStatus } from "@/api/repos";
+import type { Repo, RepoMemory, CallGraph, ScanResult } from "@/api/repos";
 
 type Tab = "intel" | "graph" | "scan";
 
@@ -118,37 +118,105 @@ function GraphTab({ loading, graph }: { loading: boolean; graph: CallGraph | nul
   return <CodeGraph graph={graph} />;
 }
 
-function ScanTab({ loading, scan }: { loading: boolean; scan: ScanStatus | null }) {
+function ScanTab({ loading, scan }: { loading: boolean; scan: ScanResult | null }) {
   if (loading) return <div className="empty">Loading scan…</div>;
   if (!scan) {
     return (
       <div className="rd-empty">
         <h2 style={{ marginBottom: 8 }}>No scan results</h2>
-        <p>No security scan has completed for this repo yet.</p>
+        <p>No security scan has completed for this repo yet.<br />Click <b>Sync</b> above to run one.</p>
       </div>
     );
   }
-  const sev = [
-    { k: "critical", n: scan.critical ?? 0 },
-    { k: "high", n: scan.high ?? 0 },
-    { k: "medium", n: scan.medium ?? 0 },
-    { k: "low", n: scan.low ?? 0 },
-  ];
+  const cves = scan.cves ?? [];
+  const bottlenecks = scan.bottlenecks ?? [];
+  const suggestions = scan.suggestions ?? [];
+  const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const c of cves) {
+    const s = (c.severity || "low").toLowerCase();
+    if (s in counts) counts[s]++;
+  }
+  const risk = (scan.risk_level || "info").toLowerCase();
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="rd-sev">
-        {sev.map((s) => (
-          <div key={s.k} className={`rd-sev-card ${s.k}`}><div className="n">{s.n}</div><div className="l">{s.k}</div></div>
+        {(["critical", "high", "medium", "low"] as const).map((k) => (
+          <div key={k} className={`rd-sev-card ${k}`}><div className="n">{counts[k]}</div><div className="l">{k} CVE</div></div>
         ))}
       </div>
+
       <div className="rd-card">
-        <h3>Scan summary</h3>
-        <div className="rd-list">
-          <span className="rd-li"><b>Status:</b> {scan.status || "—"}</span>
-          <span className="rd-li"><b>Total findings:</b> {scan.total_findings ?? 0}</span>
-          {scan.last_scan_at && <span className="rd-li"><b>Last scan:</b> {new Date(scan.last_scan_at).toLocaleString()}</span>}
+        <h3>Overall risk</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: scan.summary ? 10 : 0 }}>
+          <span className={`rd-badge risk-${risk}`} style={{ fontSize: 13 }}>{risk}</span>
+          <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            {cves.length} CVE{cves.length === 1 ? "" : "s"} · {bottlenecks.length} bottleneck{bottlenecks.length === 1 ? "" : "s"} · {suggestions.length} suggestion{suggestions.length === 1 ? "" : "s"}
+            {scan.scanned_at ? ` · ${new Date(scan.scanned_at).toLocaleString()}` : ""}
+          </span>
         </div>
+        {scan.summary && <p>{scan.summary}</p>}
       </div>
+
+      {cves.length > 0 && (
+        <div className="rd-card">
+          <h3>Vulnerabilities</h3>
+          <div className="rd-findings">
+            {cves.map((c, i) => (
+              <div key={i} className="rd-finding">
+                <span className={`sev sev-${(c.severity || "low").toLowerCase()}`}>{c.severity}</span>
+                <div className="rd-finding-body">
+                  <div className="rd-finding-top">
+                    <b>{c.package}</b>{c.version ? <span className="ver"> {c.version}</span> : null}
+                    {c.cve_ids?.length ? <span className="cve-ids">{c.cve_ids.join(", ")}</span> : null}
+                  </div>
+                  <div className="rd-finding-desc">{c.description}</div>
+                  {c.fix && <div className="rd-finding-fix">→ {c.fix}{c.fixed_versions?.length ? ` (fixed in ${c.fixed_versions.join(", ")})` : ""}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {bottlenecks.length > 0 && (
+        <div className="rd-card">
+          <h3>Performance bottlenecks</h3>
+          <div className="rd-findings">
+            {bottlenecks.map((b, i) => (
+              <div key={i} className="rd-finding">
+                <span className={`sev sev-${(b.severity || "low").toLowerCase()}`}>{b.severity}</span>
+                <div className="rd-finding-body">
+                  <div className="rd-finding-top"><b style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{b.location}</b></div>
+                  <div className="rd-finding-desc">{b.description}</div>
+                  {b.fix && <div className="rd-finding-fix">→ {b.fix}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {suggestions.length > 0 && (
+        <div className="rd-card">
+          <h3>Architecture suggestions</h3>
+          <div className="rd-findings">
+            {suggestions.map((s, i) => (
+              <div key={i} className="rd-finding">
+                <span className={`sev sev-${(s.priority || "low").toLowerCase()}`}>{s.priority}</span>
+                <div className="rd-finding-body">
+                  <div className="rd-finding-top"><b>{s.area}</b></div>
+                  <div className="rd-finding-desc">{s.suggestion}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cves.length === 0 && bottlenecks.length === 0 && suggestions.length === 0 && (
+        <div className="rd-empty">No findings — this scan came back clean.</div>
+      )}
     </div>
   );
 }

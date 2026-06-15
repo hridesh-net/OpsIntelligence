@@ -13,14 +13,37 @@ export interface Repo {
   description?: string;
 }
 
-export interface ScanStatus {
-  status?: string;
-  last_scan_at?: string;
-  total_findings?: number;
-  critical?: number;
-  high?: number;
-  medium?: number;
-  low?: number;
+export interface CVEFinding {
+  severity: string; // critical | high | medium | low
+  package: string;
+  version?: string;
+  description: string;
+  fix?: string;
+  cve_ids?: string[];
+  source?: string;
+  references?: string[];
+  fixed_versions?: string[];
+  ecosystem?: string;
+}
+export interface BottleneckFinding {
+  severity: string; // high | medium | low
+  location: string;
+  description: string;
+  fix?: string;
+}
+export interface ArchitectureSuggestion {
+  priority: string; // high | medium | low
+  area: string;
+  suggestion: string;
+}
+export interface ScanResult {
+  repo_id: string;
+  scanned_at?: string;
+  risk_level?: string; // critical | high | medium | low | info
+  summary?: string;
+  cves?: CVEFinding[];
+  bottlenecks?: BottleneckFinding[];
+  suggestions?: ArchitectureSuggestion[];
 }
 
 export async function listRepos(): Promise<Repo[]> {
@@ -32,8 +55,8 @@ export async function getRepo(id: string): Promise<Repo> {
   return api<Repo>(`/api/v1/repos/${encodeURIComponent(id)}`);
 }
 
-export async function getScan(id: string): Promise<ScanStatus | null> {
-  return api<ScanStatus>(`/api/v1/repos/${encodeURIComponent(id)}/scan`).catch(() => null);
+export async function getScan(id: string): Promise<ScanResult | null> {
+  return api<ScanResult>(`/api/v1/repos/${encodeURIComponent(id)}/scan`).catch(() => null);
 }
 
 export async function syncRepo(id: string): Promise<void> {

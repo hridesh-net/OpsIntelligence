@@ -117,6 +117,58 @@
 .rd-sev-card.medium .n { color: var(--warn); }
 .rd-sev-card.low .n { color: var(--ok); }
 
+/* findings list (CVEs / bottlenecks / suggestions) */
+.rd-findings { display: flex; flex-direction: column; }
+.rd-finding { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.rd-finding:first-child { border-top: none; padding-top: 0; }
+.rd-finding .sev {
+  flex: none;
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  min-width: 64px;
+  text-align: center;
+}
+.sev-critical { background: rgba(180, 35, 24, 0.14); color: var(--danger); }
+.sev-high { background: rgba(240, 68, 56, 0.13); color: #f04438; }
+.sev-medium { background: rgba(201, 130, 10, 0.14); color: var(--warn); }
+.sev-low, .sev-info { background: rgba(15, 169, 104, 0.12); color: var(--ok); }
+.rd-finding-body { min-width: 0; }
+.rd-finding-top { font-size: 13.5px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rd-finding-top b { color: var(--fg); font-weight: 600; }
+.rd-finding-top .ver { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); }
+.rd-finding-top .cve-ids { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.rd-finding-desc { font-size: 13px; color: var(--fg-dim); line-height: 1.55; margin-top: 4px; }
+.rd-finding-fix { font-size: 12.5px; color: var(--ok); margin-top: 5px; }
+
+/* graph controls */
+.cg-controls {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+}
+.cg-ctl {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  box-shadow: var(--shadow-card);
+}
+.cg-ctl:hover { color: var(--fg); border-color: var(--border-strong); }
+.cg-ctl.wide { width: auto; padding: 0 12px; font-size: 12px; font-weight: 500; gap: 5px; }
+
 /* ---- code graph ---- */
 .cg { display: flex; flex-direction: column; gap: 10px; }
 .cg-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
