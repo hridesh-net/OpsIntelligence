@@ -35,7 +35,7 @@ pub fn render(text: &str, max_width: usize) -> Vec<Line<'static>> {
         if in_code {
             out.push(Line::from(vec![
                 Span::styled("  │ ", theme::muted()),
-                Span::styled(line.to_string(), Style::default().fg(theme::NEON)),
+                Span::styled(line.to_string(), Style::default().fg(theme::CODE)),
             ]));
             continue;
         }
@@ -99,7 +99,7 @@ fn inline_spans(line: &str) -> Vec<Span<'static>> {
                 let inner = &line[i + 1..i + 1 + end];
                 spans.push(Span::styled(
                     inner.to_string(),
-                    Style::default().fg(theme::NEON).bg(theme::SURFACE),
+                    Style::default().fg(theme::CODE).bg(theme::SURFACE),
                 ));
                 i += 1 + end + 1;
                 continue;

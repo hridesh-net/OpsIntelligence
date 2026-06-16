@@ -15,22 +15,24 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
 
-// ── Semantic palette (dark variant) ───────────────────────────────────────
-pub const BACKGROUND: Color = rgb(0x1e, 0x1c, 0x1a);
-pub const SURFACE: Color = rgb(0x25, 0x23, 0x21);
-pub const CHROME_BG: Color = rgb(0x30, 0x2e, 0x2b);
-pub const ON_SURFACE: Color = rgb(0xed, 0xe9, 0xe4);
-pub const MUTED: Color = rgb(0x8a, 0x86, 0x80);
-pub const EMPHASIS: Color = rgb(0xf1, 0xf1, 0xef);
-pub const OUTLINE: Color = rgb(0x5d, 0x5f, 0x5d);
-pub const OUTLINE_VARIANT: Color = rgb(0x3a, 0x3b, 0x38);
+// ── Semantic palette (cool dark — neutrals are slate, not warm brown, so the
+// orange accent reads as a sparse highlight instead of washing the whole UI) ──
+pub const BACKGROUND: Color = rgb(0x15, 0x17, 0x1c);
+pub const SURFACE: Color = rgb(0x1c, 0x1f, 0x27);
+pub const CHROME_BG: Color = rgb(0x23, 0x27, 0x31);
+pub const ON_SURFACE: Color = rgb(0xe7, 0xed, 0xf5);
+pub const MUTED: Color = rgb(0x84, 0x90, 0xa2);
+pub const EMPHASIS: Color = rgb(0xf2, 0xf5, 0xfa);
+pub const OUTLINE: Color = rgb(0x47, 0x4f, 0x5e);
+pub const OUTLINE_VARIANT: Color = rgb(0x2a, 0x2f, 0x3a);
 
-pub const BRAND_ACCENT: Color = rgb(0xff, 0x70, 0x43); // Modern Orange
+pub const BRAND_ACCENT: Color = rgb(0xff, 0x70, 0x43); // Orange — used sparingly
 pub const BRAND_ACCENT_SOFT: Color = rgb(0xff, 0x95, 0x75);
 
-pub const SUCCESS: Color = rgb(0x4c, 0xaf, 0x7d);
-pub const ERROR_COLOR: Color = rgb(0xba, 0x1a, 0x1a);
+pub const SUCCESS: Color = rgb(0x46, 0xc9, 0x8b);
+pub const ERROR_COLOR: Color = rgb(0xf0, 0x65, 0x5a);
 pub const WARN: Color = rgb(0xe6, 0xb8, 0x00);
+pub const CODE: Color = rgb(0x7c, 0xc7, 0xd9); // soft cyan for `code` (cool, not orange)
 
 // Legacy aliases (match theme.go).
 pub const PRIMARY: Color = BRAND_ACCENT;

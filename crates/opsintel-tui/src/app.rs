@@ -205,9 +205,13 @@ fn main_loop<B: ratatui::backend::Backend>(
 
         if event::poll(tick)? {
             let ev = event::read()?;
-            // Route mouse events to the active view (only wizard handles them
-            // currently — the others ignore).
+            // Route mouse events to the active view. The REPL uses the wheel to
+            // scroll its conversation; the wizard handles clicks; others ignore.
             if let Event::Mouse(me) = ev {
+                if let View::Repl(r) = &mut view {
+                    let _ = r.handle_mouse(me);
+                    continue;
+                }
                 if let View::Wizard(w) = &mut view {
                     match w.handle_mouse(me) {
                         WizardOutbound::Submit { id, fields, cancelled } => {

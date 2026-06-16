@@ -3,7 +3,7 @@
 use crate::protocol::{AgentDelta, AgentEnd, AgentError, ReplViewState};
 use crate::theme;
 use crate::widgets::{markdown, spinner::Spinner, textarea::{TextArea, TextAreaView}};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -181,6 +181,24 @@ impl ReplView {
                 Span::styled(te.result.clone(), text_style),
             ]));
         }
+    }
+
+    /// Mouse wheel scrolls the conversation, like a normal pager. Scrolling up
+    /// pins the view (disables follow); scrolling back to the bottom re-enables
+    /// auto-follow so new tokens keep streaming into view.
+    pub fn handle_mouse(&mut self, me: MouseEvent) -> Outbound {
+        match me.kind {
+            MouseEventKind::ScrollUp => {
+                self.auto_scroll = false;
+                self.scroll_offset = self.scroll_offset.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_offset = self.scroll_offset.saturating_add(3);
+                // render_chat re-enables auto_scroll once we reach the bottom.
+            }
+            _ => {}
+        }
+        Outbound::None
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Outbound {
@@ -361,8 +379,10 @@ impl ReplView {
         let total = lines.len() as u16;
         let visible = area.height.saturating_sub(2); // border top + bottom
         let max_scroll = total.saturating_sub(visible);
-        if self.auto_scroll || self.scroll_offset > max_scroll {
+        if self.auto_scroll || self.scroll_offset >= max_scroll {
             self.scroll_offset = max_scroll;
+            // Reaching the bottom (via wheel/keys) resumes follow mode.
+            self.auto_scroll = true;
         }
 
         let title = if self.thinking { "Conversation  ·  thinking…" } else { "Conversation" };
@@ -456,6 +476,35 @@ impl ReplView {
             ]
         };
         crate::widgets::chrome::render_command_bar(f, rows[2], entries);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn renders_and_mouse_scroll_pins_view() {
+        let mut v = ReplView::new(ReplViewState::default());
+        for i in 0..60 {
+            v.history.push(Line::raw(format!("line {i}")));
+        }
+        let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        // Renders without panicking and pins to the bottom (auto-follow).
+        term.draw(|f| v.render(f, f.area())).unwrap();
+        assert!(v.auto_scroll, "should follow the tail after render");
+        let bottom = v.scroll_offset;
+
+        // Wheel up disables follow and moves the offset up.
+        v.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert!(!v.auto_scroll, "wheel-up should stop following");
+        assert!(v.scroll_offset < bottom, "wheel-up should move the offset up");
     }
 }
 

@@ -56,7 +56,8 @@ pub fn outer_block(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(theme::PRIMARY))
+        // Neutral outer border; the brand name in the title carries the accent.
+        .border_style(Style::default().fg(theme::OUTLINE))
         .style(Style::default().bg(theme::BACKGROUND))
         .title(Line::from(title_spans))
         .title_alignment(Alignment::Left);
@@ -89,15 +90,15 @@ pub fn render_pill(f: &mut Frame, outer: Rect, label: &str, bg: ratatui::style::
 /// `accent` controls the title + border highlight color (typically PRIMARY
 /// for the active panel, OUTLINE_VARIANT for inactive).
 pub fn panel_block(name: &str, accent: ratatui::style::Color, primary_border: bool) -> Block<'static> {
+    // Borders stay neutral; focus/active state is signalled by the title colour
+    // (the accent) and a slightly brighter outline — not a full orange frame.
+    let border = if primary_border { theme::OUTLINE } else { theme::OUTLINE_VARIANT };
     let title = Line::from(vec![
-        Span::styled(
-            "─ ",
-            Style::default().fg(if primary_border { accent } else { theme::OUTLINE_VARIANT }),
-        ),
+        Span::styled("─ ", Style::default().fg(border)),
         Span::styled(
             name.to_string(),
             Style::default()
-                .fg(accent)
+                .fg(if primary_border { accent } else { theme::MUTED })
                 .add_modifier(if primary_border { Modifier::BOLD } else { Modifier::empty() }),
         ),
         Span::raw(" "),
@@ -105,7 +106,7 @@ pub fn panel_block(name: &str, accent: ratatui::style::Color, primary_border: bo
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(if primary_border { accent } else { theme::OUTLINE_VARIANT }))
+        .border_style(Style::default().fg(border))
         // Fill the panel interior with the theme background so prior alt-screen
         // contents can't show through gaps in the body content.
         .style(Style::default().bg(theme::BACKGROUND))
@@ -125,9 +126,10 @@ pub fn render_command_bar(f: &mut Frame, area: Rect, entries: &[(&str, &str)]) {
         }
         spans.push(Span::styled(
             format!(" {} ", key),
+            // Neutral key cap with an accent glyph — not a row of orange chips.
             Style::default()
-                .bg(theme::PRIMARY)
-                .fg(theme::BACKGROUND)
+                .bg(theme::CHROME_BG)
+                .fg(theme::BRAND_ACCENT_SOFT)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));

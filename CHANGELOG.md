@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-06-15
+
+### Fixed — TUI: mouse-wheel scroll + far less orange
+
+Two of the loudest REPL complaints:
+
+- **Mouse-wheel scrolling now works in the conversation.** Mouse capture was
+  enabled but wheel events were only routed to the wizard view; the REPL ignored
+  them. The REPL now handles the wheel like a pager — scroll up to read back
+  (pins the view), scroll to the bottom to resume auto-follow of streaming output
+  (`views/repl.rs`, `app.rs`). Smoke-tested with a `TestBackend` render.
+- **Toned down the orange.** The palette moved from warm brown neutrals to a cool
+  slate (matching the dashboard re-skin), and orange is now a sparse accent rather
+  than every border: the outer frame and panel borders are neutral, the command-bar
+  key caps are neutral with an accent glyph, and inline/`code` blocks render in a
+  cool cyan instead of orange (`theme.rs`, `widgets/chrome.rs`, `widgets/markdown.rs`).
+
+Other reported TUI items (overall smoothness, specific formatting cases, the
+chat/channel view) are tracked for follow-up and need concrete repro details.
+
 ## [1.2.3] — 2026-06-15
 
 ### Fixed — PR review now posts deterministically (no longer depends on the model)
