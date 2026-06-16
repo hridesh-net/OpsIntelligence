@@ -2,8 +2,10 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1908,9 +1910,7 @@ func resolveDevOpsTokens(d *DevOpsConfig) {
 	if d == nil {
 		return
 	}
-	if d.GitHub.Token == "" && d.GitHub.TokenEnv != "" {
-		d.GitHub.Token = os.Getenv(d.GitHub.TokenEnv)
-	}
+	resolveGitHubToken(&d.GitHub)
 	if d.GitLab.Token == "" && d.GitLab.TokenEnv != "" {
 		d.GitLab.Token = os.Getenv(d.GitLab.TokenEnv)
 	}
@@ -1921,6 +1921,42 @@ func resolveDevOpsTokens(d *DevOpsConfig) {
 		d.Sonar.Token = os.Getenv(d.Sonar.TokenEnv)
 	}
 	resolveCloudSecrets(&d.Cloud)
+}
+
+// resolveGitHubToken fills GitHub.Token from, in order: the inline YAML value,
+// the env var named by TokenEnv, then the GitHub CLI (`gh auth token`). The
+// literal value "gh" (case-insensitive) is a sentinel that forces the gh-CLI
+// source — so a rotated personal access token never has to be re-pasted into
+// config; OpsIntelligence just uses whatever `gh` is currently authenticated as.
+func resolveGitHubToken(g *GitHubConfig) {
+	if g == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(g.Token), "gh") {
+		g.Token = ghAuthToken()
+		return
+	}
+	if g.Token == "" && g.TokenEnv != "" {
+		g.Token = os.Getenv(g.TokenEnv)
+	}
+	if g.Token == "" {
+		// No token configured — fall back to the GitHub CLI if the user is
+		// logged in (`gh auth login`). Keeps PR review working out of the box.
+		g.Token = ghAuthToken()
+	}
+}
+
+// ghAuthToken returns the token from the GitHub CLI (`gh auth token`), or "" if
+// gh is not installed / not authenticated. Bounded so a missing gh can't stall
+// startup.
+func ghAuthToken() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // resolveCloudSecrets loads cloud credentials from env-backed fields when inline values are empty.

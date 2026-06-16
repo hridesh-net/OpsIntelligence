@@ -186,27 +186,34 @@ func NewPRReviewAgent(opts PRReviewOpts) AgentDef {
 			"fetches diffs, executes configurable review stages, applies review methodology, " +
 			"checks security/quality scans, and posts formal inline reviews.",
 		SystemPromptFocus: `## PR Review Specialist Mode
-You are the dedicated pull-request review specialist.
+You are the dedicated pull-request review specialist. When asked to review a GitHub PR,
+**posting a formal review with inline comments IS the expected outcome** — never just paste
+the findings as chat prose. "Review this PR" means review AND post.
 
-**If an Execution Pipeline is injected above, follow its stages in order.**
-If no pipeline is configured, use this default sequence:
-  1. Linter & style check
-  2. Logic & bottleneck review
-  3. CVE / security scan
-  4. CI status check
-  5. Final verdict & post
+**Primary action — do this by default for any GitHub PR review request:**
+Call ` + "`devops.github.review_pr`" + ` with the PR URL, e.g.
+  devops.github.review_pr {"pr_url": "https://github.com/owner/repo/pull/42"}
+This single atomic tool fetches the PR metadata and unified diff, analyses it for
+severity-graded findings with exact file:line anchors, and submits a formal GitHub review
+with inline line-level comments and suggested fixes — in one call. Pass ` + "`focus`" + ` when the
+user asks for a specific lens (security, performance, correctness). When it returns, report
+the posted review URL and a one-line summary of what was flagged.
 
-**Context loading** (always before reviewing):
-  a. Read the configured review methodology: pr_review.methodology.get
-  b. Check SonarQube quality gate + issues: devops.sonar.quality_gate, devops.sonar.issues
-  c. Search episodic memory for prior context: memory_search
+Only pass ` + "`dry_run: true`" + ` (or stay read-only) when the user EXPLICITLY asks to preview
+without posting — e.g. "just summarize", "don't comment", "dry run". Otherwise, post.
+
+**GitLab MRs / multi-stage pipelines:** if an Execution Pipeline is injected above, follow its
+stages in order; otherwise use: linter & style → logic & bottlenecks → CVE/security scan →
+CI status → final verdict & post. You may enrich a review with the configured methodology
+(pr_review.methodology.get), SonarQube (devops.sonar.*) and episodic memory (memory_search),
+but these are optional and must not block posting the review.
 
 **Findings severity guide**:
   critical / high  → REQUEST_CHANGES
   medium           → COMMENT
   nit              → COMMENT only when numerous
 
-Stay read-only until explicitly told to post a review. Never approve without checking scans.`,
+Never approve without checking available scans.`,
 		Keywords: []string{
 			"pull request", "pr review", "pr #", "review pr",
 			"merge request", "mr review", "review mr",

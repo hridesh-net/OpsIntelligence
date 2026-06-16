@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-06-15
+
+### Fixed — PR review reviewed but never posted inline comments
+
+The PR review specialist generated a prose review in chat and stopped at "Here
+are the inline comments…" without ever posting them to the PR. Root cause: its
+system prompt said *"Stay read-only until explicitly told to post a review,"* so
+even an explicit "review this PR and post inline comments" request produced a
+read-only summary. Rewrote the `pr_review` specialist prompt
+(`internal/agents/builtin.go`) so that **posting is the default outcome** of a
+review request: it leads with the atomic `devops.github.review_pr` tool (fetch +
+analyse + submit inline line-level comments with suggested fixes in one call) and
+only stays read-only when the user explicitly asks for a dry-run/summary.
+Guarded by `internal/agents/builtin_test.go`.
+
+### Added — GitHub auth falls back to the `gh` CLI
+
+A rotated personal access token left inline in `devops.github.token` caused "Bad
+credentials" until manually re-pasted. GitHub token resolution
+(`internal/config/config.go`) now falls back to `gh auth token` when no
+token/`token_env` is configured, and treats the literal value `token: gh` as a
+sentinel that always uses the GitHub CLI's current credentials — so a rotated
+PAT never has to be re-pasted. Bounded 3s so a missing `gh` can't stall startup.
+
 ## [1.2.0] — 2026-06-14
 
 ### Fixed — Repo security scan showed all zeros
