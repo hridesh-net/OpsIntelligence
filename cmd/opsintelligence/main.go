@@ -70,7 +70,7 @@ import (
 	_ "github.com/opsintelligence/opsintelligence/internal/webui" // ensure embed FS is included
 )
 
-var version = "v1.2.2" // Overridden by -ldflags "-X main.version=..." during build
+var version = "v1.2.3" // Overridden by -ldflags "-X main.version=..." during build
 
 type reliableToolSender struct {
 	rs *chadapter.ReliableSender
@@ -2528,6 +2528,10 @@ func runAgent(gf *globalFlags, configPath string, model string, message string, 
 			runnerLog,
 		)
 		runner = runner.WithPRReview(prReviewHandler)
+		// Let the orchestrator post PR reviews deterministically when a routed
+		// pr_review request carries a concrete PR URL, instead of relying on the
+		// specialist model to call review_pr.
+		orch.SetReviewFn(reviewFn)
 		toolReg.Register(tools.PRReviewTasksTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewCancelTool{H: prReviewHandler})
 		toolReg.Register(tools.PRReviewEventsTool{H: prReviewHandler})

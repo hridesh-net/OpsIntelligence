@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-06-15
+
+### Fixed — PR review now posts deterministically (no longer depends on the model)
+
+Even after the v1.2.1 prompt change, the `pr_review` specialist on a weaker model
+(gemini-flash) kept producing a thorough review in chat but never calling
+`devops.github.review_pr`, so nothing was posted to the PR. The orchestrator now
+short-circuits: when a request routes to `pr_review` and contains a concrete
+GitHub PR URL, it posts the review **directly via the configured ReviewFn**
+(`internal/agents/orchestrator.go`) — the same path the devops tools use, which
+fetches the diff, analyses it, and submits a formal review with inline line-level
+comments. It no longer relies on the LLM choosing to call the tool.
+
+The deterministic path stands down when the user explicitly asks for a read-only
+result ("dry run", "just summarize", "don't post"), falling back to the
+specialist's LLM loop. Helpers (`parseGitHubPRURL`, `mentionsNoPost`) are covered
+by `internal/agents/orchestrator_routing_test.go`.
+
 ## [1.2.2] — 2026-06-15
 
 ### Fixed — Credentials wiped on re-onboard (had to re-enter after upgrade)
