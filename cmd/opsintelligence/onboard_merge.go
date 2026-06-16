@@ -3,15 +3,17 @@ package main
 import (
 	"bytes"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // mergeOnboardYAML overlays new YAML onto an existing config file when present.
-// Top-level keys the wizard owns (gateway, providers, …) replace the previous
-// subtree when present in newYAML. agent and webhooks are merged recursively so
-// fields the wizard does not emit (memory, custom prompts, …) survive re-runs.
-// Keys only present in the old file are preserved.
+// Credential-bearing subtrees (gateway, providers, devops) plus agent/webhooks
+// are merged recursively, and a blank new scalar never erases an existing value
+// — so tokens/api_keys pasted on a previous onboard survive an Enter-through
+// re-run. Non-secret wizard subtrees (channels, routing, …) still replace
+// wholesale so deselection sticks. Keys only present in the old file are kept.
 func mergeOnboardYAML(configPath string, newYAML []byte) ([]byte, error) {
 	newYAML = bytes.TrimSpace(newYAML)
 	if len(newYAML) == 0 {
@@ -47,16 +49,14 @@ func mergeOpsIntelYAMLDocuments(oldDoc, newDoc map[string]interface{}) map[strin
 	for k, v := range oldDoc {
 		out[k] = v
 	}
-	// Wizard-emitted subtrees replace wholesale so channel deselection etc. stick.
+	// Wizard-emitted subtrees that replace wholesale so deselection (e.g. turning
+	// a channel off) sticks. These hold no long-lived pasted secrets.
 	fullReplaceTopLevel := map[string]struct{}{
-		"gateway":    {},
-		"providers":  {},
 		"embeddings": {},
 		"channels":   {},
 		"routing":    {},
 		"plano":      {},
 		"teams":      {},
-		"devops":     {},
 	}
 	for k, nv := range newDoc {
 		if _, ok := fullReplaceTopLevel[k]; ok {
@@ -64,7 +64,10 @@ func mergeOpsIntelYAMLDocuments(oldDoc, newDoc map[string]interface{}) map[strin
 			continue
 		}
 		switch k {
-		case "agent", "webhooks":
+		// Credential-bearing subtrees are merged recursively and blank wizard
+		// fields never erase an existing value — so a token/api_key pasted on a
+		// previous onboard survives a re-run where the user just hits Enter.
+		case "agent", "webhooks", "providers", "devops", "gateway":
 			out[k] = mergeYAMLValues(out[k], nv)
 		default:
 			out[k] = nv
@@ -91,9 +94,26 @@ func mergeStringMapsRecursive(old, new map[string]interface{}) map[string]interf
 		out[k] = v
 	}
 	for k, nv := range new {
+		// A blank new scalar (e.g. an Enter-through onboard field) must not
+		// overwrite an existing non-empty value — this is what keeps pasted
+		// credentials (tokens, api_keys) from being wiped on re-onboard.
+		if isBlankScalar(nv) {
+			if ov, ok := out[k]; ok && !isBlankScalar(ov) {
+				continue
+			}
+		}
 		out[k] = mergeYAMLValues(out[k], nv)
 	}
 	return out
+}
+
+// isBlankScalar reports whether v is nil or an empty/whitespace-only string.
+func isBlankScalar(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
 }
 
 func toStringMap(v interface{}) (map[string]interface{}, bool) {

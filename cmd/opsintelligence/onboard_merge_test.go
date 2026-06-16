@@ -97,6 +97,67 @@ webhooks:
 	}
 }
 
+// Re-onboarding and Enter-ing through provider/devops/gateway steps (blank
+// secret fields) must NOT wipe previously pasted credentials. Regression for
+// "creds not persistent across upgrade — had to re-onboard".
+func TestMergeOpsIntelYAMLDocuments_preservesCredsOnBlankReonboard(t *testing.T) {
+	old := mustYAMLMap(t, `
+providers:
+  gemini:
+    api_key: SECRET_GEMINI
+    default_model: gemini-2.5-flash
+devops:
+  github:
+    enabled: true
+    token: SECRET_GH
+gateway:
+  token: SECRET_GW
+  port: 18790
+`)
+	// Wizard re-emits the same shape with blank secrets + one real change.
+	newDoc := mustYAMLMap(t, `
+providers:
+  gemini:
+    api_key: ""
+    default_model: gemini-2.5-flash
+devops:
+  github:
+    enabled: true
+    token: ""
+gateway:
+  token: ""
+  port: 19000
+`)
+	got := mergeOpsIntelYAMLDocuments(old, newDoc)
+
+	gem := toMap(t, toMap(t, got["providers"])["gemini"])
+	if gem["api_key"] != "SECRET_GEMINI" {
+		t.Fatalf("gemini api_key wiped: %#v", gem["api_key"])
+	}
+	ghc := toMap(t, toMap(t, got["devops"])["github"])
+	if ghc["token"] != "SECRET_GH" {
+		t.Fatalf("github token wiped: %#v", ghc["token"])
+	}
+	gw := toMap(t, got["gateway"])
+	if gw["token"] != "SECRET_GW" {
+		t.Fatalf("gateway token wiped: %#v", gw["token"])
+	}
+	if gw["port"] != 19000 {
+		t.Fatalf("non-empty change (port) did not apply: %#v", gw["port"])
+	}
+}
+
+// A non-empty new credential must still override the old one.
+func TestMergeOpsIntelYAMLDocuments_nonEmptyCredOverrides(t *testing.T) {
+	old := mustYAMLMap(t, "devops:\n  github:\n    token: OLD\n")
+	newDoc := mustYAMLMap(t, "devops:\n  github:\n    token: NEW\n")
+	got := mergeOpsIntelYAMLDocuments(old, newDoc)
+	ghc := toMap(t, toMap(t, got["devops"])["github"])
+	if ghc["token"] != "NEW" {
+		t.Fatalf("expected NEW to override OLD, got %#v", ghc["token"])
+	}
+}
+
 func mustYAMLMap(t *testing.T, s string) map[string]interface{} {
 	t.Helper()
 	var m map[string]interface{}

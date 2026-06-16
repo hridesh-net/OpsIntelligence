@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-06-15
+
+### Fixed — Credentials wiped on re-onboard (had to re-enter after upgrade)
+
+Re-running `opsintelligence onboard` (as the installer suggests after an upgrade)
+could erase credentials that were already in `opsintelligence.yaml`. The onboard
+merge (`cmd/opsintelligence/onboard_merge.go`) treated `providers`, `devops` and
+`gateway` as wholesale-replace subtrees, so when the wizard re-emitted them with
+blank fields (the user just pressing Enter through a step) the existing gemini
+api_key, GitHub token and gateway token were overwritten with empty values.
+
+These three credential-bearing subtrees are now merged recursively, and a blank
+new scalar never overwrites an existing non-empty value — so a token/api_key
+pasted on a previous onboard survives an Enter-through re-run, while a real
+(non-empty) new value still overrides. Non-secret subtrees (channels, routing, …)
+still replace wholesale so deselection sticks. Guarded by new tests in
+`onboard_merge_test.go`.
+
 ## [1.2.1] — 2026-06-15
 
 ### Fixed — PR review reviewed but never posted inline comments
