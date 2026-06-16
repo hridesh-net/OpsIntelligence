@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] — 2026-06-15
+
+### Fixed — "owner is required" when the agent only had a PR URL
+
+The per-PR GitHub tools (`devops.github.pull_request`, `devops.github.pr_diff`)
+required `owner`/`repo` as separate fields and — unlike `review_pr` — could not
+extract them from a PR URL. So when the agent had only a PR number (and no
+`default_org`), it dead-ended on "owner is required". Those tools now accept a
+`pr_url` and a new shared `resolveOwnerRepoURL` helper extracts owner/repo/number
+from it (or from a URL mistakenly placed in the repo field). The error message is
+also now actionable ("pass a full PR URL, an owner/repo, or set default_org").
+Covered by `internal/tools/devops_resolve_test.go`.
+
+Note: the most reliable path remains including the **full PR URL** in the request
+— that triggers the deterministic poster added in 1.2.3, which posts inline
+comments directly without depending on the model to thread owner/repo.
+
 ## [1.2.4] — 2026-06-15
 
 ### Fixed — TUI: mouse-wheel scroll + far less orange

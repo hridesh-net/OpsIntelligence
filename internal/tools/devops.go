@@ -297,11 +297,11 @@ func (t *githubGetPRTool) Definition() provider.ToolDef {
 		InputSchema: provider.ToolParameter{
 			Type: "object",
 			Properties: map[string]any{
-				"owner":  map[string]any{"type": "string", "description": "Org/user (default: devops.github.default_org)."},
-				"repo":   map[string]any{"type": "string", "description": "Repository name."},
-				"number": map[string]any{"type": "integer", "description": "Pull request number."},
+				"pr_url": map[string]any{"type": "string", "description": "Full GitHub PR URL (e.g. https://github.com/owner/repo/pull/42). When given, owner/repo/number are extracted automatically — prefer this."},
+				"owner":  map[string]any{"type": "string", "description": "Org/user (default: devops.github.default_org). Ignored when pr_url is given."},
+				"repo":   map[string]any{"type": "string", "description": "Repository name. Ignored when pr_url is given."},
+				"number": map[string]any{"type": "integer", "description": "Pull request number. Ignored when pr_url is given."},
 			},
-			Required: []string{"repo", "number"},
 		},
 	}
 }
@@ -310,17 +310,21 @@ func (t *githubGetPRTool) Execute(ctx context.Context, input json.RawMessage) (s
 	var a struct {
 		Owner, Repo string
 		Number      int
+		PRURL       string `json:"pr_url"`
 	}
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	var err error
-	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	owner, repo, num, err := resolveOwnerRepoURL(a.Owner, a.Repo, a.PRURL, t.defaultOrg)
 	if err != nil {
 		return "", err
 	}
+	a.Owner, a.Repo = owner, repo
+	if num > 0 && a.Number < 1 {
+		a.Number = num
+	}
 	if a.Number < 1 {
-		return "", fmt.Errorf("number must be a positive PR number")
+		return "", fmt.Errorf("number must be a positive PR number (or pass a full pr_url)")
 	}
 	pr, err := t.c.GetPullRequest(ctx, a.Owner, a.Repo, a.Number)
 	if err != nil {
@@ -403,15 +407,15 @@ type githubPRDiffTool struct {
 func (t *githubPRDiffTool) Definition() provider.ToolDef {
 	return provider.ToolDef{
 		Name:        "devops.github.pr_diff",
-		Description: "Fetch the unified diff for a pull request (truncated to 60KB for agent consumption).",
+		Description: "Fetch the unified diff for a pull request (truncated to 60KB for agent consumption). Pass pr_url to avoid needing a separate owner.",
 		InputSchema: provider.ToolParameter{
 			Type: "object",
 			Properties: map[string]any{
-				"owner":  map[string]any{"type": "string"},
-				"repo":   map[string]any{"type": "string"},
-				"number": map[string]any{"type": "integer", "description": "Pull request number."},
+				"pr_url": map[string]any{"type": "string", "description": "Full GitHub PR URL (https://github.com/owner/repo/pull/42). When given, owner/repo/number are extracted automatically — prefer this."},
+				"owner":  map[string]any{"type": "string", "description": "Org/user. Ignored when pr_url is given."},
+				"repo":   map[string]any{"type": "string", "description": "Repository name. Ignored when pr_url is given."},
+				"number": map[string]any{"type": "integer", "description": "Pull request number. Ignored when pr_url is given."},
 			},
-			Required: []string{"repo", "number"},
 		},
 	}
 }
@@ -647,14 +651,21 @@ func (t *githubPRDiffTool) Execute(ctx context.Context, input json.RawMessage) (
 	var a struct {
 		Owner, Repo string
 		Number      int
+		PRURL       string `json:"pr_url"`
 	}
 	if err := json.Unmarshal(input, &a); err != nil {
 		return "", err
 	}
-	var err error
-	a.Owner, a.Repo, err = resolveOwnerRepo(a.Owner, a.Repo, t.defaultOrg)
+	owner, repo, num, err := resolveOwnerRepoURL(a.Owner, a.Repo, a.PRURL, t.defaultOrg)
 	if err != nil {
 		return "", err
+	}
+	a.Owner, a.Repo = owner, repo
+	if num > 0 && a.Number < 1 {
+		a.Number = num
+	}
+	if a.Number < 1 {
+		return "", fmt.Errorf("number must be a positive PR number (or pass a full pr_url)")
 	}
 	diff, err := t.c.GetPullRequestDiff(ctx, a.Owner, a.Repo, a.Number)
 	if err != nil {
@@ -1258,10 +1269,27 @@ func resolveOwnerRepo(owner, repo, defaultOrg string) (string, string, error) {
 	repo = strings.TrimSpace(repo)
 
 	if owner == "" {
-		return "", "", fmt.Errorf("owner is required (no default_org configured)")
+		return "", "", fmt.Errorf("owner is required: pass a full PR URL (https://github.com/owner/repo/pull/N), an owner/repo, or set devops.github.default_org")
 	}
 	if repo == "" {
 		return "", "", fmt.Errorf("repo is required")
 	}
 	return owner, repo, nil
+}
+
+// resolveOwnerRepoURL resolves owner/repo (and a PR number when available),
+// first trying to extract them from a GitHub PR URL found in prURL — or
+// mistakenly placed in the repo/owner fields — then falling back to the explicit
+// owner/repo + defaultOrg. The returned number is 0 when no URL supplied one, in
+// which case the caller keeps its own number field. This lets per-PR tools
+// accept a `pr_url` the way devops.github.review_pr does, so an agent that only
+// has the PR URL (not a separate owner) can still call them.
+func resolveOwnerRepoURL(owner, repo, prURL, defaultOrg string) (string, string, int, error) {
+	for _, candidate := range []string{prURL, repo, owner} {
+		if o, r, n, ok := parsePRURL(candidate); ok {
+			return o, r, n, nil
+		}
+	}
+	o, r, err := resolveOwnerRepo(owner, repo, defaultOrg)
+	return o, r, 0, err
 }
